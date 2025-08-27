@@ -16,6 +16,7 @@ import torch
 from accelerate.utils import set_seed
 from datasets import load_dataset
 from peft import LoraConfig
+from tqdm import tqdm
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -116,35 +117,58 @@ def count_corrects(preds: List[str], refs: List[str], exact_match: bool = False)
 
 def eval_model(model_path, eval_raw):
     model = AutoModelForCausalLM.from_pretrained(model_path, device_map="auto")
-    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507", use_fast=False)
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507", padding_side="left", use_fast=False)
     gen_cfg = GenerationConfig(
-        max_new_tokens=24,
+        max_new_tokens=16,
         do_sample=False,
         eos_token_id=tokenizer.eos_token_id,
     )
 
-    n_eval = min(20, len(eval_raw))
     inputs, preds, refs = [], [], []
-    for i in range(n_eval):
-        ex = eval_raw[i]
-        user_msg = f"{SYS_INST}\n\n{ex['question'].strip()}"
-        prompt_str = tokenizer.apply_chat_template(
-            [{"role": "user", "content": user_msg}], tokenize=False, add_generation_prompt=True
-        )
-        input_ids = tokenizer(prompt_str, return_tensors="pt").to(model.device)
+
+    # for i in range(n_eval):
+    #     ex = eval_raw[i]
+    #     user_msg = f"{SYS_INST}\n\n{ex['question'].strip()}"
+    #     prompt_str = tokenizer.apply_chat_template(
+    #         [{"role": "user", "content": user_msg}], tokenize=False, add_generation_prompt=True
+    #     )
+    #     input_ids = tokenizer(prompt_str, return_tensors="pt").to(model.device)
+    #     with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+    #         out = model.generate(**input_ids, generation_config=gen_cfg)
+    #     gen = tokenizer.decode(out[0][input_ids["input_ids"].shape[1] :], skip_special_tokens=True).strip()
+    #     inputs.append(ex["question"])
+    #     preds.append(gen)
+    #     refs.append(ex["answer"])
+
+    batch_size = 16
+    for batch_start in tqdm(range(0, len(eval_raw), batch_size), "Evaluating"):
+        batch = eval_raw[batch_start : batch_start + batch_size]
+        # user_msgs = [f"{SYS_INST}\n\n{q.strip()}" for q in batch["question"]]
+        user_msgs = [f"{q.strip()}" for q in batch["question"]]
+        prompt_strs = [
+            tokenizer.apply_chat_template(
+                [{"role": "system", "content": SYS_INST}, {"role": "user", "content": user_msg}],
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            for user_msg in user_msgs
+        ]
+
+        input_ids = tokenizer(prompt_strs, return_tensors="pt", padding=True, truncation=True).to(model.device)
         with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             out = model.generate(**input_ids, generation_config=gen_cfg)
-        gen = tokenizer.decode(out[0][input_ids["input_ids"].shape[1] :], skip_special_tokens=True).strip()
-        inputs.append(ex["question"])
-        preds.append(gen)
-        refs.append(ex["answer"])
+
+        # gens = tokenizer.decode(out[0][input_ids["input_ids"].shape[1] :], skip_special_tokens=True).strip()
+        gens = tokenizer.batch_decode(out, skip_special_tokens=True)
+        inputs.extend(batch["question"])
+        preds.extend(gens)
+        refs.extend(batch["answer"])
 
     acc, unknowns = count_corrects(preds, refs)
-    print(f"[RESULT] Yes/No Accuracy (n={n_eval}): {acc:.3f}")
+    print(f"[RESULT] Yes/No Accuracy (n={len(eval_raw)}): {acc:.3f}")
     if unknowns > 0:
-        print(f"[RESULT] Unknown Predictions (n={n_eval}): {unknowns}")
+        print(f"[RESULT] Unknown Predictions (n={len(eval_raw)}): {unknowns}")
     for q, p, r in list(zip(inputs, preds, refs))[:3]:
-        # print("Q>", q[:80].replace("\n", " ") + ("..." if len(q) > 80 else ""))
         print(f"Question: {q}")
         print(f"Prediction: {p}")
         print(f"Ground Truth: {r}")
@@ -203,11 +227,6 @@ def train_model(train_ds, eval_ds):
         completion_only_loss=True,  # prompt は損失から除外（prompt-completion）
         # Qwen3 は tokenizer に chat template が入っているので自動適用される
         # （必要に応じて eos_token を指定可：SFTConfig(eos_token=tokenizer.eos_token)）
-        model_init_kwargs={
-            "quantization_config": bnb_config,
-            "device_map": "auto",
-            "trust_remote_code": True,
-        },
     )
 
     trainer = SFTTrainer(
@@ -237,12 +256,13 @@ def main(args):
     eval_ds = eval_raw.map(to_conv_prompt_completion, remove_columns=cols)
 
     if args.do_train:
+        print("[INFO] Start training")
         train_model(train_ds, eval_ds)
     else:
         print("[INFO] Skipped training")
 
     if args.do_eval:
-        print("[INFO] Evaluate (greedy, temperature=0)")
+        print("[INFO] Start evaluation")
         model_path = os.path.join(args.output_dir, "checkpoint-final") if args.do_train else args.model_name
         eval_model(model_path, eval_raw)
 
