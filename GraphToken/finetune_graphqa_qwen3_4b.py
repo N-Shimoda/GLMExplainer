@@ -44,7 +44,7 @@ def build_args():
     )
     p.add_argument("--train_split", type=str, default="zero_shot_train")
     p.add_argument("--eval_split", type=str, default="zero_shot_validation")
-    p.add_argument("--output_dir", type=str, required=True)
+    p.add_argument("--output_dir", type=str, default="./qwen3-4b-graphqa-qlora")
     p.add_argument("--wandb", action="store_true", help="Use Weights & Biases for logging")
     p.add_argument("--seed", type=int, default=42)
 
@@ -100,13 +100,22 @@ def _normalize_text(s: str) -> str:
     return s.lower()
 
 
-def exact_match(preds: List[str], refs: List[str]) -> float:
-    correct = sum(_normalize_text(p) == _normalize_text(r) for p, r in zip(preds, refs))
-    return correct / max(1, len(refs))
+def count_corrects(preds: List[str], refs: List[str], exact_match: bool = False) -> float:
+    if exact_match:
+        acc = sum(_normalize_text(p) == _normalize_text(r) for p, r in zip(preds, refs)) / max(1, len(refs))
+        num_unknown = 0
+    else:
+        low_preds = [pred.lower() for pred in preds]
+        low_refs = [ref.lower() for ref in refs]
+        preds_yes_no = ["yes" if "yes" in pred else "no" if "no" in pred else "unknown" for pred in low_preds]
+        refs_yes_no = ["yes" if "yes" in ref else "no" if "no" in ref else "unknown" for ref in low_refs]
+        acc = sum(p == r for p, r in zip(preds_yes_no, refs_yes_no)) / max(1, len(refs_yes_no))
+        num_unknown = sum(p == "unknown" for p in preds_yes_no)
+    return acc, num_unknown
 
 
-def eval_model(eval_raw):
-    model = AutoModelForCausalLM.from_pretrained("./qwen3-4b-graphqa-qlora/checkpoint-75", device_map="auto")
+def eval_model(model_path, eval_raw):
+    model = AutoModelForCausalLM.from_pretrained(model_path, device_map="auto")
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507", use_fast=False)
     gen_cfg = GenerationConfig(
         max_new_tokens=24,
@@ -130,13 +139,15 @@ def eval_model(eval_raw):
         preds.append(gen)
         refs.append(ex["answer"])
 
-    acc = exact_match(preds, refs)
-    print(f"[RESULT] Exact Match (n={n_eval}): {acc:.3f}")
+    acc, unknowns = count_corrects(preds, refs)
+    print(f"[RESULT] Yes/No Accuracy (n={n_eval}): {acc:.3f}")
+    if unknowns > 0:
+        print(f"[RESULT] Unknown Predictions (n={n_eval}): {unknowns}")
     for q, p, r in list(zip(inputs, preds, refs))[:3]:
         # print("Q>", q[:80].replace("\n", " ") + ("..." if len(q) > 80 else ""))
-        print(f"Question:\n{q}")
-        print(f"Prediction:\n{p}")
-        print(f"Ground Truth:\n{r}")
+        print(f"Question: {q}")
+        print(f"Prediction: {p}")
+        print(f"Ground Truth: {r}")
         print("---")
 
 
@@ -182,8 +193,8 @@ def train_model(train_ds, eval_ds):
         warmup_ratio=args.warmup_ratio,
         weight_decay=args.weight_decay,
         logging_steps=10,
-        eval_steps=100,
-        save_steps=100,
+        eval_steps=25,
+        save_steps=25,
         save_total_limit=2,
         packing=True,
         bf16=True,
@@ -213,7 +224,6 @@ def train_model(train_ds, eval_ds):
     tokenizer.save_pretrained(args.output_dir)
 
 
-# ---------- メイン ----------
 def main(args):
 
     # Load GraphQA dataset
@@ -233,7 +243,8 @@ def main(args):
 
     if args.do_eval:
         print("[INFO] Evaluate (greedy, temperature=0)")
-        eval_model(eval_raw)
+        model_path = os.path.join(args.output_dir, "checkpoint-final") if args.do_train else args.model_name
+        eval_model(model_path, eval_raw)
 
 
 if __name__ == "__main__":
