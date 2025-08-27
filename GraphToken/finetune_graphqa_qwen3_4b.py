@@ -31,7 +31,7 @@ def build_args():
     p.add_argument(
         "--subset",
         type=str,
-        default="cycle_check",
+        default="connected_nodes",
         help="GraphQA subset（see https://huggingface.co/datasets/baharef/GraphQA）",
     )
     p.add_argument("--train_split", type=str, default="zero_shot_train")
@@ -44,7 +44,6 @@ def build_args():
     p.add_argument("--per_device_train_batch_size", type=int, default=2)
     p.add_argument("--per_device_eval_batch_size", type=int, default=2)
     p.add_argument("--grad_accum_steps", type=int, default=8)
-    p.add_argument("--max_seq_len", type=int, default=1024)
     p.add_argument("--lr", type=float, default=1e-4)  # LoRA なので大きめ
     p.add_argument("--warmup_ratio", type=float, default=0.03)
     p.add_argument("--weight_decay", type=float, default=0.1)
@@ -112,6 +111,7 @@ def main():
         quantization_config=bnb_config,
         device_map="auto",
         trust_remote_code=True,
+        torch_dtype=torch.bfloat16,
         # attn_implementation="flash_attention_2" if torch.cuda.is_available() else None,
     )
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, use_fast=False)
@@ -149,15 +149,13 @@ def main():
         warmup_ratio=args.warmup_ratio,
         weight_decay=args.weight_decay,
         logging_steps=10,
-        # evaluation_strategy="steps",
-        eval_steps=200,
-        save_steps=200,
+        eval_steps=100,
+        save_steps=100,
         save_total_limit=2,
-        # max_seq_length=args.max_seq_len,
         packing=True,
         bf16=True,
         optim="adamw_8bit",
-        report_to="none",
+        report_to="wandb",
         completion_only_loss=True,  # prompt は損失から除外（prompt-completion）
         # Qwen3 は tokenizer に chat template が入っているので自動適用される
         # （必要に応じて eos_token を指定可：SFTConfig(eos_token=tokenizer.eos_token)）
@@ -170,7 +168,6 @@ def main():
 
     trainer = SFTTrainer(
         model=model,
-        # tokenizer=tokenizer,
         args=sft_cfg,
         peft_config=peft_cfg,
         train_dataset=train_ds,
@@ -200,7 +197,9 @@ def main():
             [{"role": "user", "content": user_msg}], tokenize=False, add_generation_prompt=True
         )
         input_ids = tokenizer(prompt_str, return_tensors="pt").to(model.device)
-        with torch.no_grad():
+        # with torch.no_grad():
+        #     out = trainer.model.generate(**input_ids, generation_config=gen_cfg)
+        with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             out = trainer.model.generate(**input_ids, generation_config=gen_cfg)
         gen = tokenizer.decode(out[0][input_ids["input_ids"].shape[1] :], skip_special_tokens=True).strip()
         preds.append(gen)
