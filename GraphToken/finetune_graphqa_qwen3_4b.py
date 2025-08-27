@@ -8,6 +8,7 @@ Qwen/Qwen3-4B-Instruct-2507 を GraphQA で QLoRA (4bit) 微調整
 """
 
 import argparse
+import os
 import re
 from typing import Dict, List
 
@@ -24,20 +25,32 @@ from transformers import (
 from trl import SFTConfig, SFTTrainer
 
 
-# ---------- 引数 ----------
 def build_args():
+    """
+    Parses and returns command-line arguments for fine-tuning a Qwen3-4B model on the GraphQA dataset.
+
+    Returns
+    -------
+    argparse.Namespace
+        An object containing all the parsed command-line arguments.
+    """
     p = argparse.ArgumentParser()
     p.add_argument("--model_name", type=str, default="Qwen/Qwen3-4B-Instruct-2507", help="ベースモデル")
     p.add_argument(
         "--subset",
         type=str,
-        default="connected_nodes",
+        default="cycle_check",
         help="GraphQA subset（see https://huggingface.co/datasets/baharef/GraphQA）",
     )
     p.add_argument("--train_split", type=str, default="zero_shot_train")
     p.add_argument("--eval_split", type=str, default="zero_shot_validation")
     p.add_argument("--output_dir", type=str, required=True)
+    p.add_argument("--wandb", action="store_true", help="Use Weights & Biases for logging")
     p.add_argument("--seed", type=int, default=42)
+
+    # Execution flow
+    p.add_argument("--do_train", action="store_true", help="Train the model")
+    p.add_argument("--do_eval", action="store_true", help="Evaluate the model")
 
     # 主要ハイパラ
     p.add_argument("--epochs", type=float, default=3)
@@ -92,11 +105,42 @@ def exact_match(preds: List[str], refs: List[str]) -> float:
     return correct / max(1, len(refs))
 
 
-# ---------- メイン ----------
-def main():
-    args = build_args()
-    set_seed(args.seed)
+def eval_model(eval_raw):
+    model = AutoModelForCausalLM.from_pretrained("./qwen3-4b-graphqa-qlora/checkpoint-75", device_map="auto")
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507", use_fast=False)
+    gen_cfg = GenerationConfig(
+        max_new_tokens=24,
+        do_sample=False,
+        eos_token_id=tokenizer.eos_token_id,
+    )
 
+    n_eval = min(20, len(eval_raw))
+    inputs, preds, refs = [], [], []
+    for i in range(n_eval):
+        ex = eval_raw[i]
+        user_msg = f"{SYS_INST}\n\n{ex['question'].strip()}"
+        prompt_str = tokenizer.apply_chat_template(
+            [{"role": "user", "content": user_msg}], tokenize=False, add_generation_prompt=True
+        )
+        input_ids = tokenizer(prompt_str, return_tensors="pt").to(model.device)
+        with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            out = model.generate(**input_ids, generation_config=gen_cfg)
+        gen = tokenizer.decode(out[0][input_ids["input_ids"].shape[1] :], skip_special_tokens=True).strip()
+        inputs.append(ex["question"])
+        preds.append(gen)
+        refs.append(ex["answer"])
+
+    acc = exact_match(preds, refs)
+    print(f"[RESULT] Exact Match (n={n_eval}): {acc:.3f}")
+    for q, p, r in list(zip(inputs, preds, refs))[:3]:
+        # print("Q>", q[:80].replace("\n", " ") + ("..." if len(q) > 80 else ""))
+        print(f"Question:\n{q}")
+        print(f"Prediction:\n{p}")
+        print(f"Ground Truth:\n{r}")
+        print("---")
+
+
+def train_model(train_ds, eval_ds):
     # 4bit 量子化（QLoRA）
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -105,7 +149,6 @@ def main():
         bnb_4bit_compute_dtype=torch.bfloat16,
     )
 
-    print(f"[INFO] Load model: {args.model_name}")
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name,
         quantization_config=bnb_config,
@@ -128,16 +171,6 @@ def main():
         task_type="CAUSAL_LM",
     )
 
-    # GraphQA 読み込み
-    print(f"[INFO] Load GraphQA: subset={args.subset}, train={args.train_split}, eval={args.eval_split}")
-    train_raw = load_dataset("baharef/GraphQA", args.subset, split=args.train_split)
-    eval_raw = load_dataset("baharef/GraphQA", args.subset, split=args.eval_split)
-
-    # TRL 用に会話型 prompt-completion へ変換
-    cols = train_raw.column_names
-    train_ds = train_raw.map(to_conv_prompt_completion, remove_columns=cols)
-    eval_ds = eval_raw.map(to_conv_prompt_completion, remove_columns=cols)
-
     # SFT 設定
     sft_cfg = SFTConfig(
         output_dir=args.output_dir,
@@ -155,7 +188,7 @@ def main():
         packing=True,
         bf16=True,
         optim="adamw_8bit",
-        report_to="wandb",
+        report_to="wandb" if args.wandb else "none",
         completion_only_loss=True,  # prompt は損失から除外（prompt-completion）
         # Qwen3 は tokenizer に chat template が入っているので自動適用される
         # （必要に応じて eos_token を指定可：SFTConfig(eos_token=tokenizer.eos_token)）
@@ -176,44 +209,34 @@ def main():
 
     # 学習
     trainer.train()
-    trainer.save_model()
+    trainer.save_model(os.path.join(args.output_dir, "checkpoint-final"))
     tokenizer.save_pretrained(args.output_dir)
 
-    # ---------- 簡易評価（生成 → EM） ----------
-    print("[INFO] Evaluate (greedy, temperature=0)")
-    gen_cfg = GenerationConfig(
-        max_new_tokens=128,
-        do_sample=False,
-        temperature=0.0,
-        eos_token_id=tokenizer.eos_token_id,
-    )
 
-    n_eval = min(20, len(eval_raw))
-    preds, refs, inputs = [], [], []
-    for i in range(n_eval):
-        ex = eval_raw[i]
-        user_msg = f"{SYS_INST}\n\n{ex['question'].strip()}"
-        prompt_str = tokenizer.apply_chat_template(
-            [{"role": "user", "content": user_msg}], tokenize=False, add_generation_prompt=True
-        )
-        input_ids = tokenizer(prompt_str, return_tensors="pt").to(model.device)
-        # with torch.no_grad():
-        #     out = trainer.model.generate(**input_ids, generation_config=gen_cfg)
-        with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-            out = trainer.model.generate(**input_ids, generation_config=gen_cfg)
-        gen = tokenizer.decode(out[0][input_ids["input_ids"].shape[1] :], skip_special_tokens=True).strip()
-        preds.append(gen)
-        refs.append(ex["answer"])
-        inputs.append(ex["question"])
+# ---------- メイン ----------
+def main(args):
 
-    acc = exact_match(preds, refs)
-    print(f"[RESULT] Exact Match (n={n_eval}): {acc:.3f}")
-    for q, p, r in list(zip(inputs, preds, refs))[:3]:
-        print("Q>", q[:80].replace("\n", " ") + ("..." if len(q) > 80 else ""))
-        print("P>", p)
-        print("G>", r)
-        print("---")
+    # Load GraphQA dataset
+    print(f"[INFO] Load GraphQA: subset={args.subset}, train={args.train_split}, eval={args.eval_split}")
+    train_raw = load_dataset("baharef/GraphQA", args.subset, split=args.train_split)
+    eval_raw = load_dataset("baharef/GraphQA", args.subset, split=args.eval_split)
+
+    # TRL 用に会話型 prompt-completion へ変換
+    cols = train_raw.column_names
+    train_ds = train_raw.map(to_conv_prompt_completion, remove_columns=cols)
+    eval_ds = eval_raw.map(to_conv_prompt_completion, remove_columns=cols)
+
+    if args.do_train:
+        train_model(train_ds, eval_ds)
+    else:
+        print("[INFO] Skipped training")
+
+    if args.do_eval:
+        print("[INFO] Evaluate (greedy, temperature=0)")
+        eval_model(eval_raw)
 
 
 if __name__ == "__main__":
-    main()
+    args = build_args()
+    set_seed(args.seed)
+    main(args)

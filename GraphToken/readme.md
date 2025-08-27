@@ -8,12 +8,14 @@
 # 1) 依存関係
 pip install -U "transformers>=4.51.0" "trl>=0.10.0" peft bitsandbytes datasets accelerate sentencepiece protobuf
 
-# 2) 学習（例: connected_nodes の zero_shot_*）
+# 2) 学習（例: cycle_check の zero_shot_*）
 python finetune_graphqa_qwen3_4b.py \
   --output_dir ./qwen3-4b-graphqa-qlora \
-  --subset connected_nodes \
+  --subset cycle_check \
   --train_split zero_shot_train \
-  --eval_split zero_shot_validation
+  --eval_split zero_shot_validation \
+  --do_train --do_eval \
+  --wandb
 ```
 
 ### Llama
