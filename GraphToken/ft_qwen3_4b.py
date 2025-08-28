@@ -6,8 +6,10 @@ Qwen/Qwen3-4B-Instruct-2507 を GraphQA で QLoRA (4bit) 微調整
 """
 
 import argparse
+import json
 import os
 import re
+import time
 from typing import Dict, List
 
 import torch
@@ -112,8 +114,6 @@ def count_corrects(preds: List[str], refs: List[str], exact_match: bool = False)
 
 
 def eval_model(model_path, eval_raw: arrow_dataset.Dataset):
-    # eval_raw = eval_raw.select(range(48))  # dev
-
     model = AutoModelForCausalLM.from_pretrained(model_path, device_map="auto")
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507", padding_side="left", use_fast=False)
     gen_cfg = GenerationConfig(
@@ -126,14 +126,12 @@ def eval_model(model_path, eval_raw: arrow_dataset.Dataset):
     batch_size = 16
     for batch_start in tqdm(range(0, len(eval_raw), batch_size), "Evaluating"):
         batch = eval_raw[batch_start : batch_start + batch_size]
-        # user_msgs = [f"{SYS_INST}\n\n{q.strip()}" for q in batch["question"]]
         user_msgs = [f"{q.strip()}" for q in batch["question"]]
         prompt_strs = [
             tokenizer.apply_chat_template(
                 [
                     {"role": "system", "content": SYS_INST},
                     {"role": "user", "content": user_msg},
-                    # {"role": "assistant", "content": "A: "},
                 ],
                 tokenize=False,
                 continue_final_message=True,
@@ -146,10 +144,6 @@ def eval_model(model_path, eval_raw: arrow_dataset.Dataset):
         with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             out = model.generate(**input_ids, generation_config=gen_cfg)
 
-        # prompt_lens = input_ids["attention_mask"].sum(dim=1).tolist()
-        # gens = [
-        #     tokenizer.decode(out[i][prompt_lens[i] :], skip_special_tokens=True).strip() for i in range(out.size(0))
-        # ]
         gens = tokenizer.batch_decode(out, skip_special_tokens=True)
         inputs.extend(batch["question"])
         preds.extend(gens)
@@ -160,12 +154,11 @@ def eval_model(model_path, eval_raw: arrow_dataset.Dataset):
     if unknowns > 0:
         print(f"[RESULT] Unknown Predictions (n={len(eval_raw)}): {unknowns}")
 
-    # show 3 examples
-    for q, p, r in list(zip(inputs, preds, refs))[:3]:
-        print(f"Question: {q}")
-        print(f"Prediction: {p}")
-        print(f"Ground Truth: {r}")
-        print("---")
+    # Save 10 examples to JSON
+    examples = [{"question": q, "prediction": p, "ground_truth": r} for q, p, r in list(zip(inputs, preds, refs))[:10]]
+    with open("eval_examples.json", "w", encoding="utf-8") as f:
+        json.dump(examples, f, ensure_ascii=False, indent=2)
+    print("[INFO] Saved 10 examples to eval_examples.json")
 
 
 def train_model(train_ds, eval_ds):
@@ -252,14 +245,19 @@ def main(args):
         print("[INFO] Start training")
         train_model(train_ds, eval_ds)
 
-    if args.do_eval and args.output_dir:
-        model_path = os.path.join(args.output_dir, "checkpoint-final")
-        print("[INFO] Start evaluation on a fine-tuned model")
-        print(f"[INFO] Model path: {model_path}")
+    if args.do_eval:
+        if args.output_dir:
+            model_path = os.path.join(args.output_dir, "checkpoint-final")
+            print("[INFO] Start evaluation on a fine-tuned model")
+            print(f"[INFO] Model path: {model_path}")
+        else:
+            model_path = args.model_name
+            print("[INFO] Start evaluation on a pre-trained model")
+            print(f"[INFO] Model path: {model_path}")
+
+        start_time = time.time()
         eval_model(model_path, eval_raw)
-    elif args.do_eval:
-        print("[INFO] Start evaluation on a pre-trained model")
-        eval_model(args.model_name, eval_raw)
+        print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
 
 
 if __name__ == "__main__":
