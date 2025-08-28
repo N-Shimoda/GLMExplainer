@@ -25,6 +25,11 @@ from transformers import (
 )
 from trl import SFTConfig, SFTTrainer
 
+SYS_INST = (
+    "You are a careful graph reasoning assistant.\n"
+    "Answer ONLY with the final list exactly as in the dataset (e.g., '1, 2, 4' or 'No nodes.')."
+)
+
 
 def build_args():
     """
@@ -36,16 +41,14 @@ def build_args():
         An object containing all the parsed command-line arguments.
     """
     p = argparse.ArgumentParser()
-    p.add_argument("--model_name", type=str, default="Qwen/Qwen3-4B-Instruct-2507", help="ベースモデル")
+    p.add_argument("--model_name", type=str, default="Qwen/Qwen3-4B-Instruct-2507", help="base model")
     p.add_argument(
         "--subset",
         type=str,
         default="cycle_check",
         help="GraphQA subset（see https://huggingface.co/datasets/baharef/GraphQA）",
     )
-    p.add_argument("--train_split", type=str, default="zero_shot_train")
-    p.add_argument("--eval_split", type=str, default="zero_shot_validation")
-    p.add_argument("--output_dir", type=str, default=None)
+    p.add_argument("--output_dir", type=str, default=None)  # "qwen3-4b-graphqa-qlora"
     p.add_argument("--wandb", action="store_true", help="Use Weights & Biases for logging")
     p.add_argument("--seed", type=int, default=42)
 
@@ -53,7 +56,7 @@ def build_args():
     p.add_argument("--do_train", action="store_true", help="Train the model")
     p.add_argument("--do_eval", action="store_true", help="Evaluate the model")
 
-    # 主要ハイパラ
+    # Hyperparameters (general)
     p.add_argument("--epochs", type=float, default=3)
     p.add_argument("--per_device_train_batch_size", type=int, default=2)
     p.add_argument("--per_device_eval_batch_size", type=int, default=2)
@@ -69,12 +72,6 @@ def build_args():
     return p.parse_args()
 
 
-SYS_INST = (
-    "You are a careful graph reasoning assistant.\n"
-    "Answer ONLY with the final list exactly as in the dataset (e.g., '1, 2, 4' or 'No nodes.')."
-)
-
-
 def to_conv_prompt_completion(example: Dict) -> Dict:
     """
     TRL SFTTrainer が理解する「会話型 prompt-completion」形式に変換
@@ -83,10 +80,9 @@ def to_conv_prompt_completion(example: Dict) -> Dict:
         "completion":[{"role": "assistant", "content": "<解答>"}]
       }
     """
-    user = f"{SYS_INST}\n\n{example['question'].strip()}"
     assistant = example["answer"].strip()
     return {
-        "prompt": [{"role": "user", "content": user}],
+        "prompt": [{"role": "system", "content": SYS_INST}, {"role": "user", "content": example["question"].strip()}],
         "completion": [{"role": "assistant", "content": assistant}],
     }
 
@@ -161,7 +157,14 @@ def eval_model(model_path, eval_raw: arrow_dataset.Dataset):
     print("[INFO] Saved 10 examples to eval_examples.json")
 
 
-def train_model(train_ds, eval_ds):
+def train_model(train_raw, eval_raw):
+    # TRL 用に会話型 prompt-completion へ変換
+    cols = train_raw.column_names
+    train_ds = train_raw.map(to_conv_prompt_completion, remove_columns=cols)
+    eval_ds = eval_raw.map(to_conv_prompt_completion, remove_columns=cols)
+
+    print("First sample", train_ds[0])
+
     # 4bit 量子化（QLoRA）
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -176,10 +179,11 @@ def train_model(train_ds, eval_ds):
         device_map="auto",
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
-        # attn_implementation="flash_attention_2" if torch.cuda.is_available() else None,
+        attn_implementation="flash_attention_2",
     )
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, use_fast=False)
     if tokenizer.pad_token is None:
+        print("Here!")
         tokenizer.pad_token = tokenizer.eos_token
 
     # LoRA 設定（Qwen 系の典型的な投影名）
@@ -205,7 +209,6 @@ def train_model(train_ds, eval_ds):
         logging_steps=10,
         eval_steps=25,
         save_steps=25,
-        save_total_limit=2,
         packing=True,
         bf16=True,
         optim="adamw_8bit",
@@ -229,21 +232,18 @@ def train_model(train_ds, eval_ds):
     tokenizer.save_pretrained(args.output_dir)
 
 
-def main(args):
+if __name__ == "__main__":
+    args = build_args()
+    set_seed(args.seed)
 
     # Load GraphQA dataset
-    print(f"[INFO] Load GraphQA: subset={args.subset}, train={args.train_split}, eval={args.eval_split}")
-    train_raw = load_dataset("baharef/GraphQA", args.subset, split=args.train_split)
-    eval_raw = load_dataset("baharef/GraphQA", args.subset, split=args.eval_split)
-
-    # TRL 用に会話型 prompt-completion へ変換
-    cols = train_raw.column_names
-    train_ds = train_raw.map(to_conv_prompt_completion, remove_columns=cols)
-    eval_ds = eval_raw.map(to_conv_prompt_completion, remove_columns=cols)
+    print(f"[INFO] Load GraphQA: subset={args.subset}")
+    train_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_train")
+    eval_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_validation")
 
     if args.do_train:
         print("[INFO] Start training")
-        train_model(train_ds, eval_ds)
+        train_model(train_raw, eval_raw)
 
     if args.do_eval:
         if args.output_dir:
@@ -258,9 +258,3 @@ def main(args):
         start_time = time.time()
         eval_model(model_path, eval_raw)
         print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
-
-
-if __name__ == "__main__":
-    args = build_args()
-    set_seed(args.seed)
-    main(args)
