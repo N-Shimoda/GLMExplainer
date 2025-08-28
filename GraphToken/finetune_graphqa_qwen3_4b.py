@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """
 Qwen/Qwen3-4B-Instruct-2507 を GraphQA で QLoRA (4bit) 微調整
 - データ: baharef/GraphQA から subset/split を指定
@@ -14,7 +12,7 @@ from typing import Dict, List
 
 import torch
 from accelerate.utils import set_seed
-from datasets import load_dataset
+from datasets import arrow_dataset, load_dataset
 from peft import LoraConfig
 from tqdm import tqdm
 from transformers import (
@@ -45,7 +43,7 @@ def build_args():
     )
     p.add_argument("--train_split", type=str, default="zero_shot_train")
     p.add_argument("--eval_split", type=str, default="zero_shot_validation")
-    p.add_argument("--output_dir", type=str, default="./qwen3-4b-graphqa-qlora")
+    p.add_argument("--output_dir", type=str, default=None)
     p.add_argument("--wandb", action="store_true", help="Use Weights & Biases for logging")
     p.add_argument("--seed", type=int, default=42)
 
@@ -69,7 +67,6 @@ def build_args():
     return p.parse_args()
 
 
-# ---------- データ前処理 ----------
 SYS_INST = (
     "You are a careful graph reasoning assistant.\n"
     "Answer ONLY with the final list exactly as in the dataset (e.g., '1, 2, 4' or 'No nodes.')."
@@ -92,7 +89,6 @@ def to_conv_prompt_completion(example: Dict) -> Dict:
     }
 
 
-# ---------- 簡易評価（Exact Match） ----------
 def _normalize_text(s: str) -> str:
     s = s.strip()
     s = s.replace("\n", " ").replace("\t", " ")
@@ -115,7 +111,9 @@ def count_corrects(preds: List[str], refs: List[str], exact_match: bool = False)
     return acc, num_unknown
 
 
-def eval_model(model_path, eval_raw):
+def eval_model(model_path, eval_raw: arrow_dataset.Dataset):
+    # eval_raw = eval_raw.select(range(48))  # dev
+
     model = AutoModelForCausalLM.from_pretrained(model_path, device_map="auto")
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507", padding_side="left", use_fast=False)
     gen_cfg = GenerationConfig(
@@ -125,21 +123,6 @@ def eval_model(model_path, eval_raw):
     )
 
     inputs, preds, refs = [], [], []
-
-    # for i in range(n_eval):
-    #     ex = eval_raw[i]
-    #     user_msg = f"{SYS_INST}\n\n{ex['question'].strip()}"
-    #     prompt_str = tokenizer.apply_chat_template(
-    #         [{"role": "user", "content": user_msg}], tokenize=False, add_generation_prompt=True
-    #     )
-    #     input_ids = tokenizer(prompt_str, return_tensors="pt").to(model.device)
-    #     with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-    #         out = model.generate(**input_ids, generation_config=gen_cfg)
-    #     gen = tokenizer.decode(out[0][input_ids["input_ids"].shape[1] :], skip_special_tokens=True).strip()
-    #     inputs.append(ex["question"])
-    #     preds.append(gen)
-    #     refs.append(ex["answer"])
-
     batch_size = 16
     for batch_start in tqdm(range(0, len(eval_raw), batch_size), "Evaluating"):
         batch = eval_raw[batch_start : batch_start + batch_size]
@@ -147,9 +130,14 @@ def eval_model(model_path, eval_raw):
         user_msgs = [f"{q.strip()}" for q in batch["question"]]
         prompt_strs = [
             tokenizer.apply_chat_template(
-                [{"role": "system", "content": SYS_INST}, {"role": "user", "content": user_msg}],
+                [
+                    {"role": "system", "content": SYS_INST},
+                    {"role": "user", "content": user_msg},
+                    # {"role": "assistant", "content": "A: "},
+                ],
                 tokenize=False,
-                add_generation_prompt=True,
+                continue_final_message=True,
+                # add_generation_prompt=True,
             )
             for user_msg in user_msgs
         ]
@@ -158,7 +146,10 @@ def eval_model(model_path, eval_raw):
         with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             out = model.generate(**input_ids, generation_config=gen_cfg)
 
-        # gens = tokenizer.decode(out[0][input_ids["input_ids"].shape[1] :], skip_special_tokens=True).strip()
+        # prompt_lens = input_ids["attention_mask"].sum(dim=1).tolist()
+        # gens = [
+        #     tokenizer.decode(out[i][prompt_lens[i] :], skip_special_tokens=True).strip() for i in range(out.size(0))
+        # ]
         gens = tokenizer.batch_decode(out, skip_special_tokens=True)
         inputs.extend(batch["question"])
         preds.extend(gens)
@@ -168,6 +159,8 @@ def eval_model(model_path, eval_raw):
     print(f"[RESULT] Yes/No Accuracy (n={len(eval_raw)}): {acc:.3f}")
     if unknowns > 0:
         print(f"[RESULT] Unknown Predictions (n={len(eval_raw)}): {unknowns}")
+
+    # show 3 examples
     for q, p, r in list(zip(inputs, preds, refs))[:3]:
         print(f"Question: {q}")
         print(f"Prediction: {p}")
@@ -258,13 +251,15 @@ def main(args):
     if args.do_train:
         print("[INFO] Start training")
         train_model(train_ds, eval_ds)
-    else:
-        print("[INFO] Skipped training")
 
-    if args.do_eval:
-        print("[INFO] Start evaluation")
-        model_path = os.path.join(args.output_dir, "checkpoint-final") if args.do_train else args.model_name
+    if args.do_eval and args.output_dir:
+        model_path = os.path.join(args.output_dir, "checkpoint-final")
+        print("[INFO] Start evaluation on a fine-tuned model")
+        print(f"[INFO] Model path: {model_path}")
         eval_model(model_path, eval_raw)
+    elif args.do_eval:
+        print("[INFO] Start evaluation on a pre-trained model")
+        eval_model(args.model_name, eval_raw)
 
 
 if __name__ == "__main__":
