@@ -1,4 +1,4 @@
-GraphToken/qwen3-4b-graphqa-qlora/
+GraphToken/qwen3-4b-*/
 GraphToken/wandb/
 GraphToken/examples-*.json
 
