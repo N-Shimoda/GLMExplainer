@@ -1,13 +1,13 @@
 import argparse
 import json
-import re
 import time
-from typing import Dict, List, Literal
+from typing import List, Literal
 
 import torch
 from datasets import arrow_dataset, load_dataset
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
+from utils import _normalize_text
 
 
 def build_args():
@@ -30,32 +30,6 @@ def build_args():
     p.add_argument("--model_path", type=str, default=None)
 
     return p.parse_args()
-
-
-def to_conv_prompt_completion(example: Dict) -> Dict:
-    """
-    TRL SFTTrainer が理解する「会話型 prompt-completion」形式に変換
-      {
-        "prompt":    [{"role": "user", "content": "<指示>"}],
-        "completion":[{"role": "assistant", "content": "<解答>"}]
-      }
-    """
-    assistant = example["answer"].strip()
-    return {
-        "prompt": [
-            {"role": "system", "content": SYS_INST},
-            {"role": "user", "content": example["question"].strip()},
-        ],
-        "completion": [{"role": "assistant", "content": assistant}],
-    }
-
-
-def _normalize_text(s: str) -> str:
-    s = s.strip()
-    s = s.replace("\n", " ").replace("\t", " ")
-    s = re.sub(r"\s+", "", s)
-    s = re.sub(r"\.$", "", s)
-    return s.lower()
 
 
 def comp_accuracy(

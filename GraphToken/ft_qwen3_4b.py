@@ -8,7 +8,6 @@ Qwen/Qwen3-4B-Instruct-2507 を GraphQA で QLoRA (4bit) 微調整
 import argparse
 import json
 import os
-import re
 import time
 from typing import Dict, List, Literal
 
@@ -24,6 +23,7 @@ from transformers import (
     GenerationConfig,
 )
 from trl import SFTConfig, SFTTrainer
+from utils import _normalize_text
 
 
 def build_args():
@@ -83,14 +83,6 @@ def to_conv_prompt_completion(example: Dict) -> Dict:
         ],
         "completion": [{"role": "assistant", "content": assistant}],
     }
-
-
-def _normalize_text(s: str) -> str:
-    s = s.strip()
-    s = s.replace("\n", " ").replace("\t", " ")
-    s = re.sub(r"\s+", "", s)
-    s = re.sub(r"\.$", "", s)
-    return s.lower()
 
 
 def comp_accuracy(
@@ -288,4 +280,5 @@ if __name__ == "__main__":
 
         start_time = time.time()
         eval_model(model_path, eval_raw, args.subset)
+        print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
         print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
