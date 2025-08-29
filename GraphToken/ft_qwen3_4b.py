@@ -10,7 +10,7 @@ import json
 import os
 import re
 import time
-from typing import Dict, List
+from typing import Dict, List, Literal
 
 import torch
 from accelerate.utils import set_seed
@@ -24,11 +24,6 @@ from transformers import (
     GenerationConfig,
 )
 from trl import SFTConfig, SFTTrainer
-
-SYS_INST = (
-    "You are a careful graph reasoning assistant.\n"
-    "Answer ONLY with the final list exactly as in the dataset (e.g., '1, 2, 4' or 'No nodes.')."
-)
 
 
 def build_args():
@@ -82,7 +77,10 @@ def to_conv_prompt_completion(example: Dict) -> Dict:
     """
     assistant = example["answer"].strip()
     return {
-        "prompt": [{"role": "system", "content": SYS_INST}, {"role": "user", "content": example["question"].strip()}],
+        "prompt": [
+            {"role": "system", "content": SYS_INST},
+            {"role": "user", "content": example["question"].strip()},
+        ],
         "completion": [{"role": "assistant", "content": assistant}],
     }
 
@@ -95,25 +93,45 @@ def _normalize_text(s: str) -> str:
     return s.lower()
 
 
-def count_corrects(preds: List[str], refs: List[str], exact_match: bool = False) -> float:
-    if exact_match:
-        acc = sum(_normalize_text(p) == _normalize_text(r) for p, r in zip(preds, refs)) / max(1, len(refs))
-        num_unknown = 0
-    else:
-        low_preds = [pred.lower() for pred in preds]
-        low_refs = [ref.lower() for ref in refs]
-        preds_yes_no = ["yes" if "yes" in pred else "no" if "no" in pred else "unknown" for pred in low_preds]
-        refs_yes_no = ["yes" if "yes" in ref else "no" if "no" in ref else "unknown" for ref in low_refs]
-        acc = sum(p == r for p, r in zip(preds_yes_no, refs_yes_no)) / max(1, len(refs_yes_no))
-        num_unknown = sum(p == "unknown" for p in preds_yes_no)
+def comp_accuracy(
+    preds: List[str],
+    refs: List[str],
+    subset: Literal["cycle_check", "node_count", "edge_count"],
+    exact_match: bool = False,
+) -> float:
+    if subset not in ["cycle_check", "node_count", "edge_count"]:
+        raise NotImplementedError(f"Unsupported subset: {subset}")
+
+    match subset:
+        case "cycle_check":
+            if exact_match:
+                acc = sum(_normalize_text(p) == _normalize_text(r) for p, r in zip(preds, refs)) / max(1, len(refs))
+                num_unknown = 0
+            else:
+                low_preds = [pred.lower() for pred in preds]
+                low_refs = [ref.lower() for ref in refs]
+                preds_yes_no = ["yes" if "yes" in pred else "no" if "no" in pred else "unknown" for pred in low_preds]
+                refs_yes_no = ["yes" if "yes" in ref else "no" if "no" in ref else "unknown" for ref in low_refs]
+                acc = sum(p == r for p, r in zip(preds_yes_no, refs_yes_no)) / max(1, len(refs_yes_no))
+                num_unknown = sum(p == "unknown" for p in preds_yes_no)
+        case "node_count" | "edge_count":
+            digit_ans_li = [ref.strip().split(".")[0] for ref in refs]
+            preds = [pred.split("assistant\n")[-1] for pred in preds]
+            print("preds", preds)
+            print("digit_ans_li", digit_ans_li)
+            acc = sum([d in pred for d, pred in zip(digit_ans_li, preds)]) / max(1, len(refs))
+            num_unknown = 0
+
     return acc, num_unknown
 
 
-def eval_model(model_path, eval_raw: arrow_dataset.Dataset):
+def eval_model(
+    model_path, eval_raw: arrow_dataset.Dataset, subset: Literal["cycle_check", "node_count", "edge_count"]
+):
     model = AutoModelForCausalLM.from_pretrained(model_path, device_map="auto")
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507", padding_side="left", use_fast=False)
     gen_cfg = GenerationConfig(
-        max_new_tokens=16,
+        max_new_tokens=32,
         do_sample=False,
         eos_token_id=tokenizer.eos_token_id,
     )
@@ -130,8 +148,8 @@ def eval_model(model_path, eval_raw: arrow_dataset.Dataset):
                     {"role": "user", "content": user_msg},
                 ],
                 tokenize=False,
-                continue_final_message=True,
-                # add_generation_prompt=True,
+                # continue_final_message=True,
+                add_generation_prompt=True,
             )
             for user_msg in user_msgs
         ]
@@ -145,19 +163,20 @@ def eval_model(model_path, eval_raw: arrow_dataset.Dataset):
         preds.extend(gens)
         refs.extend(batch["answer"])
 
-    acc, unknowns = count_corrects(preds, refs)
-    print(f"[RESULT] Yes/No Accuracy (n={len(eval_raw)}): {acc:.3f}")
+    acc, unknowns = comp_accuracy(preds, refs, subset)
+    print(f"[RESULT] Accuracy (n={len(eval_raw)}): {acc:.3f}")
     if unknowns > 0:
         print(f"[RESULT] Unknown Predictions (n={len(eval_raw)}): {unknowns}")
 
     # Save 10 examples to JSON
     examples = [{"question": q, "prediction": p, "ground_truth": r} for q, p, r in list(zip(inputs, preds, refs))[:10]]
-    with open("eval_examples.json", "w", encoding="utf-8") as f:
+    filename = f"examples-{subset}.json"
+    with open(filename, "w", encoding="utf-8") as f:
         json.dump(examples, f, ensure_ascii=False, indent=2)
-    print("[INFO] Saved 10 examples to eval_examples.json")
+    print(f"[INFO] Saved 10 examples to {filename}")
 
 
-def train_model(train_raw, eval_raw):
+def train_model(train_raw, eval_raw, subset):
     # TRL 用に会話型 prompt-completion へ変換
     cols = train_raw.column_names
     train_ds = train_raw.map(to_conv_prompt_completion, remove_columns=cols)
@@ -213,6 +232,7 @@ def train_model(train_raw, eval_raw):
         bf16=True,
         optim="adamw_8bit",
         report_to="wandb" if args.wandb else "none",
+        run_name=f"qwen3-4b-{subset}" if args.wandb else None,
         completion_only_loss=True,  # prompt は損失から除外（prompt-completion）
         # Qwen3 は tokenizer に chat template が入っているので自動適用される
         # （必要に応じて eos_token を指定可：SFTConfig(eos_token=tokenizer.eos_token)）
@@ -236,25 +256,38 @@ if __name__ == "__main__":
     args = build_args()
     set_seed(args.seed)
 
+    # Build system instruction
+    match args.subset:
+        case "node_count":
+            TASK_INST = "Answer ONLY with the final number of nodes."
+        case "edge_count":
+            TASK_INST = "Answer ONLY with the final number of edges."
+        case "cycle_check":
+            TASK_INST = "Answer ONLY with Yes or No."
+        case _:
+            raise NotImplementedError(f"Unsupported subset: {args.subset}")
+
+    SYS_INST = "You are a careful graph reasoning assistant.\n" + TASK_INST
+
     # Load GraphQA dataset
     print(f"[INFO] Load GraphQA: subset={args.subset}")
     train_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_train")
     eval_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_validation")
 
+    # eval_raw = eval_raw.select(range(96))  # for eval_model() development
+
     if args.do_train:
         print("[INFO] Start training")
-        train_model(train_raw, eval_raw)
+        train_model(train_raw, eval_raw, args.subset)
 
     if args.do_eval:
         if args.output_dir:
             model_path = os.path.join(args.output_dir, "checkpoint-final")
-            print("[INFO] Start evaluation on a fine-tuned model")
-            print(f"[INFO] Model path: {model_path}")
+            print(f"[INFO] Evaluation on a fine-tuned model: {model_path}")
         else:
             model_path = args.model_name
-            print("[INFO] Start evaluation on a pre-trained model")
-            print(f"[INFO] Model path: {model_path}")
+            print(f"[INFO] Evaluation on a pre-trained model: {model_path}")
 
         start_time = time.time()
-        eval_model(model_path, eval_raw)
+        eval_model(model_path, eval_raw, args.subset)
         print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")

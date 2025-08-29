@@ -1,6 +1,6 @@
 GraphToken/qwen3-4b-graphqa-qlora/
 GraphToken/wandb/
-GraphToken/eval_examples*.json
+GraphToken/examples-*.json
 
 # dev
 .vscode/
