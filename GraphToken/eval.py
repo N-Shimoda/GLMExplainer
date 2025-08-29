@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import time
 from typing import List, Literal
 
@@ -7,7 +8,7 @@ import torch
 from datasets import arrow_dataset, load_dataset
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
-from utils import _normalize_text
+from utils.utils import _normalize_text
 
 
 def build_args():
@@ -56,8 +57,6 @@ def comp_accuracy(
         case "node_count" | "edge_count":
             digit_ans_li = [ref.strip().split(".")[0] for ref in refs]
             preds = [pred.split("assistant\n")[-1] for pred in preds]
-            print("preds", preds)
-            print("digit_ans_li", digit_ans_li)
             acc = sum([d in pred for d, pred in zip(digit_ans_li, preds)]) / max(1, len(refs))
             num_unknown = 0
 
@@ -109,10 +108,11 @@ def eval_model(
 
     # Save 10 examples to JSON
     examples = [{"question": q, "prediction": p, "ground_truth": r} for q, p, r in list(zip(inputs, preds, refs))[:10]]
-    filename = f"examples-{subset}.json"
+    outdir = "examples"
+    filename = os.path.join(outdir, f"{subset}.json")
+    os.makedirs(outdir, exist_ok=True)
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(examples, f, ensure_ascii=False, indent=2)
-    print(f"[INFO] Saved 10 examples to {filename}")
 
 
 if __name__ == "__main__":
@@ -135,12 +135,13 @@ if __name__ == "__main__":
     test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
     if args.model_path:
         model_path = args.model_path
-        print(f"[INFO] Evaluation on a fine-tuned model: {model_path}")
+        print(f"[INFO] Evaluating a fine-tuned model: {model_path}")
     else:
         model_path = args.model_name
-        print(f"[INFO] Evaluation on a pre-trained model: {model_path}")
+        print(f"[INFO] Evaluating a pre-trained model: {model_path}")
 
     # Evaluate the model
     start_time = time.time()
     eval_model(model_path, test_ds, args.subset)
+    print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
     print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")

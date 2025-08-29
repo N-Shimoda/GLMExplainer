@@ -23,7 +23,7 @@ from transformers import (
     GenerationConfig,
 )
 from trl import SFTConfig, SFTTrainer
-from utils import _normalize_text
+from utils.utils import _normalize_text
 
 
 def build_args():
@@ -280,5 +280,6 @@ if __name__ == "__main__":
 
         start_time = time.time()
         eval_model(model_path, eval_raw, args.subset)
+        print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
         print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
         print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
