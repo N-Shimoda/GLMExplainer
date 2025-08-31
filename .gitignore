@@ -5,6 +5,6 @@ __pycache__/
 .vscode/
 
 # GraphToken
-GraphToken/qwen3-4b-*/
-GraphToken/wandb/
-GraphToken/examples/
+fine-tuning/qwen3-4b-*/
+fine-tuning/wandb/
+fine-tuning/examples/

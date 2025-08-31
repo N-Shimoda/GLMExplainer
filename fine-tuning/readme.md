@@ -8,9 +8,7 @@ Execute fine-tuning using QLoRA.
 
 ```shell
 python ft_qwen3_4b.py \
-  --do_train \
   --subset [subset] \
-  --output_dir "qwen3-4b-[subset] \
   --wandb
 ```
 
@@ -24,8 +22,10 @@ python eval.py --subset [subset]
 
 (ii) Evaluate the **fine-tuned** model:
 
+`[date]` contains `MMDDhhmm` format of the date on which the training was executed.
+
 ```shell
 python eval.py \
   --subset [subset] \
-  --model_path "./qwen3-4b-[subset]/checkpoint-final"  # added
+  --model_path "./qwen3-4b-[subset]/[date]/checkpoint-final"  # path to the checkpoint
 ```
