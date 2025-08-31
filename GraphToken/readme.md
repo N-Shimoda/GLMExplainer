@@ -4,6 +4,8 @@
 
 ### Fine-tuning
 
+Execute fine-tuning using QLoRA.
+
 ```shell
 python ft_qwen3_4b.py \
   --do_train \
@@ -14,7 +16,7 @@ python ft_qwen3_4b.py \
 
 ### Evaluation
 
-Evaluate the **fine-tuned** model:
+(i) Evaluate the **fine-tuned** model:
 
 ```shell
 python eval.py \
@@ -22,7 +24,7 @@ python eval.py \
   --model_path "./qwen3-4b-[subset]/checkpoint-final"
 ```
 
-Evaluate the **pre-trained** model:
+(ii) Evaluate the **pre-trained** model:
 
 ```shell
 python eval.py --subset [subset]
