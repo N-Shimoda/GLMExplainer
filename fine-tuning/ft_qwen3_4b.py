@@ -14,10 +14,10 @@ import torch
 import wandb
 from accelerate.utils import set_seed
 from datasets import load_dataset
+from eval import eval_model
 from peft import LoraConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
-from utils.utils import eval_model
 
 
 def build_args():
@@ -33,7 +33,6 @@ def build_args():
 
     # Create parser
     p = argparse.ArgumentParser()
-    p.add_argument("--model_name", type=str, default="Qwen/Qwen3-4B-Instruct-2507", help="base model")
     p.add_argument(
         "--subset",
         type=str,
@@ -43,6 +42,9 @@ def build_args():
     p.add_argument("--output_dir", type=str, default=f"qwen3-4b-{DEFAULT_SUBSET}")
     p.add_argument("--wandb", action="store_true", help="Use Weights & Biases for logging")
     p.add_argument("--seed", type=int, default=42)
+
+    # flow
+    p.add_argument("--do_eval", action="store_true", help="Whether to run evaluation after fine-tuning")
 
     # Hyperparameters (general)
     p.add_argument("--epochs", type=float, default=3)
@@ -68,14 +70,15 @@ def to_conv_prompt_completion(example: Dict) -> Dict:
         "completion":[{"role": "assistant", "content": "<解答>"}]
       }
     """
-    assistant = example["answer"].strip()
-    return {
-        "prompt": [
-            {"role": "system", "content": SYS_INST},
-            {"role": "user", "content": example["question"].strip()},
-        ],
-        "completion": [{"role": "assistant", "content": assistant}],
-    }
+    # assistant = example["answer"].strip()
+    # return {
+    #     "prompt": [
+    #         {"role": "system", "content": SYS_INST},
+    #         {"role": "user", "content": example["question"].strip()},
+    #     ],
+    #     "completion": [{"role": "assistant", "content": assistant}],
+    # }
+    return {"prompt": example["question"], "completion": example["answer"]}
 
 
 def train_model(train_raw, eval_raw, subset, output_dir: str):
@@ -84,7 +87,7 @@ def train_model(train_raw, eval_raw, subset, output_dir: str):
     train_ds = train_raw.map(to_conv_prompt_completion, remove_columns=cols)
     eval_ds = eval_raw.map(to_conv_prompt_completion, remove_columns=cols)
 
-    print("First sample", train_ds[0])
+    print("First example for training", train_ds[0])
 
     # 4bit 量子化（QLoRA）
     bnb_config = BitsAndBytesConfig(
@@ -95,16 +98,16 @@ def train_model(train_raw, eval_raw, subset, output_dir: str):
     )
 
     model = AutoModelForCausalLM.from_pretrained(
-        args.model_name,
+        "Qwen/Qwen3-4B-Instruct-2507",
         quantization_config=bnb_config,
         device_map="auto",
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
         attn_implementation="flash_attention_2",
     )
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name, use_fast=False)
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507", use_fast=False)
     if tokenizer.pad_token is None:
-        print("Here!")
+        print("Pad token has been explicitly set as EOS token.")
         tokenizer.pad_token = tokenizer.eos_token
 
     # LoRA 設定（Qwen 系の典型的な投影名）
@@ -158,23 +161,22 @@ if __name__ == "__main__":
     args = build_args()
     set_seed(args.seed)
 
-    OUTPUT_PREFIX = f"qwen3-4b-{args.subset}"
-    OUTPUT_DIR = os.path.join(OUTPUT_PREFIX, time.strftime("%m%d%H%M"))
+    OUTPUT_DIR = os.path.join(args.subset, time.strftime("%m%d%H%M"))
 
     wandb.init(project="GraphQA-ft")
 
     # Build system instruction
-    match args.subset:
-        case "node_count":
-            TASK_INST = "Answer ONLY with the final number of nodes."
-        case "edge_count":
-            TASK_INST = "Answer ONLY with the final number of edges."
-        case "cycle_check":
-            TASK_INST = "Answer ONLY with Yes or No."
-        case _:
-            raise NotImplementedError(f"Unsupported subset: {args.subset}")
+    # match args.subset:
+    #     case "node_count":
+    #         TASK_INST = "Answer ONLY with the final number of nodes."
+    #     case "edge_count":
+    #         TASK_INST = "Answer ONLY with the final number of edges."
+    #     case "cycle_check":
+    #         TASK_INST = "Answer ONLY with Yes or No."
+    #     case _:
+    #         raise NotImplementedError(f"Unsupported subset: {args.subset}")
 
-    SYS_INST = "You are a careful graph reasoning assistant.\n" + TASK_INST
+    # SYS_INST = "You are a careful graph reasoning assistant.\n" + TASK_INST
 
     # Load GraphQA dataset
     print(f"[INFO] Load GraphQA: subset={args.subset}")
@@ -186,8 +188,11 @@ if __name__ == "__main__":
     train_model(train_raw, eval_raw, args.subset, OUTPUT_DIR)
 
     # Evaluate the trained model
-    model_path = os.path.join(OUTPUT_DIR, "checkpoint-final")
-    start_time = time.time()
-    acc, unknowns = eval_model(model_path, eval_raw, args.subset, SYS_INST)
-    wandb.log({"test_accuracy": acc, "test_unknown": unknowns})
-    print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
+    if args.do_eval:
+        print("[INFO] Start evaluation")
+        model_path = os.path.join(OUTPUT_DIR, "checkpoint-final")
+        start_time = time.time()
+        SYS_INST = ""
+        acc, unknowns = eval_model(model_path, eval_raw, args.subset, SYS_INST)
+        wandb.log({"test_accuracy": acc, "test_unknown": unknowns})
+        print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")

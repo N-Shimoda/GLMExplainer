@@ -9,6 +9,7 @@ Execute fine-tuning using QLoRA.
 ```shell
 python ft_qwen3_4b.py \
   --subset [subset] \
+  --epochs [epochs] \
   --wandb
 ```
 
