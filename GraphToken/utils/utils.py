@@ -41,8 +41,6 @@ def comp_accuracy(
         case "node_count" | "edge_count":
             digit_ans_li = [ref.strip().split(".")[0] for ref in refs]
             preds = [pred.split("assistant\n")[-1] for pred in preds]
-            print("preds", preds)
-            print("digit_ans_li", digit_ans_li)
             acc = sum([d in pred for d, pred in zip(digit_ans_li, preds)]) / max(1, len(refs))
             num_unknown = 0
 

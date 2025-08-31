@@ -16,16 +16,16 @@ python ft_qwen3_4b.py \
 
 ### Evaluation
 
-(i) Evaluate the **fine-tuned** model:
+(i) Evaluate the **pre-trained** model:
+
+```shell
+python eval.py --subset [subset]
+```
+
+(ii) Evaluate the **fine-tuned** model:
 
 ```shell
 python eval.py \
   --subset [subset] \
-  --model_path "./qwen3-4b-[subset]/checkpoint-final"
-```
-
-(ii) Evaluate the **pre-trained** model:
-
-```shell
-python eval.py --subset [subset]
+  --model_path "./qwen3-4b-[subset]/checkpoint-final"  # added
 ```

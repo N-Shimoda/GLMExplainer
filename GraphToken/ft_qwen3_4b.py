@@ -159,7 +159,7 @@ if __name__ == "__main__":
     set_seed(args.seed)
 
     OUTPUT_PREFIX = f"qwen3-4b-{args.subset}"
-    OUTPUT_DIR = f"{OUTPUT_PREFIX}_{time.strftime('%m%d%H%M')}"
+    OUTPUT_DIR = os.path.join(OUTPUT_PREFIX, time.strftime("%m%d%H%M"))
 
     wandb.init(project="GraphQA-ft")
 
@@ -188,6 +188,6 @@ if __name__ == "__main__":
     # Evaluate the trained model
     model_path = os.path.join(OUTPUT_DIR, "checkpoint-final")
     start_time = time.time()
-    acc, unknowns = eval_model(model_path, eval_raw, args.subset)
+    acc, unknowns = eval_model(model_path, eval_raw, args.subset, SYS_INST)
     wandb.log({"test_accuracy": acc, "test_unknown": unknowns})
     print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")

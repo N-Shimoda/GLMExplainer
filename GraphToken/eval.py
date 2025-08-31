@@ -54,5 +54,5 @@ if __name__ == "__main__":
 
     # Evaluate the model
     start_time = time.time()
-    eval_model(model_path, test_ds, args.subset)
+    eval_model(model_path, test_ds, args.subset, SYS_INST)
     print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
