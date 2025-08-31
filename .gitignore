@@ -1,6 +1,10 @@
-GraphToken/qwen3-4b-graphqa-qlora/
-GraphToken/wandb/
-GraphToken/examples-*.json
+# Python
+__pycache__/
 
 # dev
 .vscode/
+
+# GraphToken
+fine-tuning/qwen3-4b-*/
+fine-tuning/wandb/
+fine-tuning/examples/
