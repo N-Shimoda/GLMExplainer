@@ -2,6 +2,7 @@
 mkdir -p ../logs
 
 for subset in node_count edge_count cycle_check triangle_counting maximum_flow; do
+  echo# empty line
   start_time=$(date +%s)
   python ft_qwen3_4b.py \
     --subset "$subset" \

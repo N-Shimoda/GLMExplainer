@@ -4,7 +4,15 @@
 
 ### Fine-tuning
 
-Execute fine-tuning using QLoRA.
+You can fine-tune all subsets at once and log results using the provided script:
+
+```shell
+bash scripts/ft_all.sh
+```
+
+This will run `ft_qwen3_4b.py` for each subset (node_count, edge_count, cycle_check, triangle_counting, maximum_flow) and log the results to `../logs/ft_all.log`.
+
+To run fine-tuning for a single subset manually:
 
 ```shell
 python ft_qwen3_4b.py \
@@ -15,18 +23,25 @@ python ft_qwen3_4b.py \
 
 ### Evaluation
 
-(i) Evaluate the **pre-trained** model:
+You can evaluate all subsets at once using the provided script:
 
 ```shell
-python eval.py --subset [subset]
+bash scripts/eval_all.sh [--local] [--quick]
 ```
 
-(ii) Evaluate the **fine-tuned** model:
+- `--local`: Evaluate the latest fine-tuned model for each subset. The script automatically detects the latest checkpoint directory (e.g., `./models/[subset]/[date]/checkpoint-final`).
+- `--quick`: Passes the `--quick` flag to `eval.py` for faster evaluation (if supported).
 
-`[date]` contains `MMDDhhmm` format of the date on which the training was executed.
+If `--local` is not specified, the script evaluates the pre-trained model.
+
+To evaluate a single subset manually:
 
 ```shell
+# Pre-trained model
+python eval.py --subset [subset]
+
+# Fine-tuned model (replace [date] with the actual directory name, e.g., 0901_2115)
 python eval.py \
   --subset [subset] \
-  --model_path "./qwen3-4b-[subset]/[date]/checkpoint-final"  # path to the checkpoint
+  --model_path "./models/[subset]/[date]/checkpoint-final"
 ```
