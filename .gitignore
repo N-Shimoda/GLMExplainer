@@ -8,4 +8,4 @@ __pycache__/
 fine-tuning/qwen3-4b-*/
 fine-tuning/wandb/
 fine-tuning/examples/
-fine-tuning/node_count/
+fine-tuning/models/

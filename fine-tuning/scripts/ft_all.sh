@@ -1,9 +1,20 @@
 #!/bin/bash
+mkdir -p ../logs
 
-for subset in cycle_check node_count edge_count; do
+for subset in node_count edge_count cycle_check triangle_counting maximum_flow; do
+  start_time=$(date +%s)
   python ft_qwen3_4b.py \
-    --do_train \
     --subset "$subset" \
-    --output_dir "qwen3-4b-$subset" \
-    --wandb
+    --epochs 3 \
+    --wandb --do_eval
+  status=$?
+  end_time=$(date +%s)
+  duration=$((end_time - start_time))
+  min=$((duration / 60))
+  sec=$((duration % 60))
+  if [ $status -eq 0 ]; then
+    echo "[`date "+%Y-%m-%d %H:%M:%S"`] [SUCCESS] Fine-tuning completed for $subset in ${min} min ${sec} seconds" >> ../logs/ft_all.log
+  else
+    echo "[`date "+%Y-%m-%d %H:%M:%S"`] [ERROR] Fine-tuning failed for $subset (exit code $status)" >> ../logs/ft_all.log
+  fi
 done
