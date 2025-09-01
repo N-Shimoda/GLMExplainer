@@ -140,19 +140,25 @@ if __name__ == "__main__":
 
     MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
     args = build_args()
+    print("-" * 12)
 
     # Dataset
-    test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
     if args.quick:
-        test_ds = test_ds.select(range(96))  # for quick testing
+        N = 96
+        test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
+        test_ds = test_ds.select(range(N))  # for quick testing
+        print(f"Subset: {args.subset} (top {N} samples)")
+    else:
+        test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
+        print(f"Subset: {args.subset}")
 
     # Load the model
     if args.model_path:
         model_path = args.model_path
-        print(f"--------\nModel: {model_path} (fine-tuned)")
+        print(f"Model: {model_path} (fine-tuned)")
     else:
         model_path = MODEL_NAME
-        print(f"--------\nModel: {model_path} (pre-trained)")
+        print(f"Model: {model_path} (pre-trained)")
 
     # Evaluate the model
     start_time = time.time()
