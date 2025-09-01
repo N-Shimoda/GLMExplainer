@@ -21,14 +21,14 @@ def build_args():
         An object containing all the parsed command-line arguments.
     """
     p = argparse.ArgumentParser()
-    p.add_argument("--model_name", type=str, default="Qwen/Qwen3-4B-Instruct-2507", help="base model")
     p.add_argument(
         "--subset",
+        choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
         type=str,
         required=True,
-        help="GraphQA subset（see https://huggingface.co/datasets/baharef/GraphQA）",
+        help="Specifies GraphQA subset（https://huggingface.co/datasets/baharef/GraphQA）",
     )
-    p.add_argument("--model_path", type=str, default=None)
+    p.add_argument("--model_path", type=str, default=None, help="Checkpoint path of the fine-tuned model.")
 
     return p.parse_args()
 
@@ -82,11 +82,7 @@ def comp_accuracy(
     return acc, num_unknown
 
 
-def eval_model(
-    model_path,
-    eval_raw: arrow_dataset.Dataset,
-    subset: Literal["cycle_check", "node_count", "edge_count", "triangle_counting", "maximum_flow"],
-):
+def eval_model(model_path, eval_raw: arrow_dataset.Dataset, subset: str):
     model = AutoModelForCausalLM.from_pretrained(model_path, device_map="auto")
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507", padding_side="left", use_fast=False)
     gen_cfg = GenerationConfig(
@@ -103,7 +99,7 @@ def eval_model(
         prompt_strs = [
             tokenizer.apply_chat_template(
                 [
-                    {"role": "system", "content": "You are a careful graph reasoner."},
+                    # {"role": "system", "content": "You are a careful graph reasoner."},
                     {"role": "user", "content": user_msg},
                 ],
                 tokenize=False,
@@ -113,6 +109,8 @@ def eval_model(
             for user_msg in user_msgs
         ]
         input_ids = tokenizer(prompt_strs, return_tensors="pt", padding=True, truncation=True).to(model.device)
+
+        # input_ids = tokenizer(user_msgs, return_tensors="pt", padding=True, truncation=True).to(model.device)
 
         with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             out = model.generate(**input_ids, generation_config=gen_cfg)
@@ -141,15 +139,16 @@ def eval_model(
 
 if __name__ == "__main__":
     args = build_args()
+    MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
 
     # Dataset and model path
     test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
-    test_ds = test_ds.select(range(96))
+    test_ds = test_ds.select(range(96))  # for quick testing
     if args.model_path:
         model_path = args.model_path
         print(f"[INFO] Evaluating a fine-tuned model: {model_path}")
     else:
-        model_path = args.model_name
+        model_path = MODEL_NAME
         print(f"[INFO] Evaluating a pre-trained model: {model_path}")
 
     # Evaluate the model
