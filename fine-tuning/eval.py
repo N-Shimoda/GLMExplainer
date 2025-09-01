@@ -44,10 +44,21 @@ def _normalize_text(s: str) -> str:
 def comp_accuracy(
     preds: List[str],
     refs: List[str],
-    subset: Literal["cycle_check", "node_count", "edge_count"],
+    subset: Literal["cycle_check", "node_count", "edge_count", "triangle_counting", "maximum_flow"],
     exact_match: bool = False,
-) -> float:
-    if subset not in ["cycle_check", "node_count", "edge_count"]:
+) -> tuple[float, int]:
+    """
+    Compute the accuracy of the model's predictions depending on the subset.
+
+    Returns
+    -------
+    acc : float
+        The accuracy of the model's predictions.
+    unknowns : int
+        The number of unknown predictions.
+        This value is only defined for the "cycle_check" subset.
+    """
+    if subset not in ["cycle_check", "node_count", "edge_count", "triangle_counting", "maximum_flow"]:
         raise NotImplementedError(f"Unsupported subset: {subset}")
 
     match subset:
@@ -62,7 +73,7 @@ def comp_accuracy(
                 refs_yes_no = ["yes" if "yes" in ref else "no" if "no" in ref else "unknown" for ref in low_refs]
                 acc = sum(p == r for p, r in zip(preds_yes_no, refs_yes_no)) / max(1, len(refs_yes_no))
                 num_unknown = sum(p == "unknown" for p in preds_yes_no)
-        case "node_count" | "edge_count":
+        case "node_count" | "edge_count" | "triangle_counting" | "maximum_flow":
             digit_ans_li = [ref.strip().split(".")[0] for ref in refs]
             preds = [pred.split("assistant\n")[-1] for pred in preds]
             acc = sum([d in pred for d, pred in zip(digit_ans_li, preds)]) / max(1, len(refs))
@@ -74,8 +85,7 @@ def comp_accuracy(
 def eval_model(
     model_path,
     eval_raw: arrow_dataset.Dataset,
-    subset: Literal["cycle_check", "node_count", "edge_count"],
-    SYS_INST: str,
+    subset: Literal["cycle_check", "node_count", "edge_count", "triangle_counting", "maximum_flow"],
 ):
     model = AutoModelForCausalLM.from_pretrained(model_path, device_map="auto")
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507", padding_side="left", use_fast=False)
@@ -92,22 +102,18 @@ def eval_model(
         user_msgs = [f"{q.strip()}" for q in batch["question"]]
         prompt_strs = [
             tokenizer.apply_chat_template(
-                (
-                    [
-                        {"role": "system", "content": SYS_INST},
-                        {"role": "user", "content": user_msg},
-                    ]
-                    if SYS_INST
-                    else [{"role": "user", "content": user_msg}]
-                ),
+                [
+                    {"role": "system", "content": "You are a careful graph reasoner."},
+                    {"role": "user", "content": user_msg},
+                ],
                 tokenize=False,
-                # continue_final_message=True,
-                add_generation_prompt=True,
+                add_special_tokens=False,
+                continue_final_message=True,
             )
             for user_msg in user_msgs
         ]
-
         input_ids = tokenizer(prompt_strs, return_tensors="pt", padding=True, truncation=True).to(model.device)
+
         with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             out = model.generate(**input_ids, generation_config=gen_cfg)
 
@@ -136,22 +142,9 @@ def eval_model(
 if __name__ == "__main__":
     args = build_args()
 
-    # Build system instruction
-    # match args.subset:
-    #     case "node_count":
-    #         TASK_INST = "Answer ONLY with the final number of nodes."
-    #     case "edge_count":
-    #         TASK_INST = "Answer ONLY with the final number of edges."
-    #     case "cycle_check":
-    #         TASK_INST = "Answer ONLY with Yes or No."
-    #     case _:
-    #         raise NotImplementedError(f"Unsupported subset: {args.subset}")
-
-    # SYS_INST = "You are a careful graph reasoning assistant.\n" + TASK_INST
-    SYS_INST = ""
-
     # Dataset and model path
     test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
+    test_ds = test_ds.select(range(96))
     if args.model_path:
         model_path = args.model_path
         print(f"[INFO] Evaluating a fine-tuned model: {model_path}")
@@ -161,5 +154,5 @@ if __name__ == "__main__":
 
     # Evaluate the model
     start_time = time.time()
-    eval_model(model_path, test_ds, args.subset, SYS_INST)
+    eval_model(model_path, test_ds, args.subset)
     print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")

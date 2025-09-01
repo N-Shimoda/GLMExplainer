@@ -177,6 +177,7 @@ if __name__ == "__main__":
     #         raise NotImplementedError(f"Unsupported subset: {args.subset}")
 
     # SYS_INST = "You are a careful graph reasoning assistant.\n" + TASK_INST
+    SYS_INST = ""
 
     # Load GraphQA dataset
     print(f"[INFO] Load GraphQA: subset={args.subset}")
@@ -192,7 +193,6 @@ if __name__ == "__main__":
         print("[INFO] Start evaluation")
         model_path = os.path.join(OUTPUT_DIR, "checkpoint-final")
         start_time = time.time()
-        SYS_INST = ""
         acc, unknowns = eval_model(model_path, eval_raw, args.subset, SYS_INST)
         wandb.log({"test_accuracy": acc, "test_unknown": unknowns})
         print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
