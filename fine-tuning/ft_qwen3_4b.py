@@ -35,6 +35,7 @@ def build_args():
     p = argparse.ArgumentParser()
     p.add_argument(
         "--subset",
+        choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
         type=str,
         default=DEFAULT_SUBSET,
         help="GraphQA subset（see https://huggingface.co/datasets/baharef/GraphQA）",
@@ -77,7 +78,7 @@ def to_conv_prompt_completion(example: Dict) -> Dict:
     #     ],
     #     "completion": [{"role": "user", "content": example["answer"]}],
     # }
-    return {"prompt": example["question"], "completion": example["answer"]}
+    return {"prompt": example["question"].strip(), "completion": example["answer"].strip()}
 
 
 def train_model(train_raw, eval_raw, run_name: str, output_dir: str):
@@ -105,9 +106,6 @@ def train_model(train_raw, eval_raw, run_name: str, output_dir: str):
         attn_implementation="flash_attention_2",
     )
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507", use_fast=False)
-    if tokenizer.pad_token is None:
-        print("Pad token has been explicitly set as EOS token.")
-        tokenizer.pad_token = tokenizer.eos_token
 
     # LoRA 設定（Qwen 系の典型的な投影名）
     peft_cfg = LoraConfig(
@@ -165,9 +163,9 @@ if __name__ == "__main__":
 
     time_stamp = time.strftime("%m%d_%H%M")
     subset_map = {
-        "cycle_check": "cc",
         "node_count": "nc",
         "edge_count": "ec",
+        "cycle_check": "cc",
         "triangle_counting": "tc",
         "maximum_flow": "mf",
     }
@@ -178,7 +176,11 @@ if __name__ == "__main__":
     # Load GraphQA dataset
     print(f"[INFO] Load GraphQA: subset={args.subset}")
     train_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_train")
-    eval_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_validation")
+    eval_raw = load_dataset(
+        "baharef/GraphQA",
+        args.subset,
+        split="zero_shot_validation" if args.subset != "maximum_flow" else "zero_shot_test",
+    )
 
     # Fine-tune the model using QLoRA
     print("[INFO] Start training")
