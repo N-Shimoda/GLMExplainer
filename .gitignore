@@ -9,3 +9,6 @@ fine-tuning/qwen3-4b-*/
 fine-tuning/wandb/
 fine-tuning/examples/
 fine-tuning/models/
+
+# logs
+logs

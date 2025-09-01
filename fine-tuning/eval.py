@@ -29,6 +29,7 @@ def build_args():
         help="Specifies GraphQA subset（https://huggingface.co/datasets/baharef/GraphQA）",
     )
     p.add_argument("--model_path", type=str, default=None, help="Checkpoint path of the fine-tuned model.")
+    p.add_argument("--quick", action="store_true", help="Whether to run in quick mode.")
 
     return p.parse_args()
 
@@ -109,7 +110,6 @@ def eval_model(model_path, eval_raw: arrow_dataset.Dataset, subset: str):
             for user_msg in user_msgs
         ]
         input_ids = tokenizer(prompt_strs, return_tensors="pt", padding=True, truncation=True).to(model.device)
-
         # input_ids = tokenizer(user_msgs, return_tensors="pt", padding=True, truncation=True).to(model.device)
 
         with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
@@ -132,24 +132,27 @@ def eval_model(model_path, eval_raw: arrow_dataset.Dataset, subset: str):
     examples = [{"question": q, "prediction": p, "ground_truth": r} for q, p, r in list(zip(inputs, preds, refs))[:10]]
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(examples, f, ensure_ascii=False, indent=2)
-    print(f"[INFO] Saved 10 examples to {filename}")
 
     return acc, unknowns
 
 
 if __name__ == "__main__":
-    args = build_args()
-    MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
 
-    # Dataset and model path
+    MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
+    args = build_args()
+
+    # Dataset
     test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
-    test_ds = test_ds.select(range(96))  # for quick testing
+    if args.quick:
+        test_ds = test_ds.select(range(96))  # for quick testing
+
+    # Load the model
     if args.model_path:
         model_path = args.model_path
-        print(f"[INFO] Evaluating a fine-tuned model: {model_path}")
+        print(f"--------\nModel: {model_path} (fine-tuned)")
     else:
         model_path = MODEL_NAME
-        print(f"[INFO] Evaluating a pre-trained model: {model_path}")
+        print(f"--------\nModel: {model_path} (pre-trained)")
 
     # Evaluate the model
     start_time = time.time()
