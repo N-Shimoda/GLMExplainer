@@ -190,8 +190,9 @@ if __name__ == "__main__":
     if args.do_eval:
         print("[INFO] Start evaluation")
         model_path = os.path.join(OUTPUT_DIR, "checkpoint-final")
+        test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
         start_time = time.time()
-        acc, unknowns = eval_model(model_path, eval_raw, args.subset)
+        acc, unknowns = eval_model(model_path, test_ds, args.subset)
         if args.wandb:
             wandb.log({"test_accuracy": acc, "test_unknown": unknowns})
         print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")

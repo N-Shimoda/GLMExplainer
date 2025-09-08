@@ -1,8 +1,10 @@
 #!/bin/bash
+
 mkdir -p ../logs
+> ../logs/ft_all.log
 
 for subset in node_count edge_count cycle_check triangle_counting maximum_flow; do
-  echo# empty line
+  echo
   start_time=$(date +%s)
   python ft_qwen3_4b.py \
     --subset "$subset" \

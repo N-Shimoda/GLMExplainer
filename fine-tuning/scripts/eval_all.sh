@@ -1,5 +1,5 @@
 #!/bin/bash
-# This script evaluates models for all subsets.
+
 USE_LOCAL=false
 USE_QUICK=false
 for arg in "$@"; do

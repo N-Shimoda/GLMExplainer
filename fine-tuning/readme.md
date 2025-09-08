@@ -27,6 +27,8 @@ You can evaluate all subsets at once using the provided script:
 
 ```shell
 bash scripts/eval_all.sh [--local] [--quick]
+
+TQDM_DISABLE=1 bash ./scripts/eval_all.sh > ../logs/eval_all.log 2>&1 &. # Execute in background
 ```
 
 - `--local`: Evaluate the latest fine-tuned model for each subset. The script automatically detects the latest checkpoint directory (e.g., `./models/[subset]/[date]/checkpoint-final`).
