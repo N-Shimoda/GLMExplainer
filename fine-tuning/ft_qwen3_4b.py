@@ -14,10 +14,10 @@ import torch
 import wandb
 from accelerate.utils import set_seed
 from datasets import load_dataset
+from eval import eval_model
 from peft import LoraConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
-from utils.utils import eval_model
 
 
 def build_args():
@@ -33,9 +33,9 @@ def build_args():
 
     # Create parser
     p = argparse.ArgumentParser()
-    p.add_argument("--model_name", type=str, default="Qwen/Qwen3-4B-Instruct-2507", help="base model")
     p.add_argument(
         "--subset",
+        choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
         type=str,
         default=DEFAULT_SUBSET,
         help="GraphQA subset（see https://huggingface.co/datasets/baharef/GraphQA）",
@@ -43,6 +43,9 @@ def build_args():
     p.add_argument("--output_dir", type=str, default=f"qwen3-4b-{DEFAULT_SUBSET}")
     p.add_argument("--wandb", action="store_true", help="Use Weights & Biases for logging")
     p.add_argument("--seed", type=int, default=42)
+
+    # flow
+    p.add_argument("--do_eval", action="store_true", help="Whether to run evaluation after fine-tuning")
 
     # Hyperparameters (general)
     p.add_argument("--epochs", type=float, default=3)
@@ -68,23 +71,23 @@ def to_conv_prompt_completion(example: Dict) -> Dict:
         "completion":[{"role": "assistant", "content": "<解答>"}]
       }
     """
-    assistant = example["answer"].strip()
-    return {
-        "prompt": [
-            {"role": "system", "content": SYS_INST},
-            {"role": "user", "content": example["question"].strip()},
-        ],
-        "completion": [{"role": "assistant", "content": assistant}],
-    }
+    # return {
+    #     "prompt": [
+    #         {"role": "system", "content": "You are a careful graph reasoner."},
+    #         {"role": "user", "content": example["question"]},
+    #     ],
+    #     "completion": [{"role": "user", "content": example["answer"]}],
+    # }
+    return {"prompt": example["question"].strip(), "completion": example["answer"].strip()}
 
 
-def train_model(train_raw, eval_raw, subset, output_dir: str):
+def train_model(train_raw, eval_raw, run_name: str, output_dir: str):
     # TRL 用に会話型 prompt-completion へ変換
     cols = train_raw.column_names
     train_ds = train_raw.map(to_conv_prompt_completion, remove_columns=cols)
     eval_ds = eval_raw.map(to_conv_prompt_completion, remove_columns=cols)
 
-    print("First sample", train_ds[0])
+    print("First example for training", train_ds[0])
 
     # 4bit 量子化（QLoRA）
     bnb_config = BitsAndBytesConfig(
@@ -95,17 +98,14 @@ def train_model(train_raw, eval_raw, subset, output_dir: str):
     )
 
     model = AutoModelForCausalLM.from_pretrained(
-        args.model_name,
+        "Qwen/Qwen3-4B-Instruct-2507",
         quantization_config=bnb_config,
         device_map="auto",
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
         attn_implementation="flash_attention_2",
     )
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name, use_fast=False)
-    if tokenizer.pad_token is None:
-        print("Here!")
-        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507", use_fast=False)
 
     # LoRA 設定（Qwen 系の典型的な投影名）
     peft_cfg = LoraConfig(
@@ -133,9 +133,10 @@ def train_model(train_raw, eval_raw, subset, output_dir: str):
         packing=True,
         bf16=True,
         optim="adamw_8bit",
-        report_to="wandb",
-        run_name=f"qwen3-4b-{subset}" if args.wandb else None,
+        report_to="wandb" if args.wandb else "none",
+        # run_name=run_name if args.wandb else None,
         completion_only_loss=True,  # prompt は損失から除外（prompt-completion）
+        eos_token=tokenizer.eos_token,
         # Qwen3 は tokenizer に chat template が入っているので自動適用される
         # （必要に応じて eos_token を指定可：SFTConfig(eos_token=tokenizer.eos_token)）
     )
@@ -149,6 +150,8 @@ def train_model(train_raw, eval_raw, subset, output_dir: str):
     )
 
     # 学習
+    if args.wandb:
+        wandb.init(project="GraphQA-ft", name=run_name)
     trainer.train()
     trainer.save_model(os.path.join(output_dir, "checkpoint-final"))
     tokenizer.save_pretrained(output_dir)
@@ -158,36 +161,38 @@ if __name__ == "__main__":
     args = build_args()
     set_seed(args.seed)
 
-    OUTPUT_PREFIX = f"qwen3-4b-{args.subset}"
-    OUTPUT_DIR = os.path.join(OUTPUT_PREFIX, time.strftime("%m%d%H%M"))
-
-    wandb.init(project="GraphQA-ft")
-
-    # Build system instruction
-    match args.subset:
-        case "node_count":
-            TASK_INST = "Answer ONLY with the final number of nodes."
-        case "edge_count":
-            TASK_INST = "Answer ONLY with the final number of edges."
-        case "cycle_check":
-            TASK_INST = "Answer ONLY with Yes or No."
-        case _:
-            raise NotImplementedError(f"Unsupported subset: {args.subset}")
-
-    SYS_INST = "You are a careful graph reasoning assistant.\n" + TASK_INST
+    time_stamp = time.strftime("%m%d_%H%M")
+    subset_map = {
+        "node_count": "nc",
+        "edge_count": "ec",
+        "cycle_check": "cc",
+        "triangle_counting": "tc",
+        "maximum_flow": "mf",
+    }
+    subset_abr = subset_map.get(args.subset, "OTHER")
+    RUN_NAME = f"{subset_abr}-{time_stamp}"
+    OUTPUT_DIR = os.path.join("models", args.subset, time_stamp)
 
     # Load GraphQA dataset
     print(f"[INFO] Load GraphQA: subset={args.subset}")
     train_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_train")
-    eval_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_validation")
+    eval_raw = load_dataset(
+        "baharef/GraphQA",
+        args.subset,
+        split="zero_shot_validation" if args.subset != "maximum_flow" else "zero_shot_test",
+    )
 
     # Fine-tune the model using QLoRA
     print("[INFO] Start training")
-    train_model(train_raw, eval_raw, args.subset, OUTPUT_DIR)
+    train_model(train_raw, eval_raw, RUN_NAME, OUTPUT_DIR)
 
     # Evaluate the trained model
-    model_path = os.path.join(OUTPUT_DIR, "checkpoint-final")
-    start_time = time.time()
-    acc, unknowns = eval_model(model_path, eval_raw, args.subset, SYS_INST)
-    wandb.log({"test_accuracy": acc, "test_unknown": unknowns})
-    print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
+    if args.do_eval:
+        print("[INFO] Start evaluation")
+        model_path = os.path.join(OUTPUT_DIR, "checkpoint-final")
+        test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
+        start_time = time.time()
+        acc, unknowns = eval_model(model_path, test_ds, args.subset)
+        if args.wandb:
+            wandb.log({"test_accuracy": acc, "test_unknown": unknowns})
+        print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
