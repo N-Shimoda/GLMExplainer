@@ -42,7 +42,7 @@ class GraphTokenHead(nn.Module):
         return out
 
 
-class GraphTokenLLM:
+class GraphTokenLM:
     def __init__(self):
         self.llm_path = "Qwen/Qwen3-4B-Instruct-2507"
         self.llm = AutoModelForCausalLM.from_pretrained(self.llm_path)
