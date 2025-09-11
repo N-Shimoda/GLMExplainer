@@ -64,6 +64,3 @@ if __name__ == "__main__":
 
     pprint(train_ds)
     pprint(eval_ds)
-    pprint(train_ds)
-    pprint(eval_ds)
-    pprint(eval_ds)

@@ -7,7 +7,6 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 class GraphEncoder(nn.Module):
     def __init__(self, in_dim, hidden_dim=128, num_layers=2, dropout=0.1):
         super().__init__()
-        assert num_layers >= 1
         self.convs = nn.ModuleList()
         self.convs.append(GCNConv(in_dim, hidden_dim))
         for _ in range(num_layers - 1):
@@ -42,10 +41,22 @@ class GraphTokenHead(nn.Module):
         return out
 
 
-class GraphTokenLM:
+class GraphTokenLM(nn.Module):
     def __init__(self):
+        super().__init__()
         self.llm_path = "Qwen/Qwen3-4B-Instruct-2507"
         self.llm = AutoModelForCausalLM.from_pretrained(self.llm_path)
         self.tokenizer = AutoTokenizer.from_pretrained(self.llm_path)
         self.gnn = GraphEncoder(in_dim=4)
         self.dp = GraphTokenHead(gnn_hidden_dim=128, lm_embed_dim=2560)
+
+    def forward(self, input_ids, attention_mask, x, edge_index, batch):
+        # Encode graph
+        _, hg = self.gnn(x, edge_index, batch)
+        # Decode graph
+        graph_tokens = self.dp(hg)
+        # Prepare inputs for LLM
+        inputs = self.tokenizer(input_ids, attention_mask=attention_mask, return_tensors="pt")
+        # Forward through LLM
+        outputs = self.llm(**inputs, graph_tokens=graph_tokens)
+        return outputs
