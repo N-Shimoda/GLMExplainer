@@ -46,6 +46,8 @@ def train_glm():
         fp16=True,
         bf16=False,
         optim="lion_32bit",
+        report_to="none",
+        dataset_text_field="task_description",
     )
     trainer = SFTTrainer(model, args=sft_config, train_dataset=train_ds, eval_dataset=eval_ds)
     trainer.train()
@@ -66,8 +68,8 @@ if __name__ == "__main__":
     eval_ds = eval_ds.map(add_graph_column)
     pprint(train_ds)
 
-    print("Training example:")
-    pprint(train_ds[0])
+    # print("Training example:")
+    # pprint(train_ds[0])
 
-    # print("Start training...")
-    # train_glm()
+    print("Start training...")
+    train_glm()

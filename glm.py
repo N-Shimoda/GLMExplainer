@@ -5,12 +5,12 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 class GraphEncoder(nn.Module):
-    def __init__(self, in_dim, hidden_dim=128, num_layers=2, dropout=0.1):
+    def __init__(self, in_dim, hidden_dim=128, dropout=0.1):
         super().__init__()
+        # 2-layer GCN
         self.convs = nn.ModuleList()
         self.convs.append(GCNConv(in_dim, hidden_dim))
-        for _ in range(num_layers - 1):
-            self.convs.append(GCNConv(hidden_dim, hidden_dim))
+        self.convs.append(GCNConv(hidden_dim, hidden_dim))
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, edge_index, batch):
@@ -41,7 +41,7 @@ class GraphTokenHead(nn.Module):
         return out
 
 
-class GraphTokenLM(nn.Module):
+class GraphTokenLM:
     def __init__(self):
         super().__init__()
         self.llm_path = "Qwen/Qwen3-4B-Instruct-2507"
