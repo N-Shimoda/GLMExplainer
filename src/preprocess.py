@@ -1,4 +1,5 @@
 import re
+from pprint import pprint
 from typing import Any, Dict, List, Tuple
 
 import torch
@@ -6,7 +7,7 @@ import torch
 
 def extract_nodes_from_text(text: str) -> List[int]:
     """
-    テキストからグラフのノードリストを抽出します。
+    Extracts a list of graph nodes from the given text.
     """
     match = re.search(r"among nodes (.*?)\.", text, re.DOTALL)
     if match:
@@ -18,9 +19,9 @@ def extract_nodes_from_text(text: str) -> List[int]:
 
 def extract_edges_from_text(text: str) -> List[Tuple[int, int]]:
     """
-    テキストからグラフの辺のリストを抽出します。
+    Extracts a list of graph edges from the given text.
     """
-    # 【修正点】\. と Q: の間に \s* を追加し、改行やスペースに対応
+    # [Note] Added \s* between . and Q: to handle newlines and spaces
     match = re.search(r"The edges in G are: (.*?)\.\s*Q:", text, re.DOTALL)
     if match:
         edges_str = match.group(1)
@@ -32,7 +33,7 @@ def extract_edges_from_text(text: str) -> List[Tuple[int, int]]:
 
 def create_pyg_dict(nodes: List[int], edges: List[Tuple[int, int]], node_feat_dim: int = 1) -> Dict[str, Any]:
     """
-    ノードと辺のリストからPyG形式のグラフ辞書を作成します。
+    Creates a PyG-format graph dictionary from lists of nodes and edges.
     """
     num_nodes = len(nodes)
     x = torch.zeros((num_nodes, node_feat_dim), dtype=torch.float)
@@ -54,10 +55,10 @@ def create_pyg_dict(nodes: List[int], edges: List[Tuple[int, int]], node_feat_di
     }
 
 
-# --- 実行ブロック ---
+# --- Execution block ---
 if __name__ == "__main__":
 
-    # ユーザー提供のテキスト
+    # User-provided text
     text1 = (
         "In an undirected graph, (i,j) means that node i and node j are "
         "connected with an undirected edge. G describes a graph among "
@@ -68,20 +69,15 @@ if __name__ == "__main__":
         "A: "
     )
 
-    print("--- 処理結果 ---")
+    print("--- Processing result ---")
     nodes = extract_nodes_from_text(text1)
     edges = extract_edges_from_text(text1)
 
     if nodes:
         pyg_graph = create_pyg_dict(nodes, edges)
-
-        print(f"✅ 抽出したノード: {nodes}")
-        print(f"✅ 抽出した辺: {edges}")
-        print("\n✅ 生成されたPyG辞書:")
-
-        for key, tensor in pyg_graph.items():
-            print(f"  '{key}':")
-            print(f"    shape: {tensor.shape}")
-            print(f"    dtype: {tensor.dtype}")
+        print(f"✅ Extracted nodes: {nodes}")
+        print(f"✅ Extracted edges: {edges}")
+        print("\n✅ Generated PyG dictionary:")
+        pprint(pyg_graph, sort_dicts=False)
     else:
-        print("❌ グラフ情報の抽出に失敗しました。")
+        print("❌ Failed to extract graph information.")
