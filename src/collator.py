@@ -91,8 +91,6 @@ class GraphQACollator:
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
         # ---- 1) グラフのバッチ化 ----
         pyg_list = []
-        # print("Features")
-        # pprint(features, compact=True, width=120)
         for f in features:
             if "graph" not in f:
                 raise KeyError("Example is missing 'graph'.")
@@ -100,7 +98,7 @@ class GraphQACollator:
         graph_batch = PygBatch.from_data_list(pyg_list)
 
         # ---- 2) テキスト（tokenize or stack）----
-        batch: Dict[str, Any] = {"graph_batch": graph_batch}
+        batch: Dict[str, Any] = {"graph": graph_batch}
 
         if self.tokenizer is not None:
             # 2-1) ここでトークナイズ
