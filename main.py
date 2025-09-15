@@ -1,10 +1,13 @@
 import argparse
+import inspect
 from pprint import pprint
 
 from datasets import load_dataset
+from transformers import AutoTokenizer
 from trl import SFTConfig, SFTTrainer
 
 from rev_glm import GraphTokenLM
+from src.collator import GraphQACollator
 from src.preprocess import (
     create_pyg_dict,
     extract_edges_from_text,
@@ -18,7 +21,7 @@ def build_args():
         "--subset",
         type=str,
         choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
-        required=True,
+        default="edge_count",
     )
     return p.parse_args()
 
@@ -31,8 +34,12 @@ def add_graph_column(example):
     return example
 
 
-def train_glm():
+def train_glm(train_ds, eval_ds):
     model = GraphTokenLM()
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507")
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
     sft_config = SFTConfig(
         per_device_train_batch_size=2,
         per_device_eval_batch_size=2,
@@ -48,8 +55,19 @@ def train_glm():
         optim="lion_32bit",
         report_to="none",
         dataset_text_field="task_description",
+        remove_unused_columns=False,
     )
-    trainer = SFTTrainer(model, args=sft_config, train_dataset=train_ds, eval_dataset=eval_ds)
+
+    collator = GraphQACollator(tokenizer=tokenizer, text_field="task_description", max_length=512)
+
+    trainer = SFTTrainer(
+        model=model,
+        args=sft_config,
+        train_dataset=train_ds,
+        eval_dataset=eval_ds,
+        data_collator=collator,
+    )
+
     trainer.train()
 
 
@@ -68,8 +86,14 @@ if __name__ == "__main__":
     eval_ds = eval_ds.map(add_graph_column)
     pprint(train_ds)
 
+    for example in train_ds:
+        if "graph" not in example:
+            print("No `graph` column found for {}th example.".format(train_ds.index(example)))
+        elif example["graph"] is None:
+            print("`graph` column is None for {}th example.".format(train_ds.index(example)))
+
     # print("Training example:")
     # pprint(train_ds[0])
 
     print("Start training...")
-    train_glm()
+    train_glm(train_ds, eval_ds)
