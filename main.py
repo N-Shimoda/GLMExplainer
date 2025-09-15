@@ -1,5 +1,4 @@
 import argparse
-import inspect
 from pprint import pprint
 
 from datasets import load_dataset
@@ -35,7 +34,7 @@ def add_graph_column(example):
 
 
 def train_glm(train_ds, eval_ds):
-    model = GraphTokenLM()
+    model = GraphTokenLM(node_feat_dim=1)
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507")
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -85,15 +84,6 @@ if __name__ == "__main__":
     train_ds = train_ds.map(add_graph_column)
     eval_ds = eval_ds.map(add_graph_column)
     pprint(train_ds)
-
-    for example in train_ds:
-        if "graph" not in example:
-            print("No `graph` column found for {}th example.".format(train_ds.index(example)))
-        elif example["graph"] is None:
-            print("`graph` column is None for {}th example.".format(train_ds.index(example)))
-
-    # print("Training example:")
-    # pprint(train_ds[0])
 
     print("Start training...")
     train_glm(train_ds, eval_ds)
