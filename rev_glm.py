@@ -4,6 +4,7 @@ import torch.nn as nn
 # 例：PyTorch Geometric を使う GNN
 from torch_geometric.nn import GCNConv, global_mean_pool
 from transformers import AutoConfig, AutoModelForCausalLM, PreTrainedModel
+from transformers.generation.utils import GenerationMixin
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
 
@@ -61,7 +62,7 @@ class GraphTokenizer(nn.Module):
         return Hk  # [B, k, hidden]
 
 
-class GraphTokenLM(PreTrainedModel):
+class GraphTokenLM(PreTrainedModel, GenerationMixin):
     """
     GNN + (pool → project) で得た graph tokens を
     LLM の入力埋め込み（inputs_embeds）の先頭に連結して学習するモデル。
@@ -157,6 +158,7 @@ class GraphTokenLM(PreTrainedModel):
         graph=None,
         **generate_kwargs,
     ) -> CausalLMOutputWithPast:
+        print(graph["batch"])
         assert (input_ids is not None) or (
             inputs_embeds is not None
         ), "input_ids か inputs_embeds のいずれかが必要です"
@@ -195,6 +197,6 @@ class GraphTokenLM(PreTrainedModel):
         )
         return {"inputs_embeds": inputs_embeds, "attention_mask": attention_mask, "graph": None}
 
-    def generate(self, *args, **kwargs):
-        # HF generate をそのまま使えるように委譲（prepare_inputs_for_generation を利用）
-        return self.llm.generate(*args, **kwargs)
+    # def generate(self, *args, **kwargs):
+    #     # HF generate をそのまま使えるように委譲（prepare_inputs_for_generation を利用）
+    #     return self.llm.generate(*args, **kwargs)
