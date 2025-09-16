@@ -1,4 +1,5 @@
 import argparse
+import os
 from pprint import pprint
 
 from datasets import load_dataset
@@ -12,6 +13,11 @@ from src.preprocess import (
     extract_edges_from_text,
     extract_nodes_from_text,
 )
+
+
+def is_main_process() -> bool:
+    # torchrun / accelerate で RANK=0 がメイン
+    return int(os.environ.get("RANK", "0")) == 0
 
 
 def build_args():
@@ -34,18 +40,20 @@ def add_graph_column(example):
 
 
 def train_glm(train_ds, eval_ds):
-    model = GraphTokenLM(node_feat_dim=1)
-    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507")
+    model = GraphTokenLM(node_feat_dim=1, num_graph_tokens=4)
+
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507", trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     sft_config = SFTConfig(
-        per_device_train_batch_size=2,
+        output_dir="outputs",
+        per_device_train_batch_size=2,  # ← GPU あたりのバッチサイズ
         per_device_eval_batch_size=2,
         num_train_epochs=3,
         learning_rate=0.05,
         lr_scheduler_type="linear",
-        logging_steps=1,
+        logging_steps=10,
         save_steps=1000,
         save_total_limit=2,
         gradient_accumulation_steps=4,
@@ -54,10 +62,16 @@ def train_glm(train_ds, eval_ds):
         optim="lion_32bit",
         report_to="none",
         dataset_text_field="task_description",
-        remove_unused_columns=False,
+        remove_unused_columns=False,  # ← 独自カラム(graph)を保持
+        ddp_backend="nccl",  # ← DDP を明示
+        # packing=False,                 # （任意）packing無効化でデバッグしやすく
     )
 
-    collator = GraphQACollator(tokenizer=tokenizer, text_field="task_description", max_length=512)
+    collator = GraphQACollator(
+        tokenizer=tokenizer,
+        text_field="task_description",
+        max_length=512,
+    )
 
     trainer = SFTTrainer(
         model=model,
@@ -67,13 +81,19 @@ def train_glm(train_ds, eval_ds):
         data_collator=collator,
     )
 
+    if is_main_process():
+        print("***** Training *****")
     trainer.train()
+    if is_main_process():
+        print("***** Done *****")
 
 
 if __name__ == "__main__":
     args = build_args()
-    print(f"Subset: {args.subset}")
+    if is_main_process():
+        print(f"Subset: {args.subset}")
 
+    # 各プロセスで同じデータをロードしてOK（TrainerがSamplerをDDP用に設定）
     train_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_train")
     eval_ds = load_dataset(
         "baharef/GraphQA",
@@ -81,9 +101,12 @@ if __name__ == "__main__":
         split="zero_shot_validation" if args.subset != "maximum_flow" else "zero_shot_test",
     )
 
-    train_ds = train_ds.map(add_graph_column)
-    eval_ds = eval_ds.map(add_graph_column)
-    pprint(train_ds)
+    train_ds = train_ds.map(add_graph_column, desc="add_graph_column(train)")
+    eval_ds = eval_ds.map(add_graph_column, desc="add_graph_column(eval)")
 
-    print("Start training...")
+    if is_main_process():
+        pprint(train_ds)
+
+    if is_main_process():
+        print("Start training...")
     train_glm(train_ds, eval_ds)

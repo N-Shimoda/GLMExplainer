@@ -57,19 +57,19 @@ def pyg_from_dict(g: Dict[str, Any]) -> PygData:
 class GraphQACollator:
     """
     GraphQA 用のコラトラ。
-    - dataset の各サンプルに 'graph'（dict）と 'task_description'（学習テキスト）がある前提。
-    - tokenizer を与えるとテキストをここでトークナイズし、与えない場合は
-      事前にトークナイズ済み（'input_ids', 'attention_mask', 'labels' 等）とみなしてスタックのみ行う。
-    - 返り値に 'graph_batch'（torch_geometric.data.Batch）を追加する。
+    - 各サンプルに 'graph'（dict）と 'task_description'（学習テキスト）がある前提。
+    - tokenizer があればここでトークナイズ、無ければ既に tokenized と見做してテンソル化のみ。
+    - 返り値には 'graph'（PyG Batch）を入れる（モデルの forward が graph を受ける想定）。
+    - SFTTrainer の compute_loss と整合するよう、labels を「k 個の -100 を先頭に前置」して長さを合わせる。
     """
 
     tokenizer: Optional[PreTrainedTokenizerBase] = None
     text_field: str = "task_description"
     max_length: int = 512
     pad_to_multiple_of: Optional[int] = None
-    # 生成対象外トークンのマスキングを行わない（SFTTrainer の標準処理に任せる）
-    # 必要なら format/テンプレートに応じてここで -100 マスク処理を追加してください。
+    num_graph_tokens: int = 4  # ← モデルの k と一致させること
 
+    # ---- 内部ユーティリティ ----
     def _tokenize_texts(self, texts: Sequence[str]) -> Dict[str, Tensor]:
         assert self.tokenizer is not None, "tokenizer is required to tokenize texts"
         toks = self.tokenizer(
@@ -80,45 +80,61 @@ class GraphQACollator:
             return_tensors="pt",
             pad_to_multiple_of=self.pad_to_multiple_of,
         )
-        # SFTTrainer は labels を自動生成することが多いが、
-        # ここでも用意しておくと安全（単純に next-token 予測の教師にする）
+        # labels を生成（pad は -100）
         labels = toks.input_ids.clone()
-        # pad を損失から除外
         labels[labels == self.tokenizer.pad_token_id] = -100
         toks["labels"] = labels
         return toks
 
+    def _prepend_ignore_to_labels(self, labels: Tensor) -> Tensor:
+        """
+        labels の先頭に num_graph_tokens 個の -100 を前置して長さを (k+T) にする。
+        既に k 分拡張済みなら何もしない（後方互換）。
+        """
+        if self.num_graph_tokens <= 0:
+            return labels
+        B, T = labels.shape
+        # 既に拡張済み（例：他の前処理が先にやっている）ならスキップ
+        # 判定: 全サンプルの先頭 k が -100 かつ次元が少なくとも k+1 ある
+        k = self.num_graph_tokens
+        if T > k and torch.all(labels[:, :k] == -100):
+            return labels
+        ignore = torch.full((B, k), -100, dtype=labels.dtype)
+        return torch.cat([ignore, labels], dim=1)
+
+    # ---- メイン ----
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
-        # ---- 1) グラフのバッチ化 ----
+        # 1) グラフのバッチ化（CPU のまま返す）
         pyg_list = []
         for f in features:
             if "graph" not in f:
-                raise KeyError("Example is missing 'graph'.")
+                raise KeyError("Example is missing 'graph'. Ensure add_graph_column() added it.")
             pyg_list.append(pyg_from_dict(f["graph"]))
         graph_batch = PygBatch.from_data_list(pyg_list)
 
-        # ---- 2) テキスト（tokenize or stack）----
         batch: Dict[str, Any] = {"graph": graph_batch}
 
+        # 2) テキスト（tokenize or stack）
         if self.tokenizer is not None:
-            # 2-1) ここでトークナイズ
             if self.text_field not in features[0]:
                 raise KeyError(
                     f"'{self.text_field}' not found in dataset features. "
-                    "Set SFTConfig(dataset_text_field=...) accordingly or adjust collator.text_field."
+                    "Set SFTConfig(dataset_text_field=...) or adjust collator.text_field."
                 )
             texts = [f[self.text_field] for f in features]
             toks = self._tokenize_texts(texts)
+
+            # ★ ラベルの長さを (k+T) に拡張（先頭に -100×k を追加）
+            toks["labels"] = self._prepend_ignore_to_labels(toks["labels"])
+
             batch.update(toks)
-            # pad_token_id はモデルへ渡しておくと便利（前処理で参照される場合がある）
-            batch["pad_token_id"] = self.tokenizer.pad_token_id
+            batch["pad_token_id"] = self.tokenizer.pad_token_id  # int でOK（CPU）
         else:
-            # 2-2) 既に tokenized 済み（SFTTrainer の前処理に任せるケース）
-            #      テンソルでなければ tensor 化してからスタック
+            # 既に tokenized 済み（input_ids/attention_mask/labels が入っている想定）
             def _stack(name: str, dtype=None):
                 vals = [f[name] for f in features if name in f]
                 if not vals:
-                    return
+                    return None
                 if not isinstance(vals[0], torch.Tensor):
                     t = torch.tensor(vals, dtype=dtype)
                 else:
@@ -128,10 +144,22 @@ class GraphQACollator:
                         else torch.stack(vals)
                     )
                 batch[name] = t
+                return t
 
-            _stack("input_ids", dtype=torch.long)
-            _stack("attention_mask", dtype=torch.long)
-            _stack("labels", dtype=torch.long)
+            input_ids = _stack("input_ids", dtype=torch.long)
+            # attention_mask = _stack("attention_mask", dtype=torch.long)
+            labels = _stack("labels", dtype=torch.long)
+
+            # labels が無い場合は input_ids から生成（pad は 0 を想定／必要に応じて調整）
+            if labels is None and input_ids is not None:
+                labels = input_ids.clone()
+                labels[labels == 0] = -100
+                batch["labels"] = labels
+
+            # ★ ここでも先頭に -100×k を追加
+            if "labels" in batch:
+                batch["labels"] = self._prepend_ignore_to_labels(batch["labels"])
+
             if "pad_token_id" in features[0]:
                 batch["pad_token_id"] = features[0]["pad_token_id"]
 

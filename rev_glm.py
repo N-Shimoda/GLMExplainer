@@ -1,7 +1,5 @@
 import torch
 import torch.nn as nn
-
-# 例：PyTorch Geometric を使う GNN
 from torch_geometric.nn import GCNConv, global_mean_pool
 from transformers import AutoConfig, AutoModelForCausalLM, PreTrainedModel
 from transformers.generation.utils import GenerationMixin
@@ -158,7 +156,6 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         graph=None,
         **generate_kwargs,
     ) -> CausalLMOutputWithPast:
-        print(graph["batch"])
         assert (input_ids is not None) or (
             inputs_embeds is not None
         ), "input_ids か inputs_embeds のいずれかが必要です"
