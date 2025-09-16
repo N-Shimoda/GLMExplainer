@@ -8,7 +8,7 @@ from transformers import AutoTokenizer
 from trl import SFTConfig, SFTTrainer
 
 import wandb
-from rev_glm import GraphTokenLM
+from glm import GraphTokenLM
 from src.collator import GraphQACollator
 from src.preprocess import (
     create_pyg_dict,
