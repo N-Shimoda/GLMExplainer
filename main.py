@@ -59,8 +59,7 @@ def train_glm(train_ds, eval_ds, args):
         learning_rate=0.05,
         lr_scheduler_type="linear",
         logging_steps=10,
-        save_steps=1000,
-        save_total_limit=2,
+        save_strategy="epoch",
         gradient_accumulation_steps=4,
         fp16=True,
         bf16=False,
@@ -69,7 +68,6 @@ def train_glm(train_ds, eval_ds, args):
         dataset_text_field="task_description",
         remove_unused_columns=False,
         ddp_backend="nccl",  # DDP
-        packing=False,  # （任意）packing無効化でデバッグしやすく
     )
 
     collator = GraphQACollator(
