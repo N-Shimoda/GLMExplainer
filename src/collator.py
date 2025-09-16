@@ -14,9 +14,7 @@ from transformers import PreTrainedTokenizerBase
 
 
 def _to_tensor(x, dtype=None) -> Tensor:
-    """
-    安全に torch.Tensor 化。dtype が渡されれば強制変換。
-    """
+    """安全に torch.Tensor 化。dtype が渡されれば強制変換。"""
     if isinstance(x, torch.Tensor):
         return x.to(dtype=dtype) if dtype is not None else x
     t = torch.tensor(x)
@@ -60,7 +58,8 @@ class GraphQACollator:
     - 各サンプルに 'graph'（dict）と 'task_description'（学習テキスト）がある前提。
     - tokenizer があればここでトークナイズ、無ければ既に tokenized と見做してテンソル化のみ。
     - 返り値には 'graph'（PyG Batch）を入れる（モデルの forward が graph を受ける想定）。
-    - SFTTrainer の compute_loss と整合するよう、labels を「k 個の -100 を先頭に前置」して長さを合わせる。
+    - SFTTrainer / Transformers の損失と整合させるため、labels と attention_mask を
+      GraphToken の個数 k だけ先頭拡張して (k+T) に揃える。
     """
 
     tokenizer: Optional[PreTrainedTokenizerBase] = None
@@ -80,27 +79,53 @@ class GraphQACollator:
             return_tensors="pt",
             pad_to_multiple_of=self.pad_to_multiple_of,
         )
-        # labels を生成（pad は -100）
+        # labels を生成（pad を -100 に）
         labels = toks.input_ids.clone()
         labels[labels == self.tokenizer.pad_token_id] = -100
         toks["labels"] = labels
         return toks
 
-    def _prepend_ignore_to_labels(self, labels: Tensor) -> Tensor:
+    def _prepend_ignore_to_toks(
+        self,
+        *,
+        labels: Tensor,
+        attention_mask: Tensor,
+        orig_len: int,
+    ) -> Dict[str, Tensor]:
         """
-        labels の先頭に num_graph_tokens 個の -100 を前置して長さを (k+T) にする。
-        既に k 分拡張済みなら何もしない（後方互換）。
+        labels と attention_mask を GraphToken (k) ぶんだけ「先頭に」前置する。
+        - labels: 先頭に -100 を k 個
+        - attention_mask: 先頭に 1 を k 個
+        すでに (k+T) 長に拡張済みなら二重前置はしない。
         """
-        if self.num_graph_tokens <= 0:
-            return labels
-        B, T = labels.shape
-        # 既に拡張済み（例：他の前処理が先にやっている）ならスキップ
-        # 判定: 全サンプルの先頭 k が -100 かつ次元が少なくとも k+1 ある
-        k = self.num_graph_tokens
-        if T > k and torch.all(labels[:, :k] == -100):
-            return labels
-        ignore = torch.full((B, k), -100, dtype=labels.dtype)
-        return torch.cat([ignore, labels], dim=1)
+        k = int(self.num_graph_tokens)
+        if k <= 0:
+            return {"labels": labels, "attention_mask": attention_mask}
+
+        B = labels.size(0)
+        # --- labels ---
+        if labels.size(1) == orig_len + k:
+            new_labels = labels  # すでに拡張済み
+        elif labels.size(1) == orig_len:
+            ignore = torch.full((B, k), -100, dtype=labels.dtype)
+            new_labels = torch.cat([ignore, labels], dim=1)
+        else:
+            # 想定外の長さ（例：テンプレ変更）でも強行はせず明示的に失敗させる
+            raise ValueError(f"[collator] labels length {labels.size(1)} not in {{T={orig_len}, T+k={orig_len + k}}}")
+
+        # --- attention_mask ---
+        if attention_mask.size(1) == orig_len + k:
+            new_attn = attention_mask  # すでに拡張済み
+        elif attention_mask.size(1) == orig_len:
+            ones = torch.ones((B, k), dtype=attention_mask.dtype)
+            new_attn = torch.cat([ones, attention_mask], dim=1)
+        else:
+            raise ValueError(
+                "[collator] attention_mask length {}"
+                " not in {{T={}, T+k={}}}".format(attention_mask.size(1), orig_len, orig_len + k)
+            )
+
+        return {"labels": new_labels, "attention_mask": new_attn}
 
     # ---- メイン ----
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -124,11 +149,18 @@ class GraphQACollator:
             texts = [f[self.text_field] for f in features]
             toks = self._tokenize_texts(texts)
 
-            # ★ ラベルの長さを (k+T) に拡張（先頭に -100×k を追加）
-            toks["labels"] = self._prepend_ignore_to_labels(toks["labels"])
+            # ★ labels / attention_mask を (k+T) に拡張（先頭前置）
+            T = toks["input_ids"].size(1)
+            padded = self._prepend_ignore_to_toks(
+                labels=toks["labels"],
+                attention_mask=toks["attention_mask"],
+                orig_len=T,
+            )
+            toks["labels"] = padded["labels"]
+            toks["attention_mask"] = padded["attention_mask"]
 
             batch.update(toks)
-            batch["pad_token_id"] = self.tokenizer.pad_token_id  # int でOK（CPU）
+            batch["pad_token_id"] = int(self.tokenizer.pad_token_id)  # int でOK（CPU）
         else:
             # 既に tokenized 済み（input_ids/attention_mask/labels が入っている想定）
             def _stack(name: str, dtype=None):
@@ -147,21 +179,33 @@ class GraphQACollator:
                 return t
 
             input_ids = _stack("input_ids", dtype=torch.long)
-            # attention_mask = _stack("attention_mask", dtype=torch.long)
+            attention_mask = _stack("attention_mask", dtype=torch.long)
             labels = _stack("labels", dtype=torch.long)
 
-            # labels が無い場合は input_ids から生成（pad は 0 を想定／必要に応じて調整）
+            # labels が無い場合は input_ids から生成（pad=0 を -100 に）
             if labels is None and input_ids is not None:
                 labels = input_ids.clone()
                 labels[labels == 0] = -100
                 batch["labels"] = labels
 
-            # ★ ここでも先頭に -100×k を追加
-            if "labels" in batch:
-                batch["labels"] = self._prepend_ignore_to_labels(batch["labels"])
+            # attention_mask が無い場合も input_ids から生成（pad=0 を 0, それ以外 1）
+            if attention_mask is None and input_ids is not None:
+                attention_mask = (input_ids != 0).long()
+                batch["attention_mask"] = attention_mask
+
+            # ★ ここでも (k+T) に拡張（先頭前置）
+            if ("labels" in batch) and ("attention_mask" in batch):
+                T = input_ids.size(1)
+                padded = self._prepend_ignore_to_toks(
+                    labels=batch["labels"],
+                    attention_mask=batch["attention_mask"],
+                    orig_len=T,
+                )
+                batch["labels"] = padded["labels"]
+                batch["attention_mask"] = padded["attention_mask"]
 
             if "pad_token_id" in features[0]:
-                batch["pad_token_id"] = features[0]["pad_token_id"]
+                batch["pad_token_id"] = int(features[0]["pad_token_id"])
 
         return batch
 
