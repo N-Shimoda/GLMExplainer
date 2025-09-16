@@ -2,10 +2,12 @@ import argparse
 import os
 from pprint import pprint
 
+import torch.distributed as dist
 from datasets import load_dataset
 from transformers import AutoTokenizer
 from trl import SFTConfig, SFTTrainer
 
+import wandb
 from rev_glm import GraphTokenLM
 from src.collator import GraphQACollator
 from src.preprocess import (
@@ -28,6 +30,9 @@ def build_args():
         choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
         default="edge_count",
     )
+    p.add_argument("--num_graph_tokens", type=int, default=4)
+    p.add_argument("--wandb", action="store_true", help="Use wandb logging")
+    p.add_argument("--wandb_project", type=str, default="GraphQA-GLM")
     return p.parse_args()
 
 
@@ -39,8 +44,8 @@ def add_graph_column(example):
     return example
 
 
-def train_glm(train_ds, eval_ds):
-    model = GraphTokenLM(node_feat_dim=1, num_graph_tokens=4)
+def train_glm(train_ds, eval_ds, args):
+    model = GraphTokenLM(node_feat_dim=1, num_graph_tokens=args.num_graph_tokens)
 
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507", trust_remote_code=True)
     if tokenizer.pad_token is None:
@@ -48,7 +53,7 @@ def train_glm(train_ds, eval_ds):
 
     sft_config = SFTConfig(
         output_dir="outputs",
-        per_device_train_batch_size=2,  # ← GPU あたりのバッチサイズ
+        per_device_train_batch_size=2,
         per_device_eval_batch_size=2,
         num_train_epochs=3,
         learning_rate=0.05,
@@ -60,17 +65,18 @@ def train_glm(train_ds, eval_ds):
         fp16=True,
         bf16=False,
         optim="lion_32bit",
-        report_to="none",
+        report_to="wandb" if args.wandb else "none",
         dataset_text_field="task_description",
-        remove_unused_columns=False,  # ← 独自カラム(graph)を保持
-        ddp_backend="nccl",  # ← DDP を明示
-        # packing=False,                 # （任意）packing無効化でデバッグしやすく
+        remove_unused_columns=False,
+        ddp_backend="nccl",  # DDP
+        packing=False,  # （任意）packing無効化でデバッグしやすく
     )
 
     collator = GraphQACollator(
         tokenizer=tokenizer,
         text_field="task_description",
         max_length=512,
+        num_graph_tokens=args.num_graph_tokens,
     )
 
     trainer = SFTTrainer(
@@ -92,6 +98,8 @@ if __name__ == "__main__":
     args = build_args()
     if is_main_process():
         print(f"Subset: {args.subset}")
+    if args.wandb and is_main_process():
+        wandb.init(project=args.wandb_project, name=f"GraphQA-GLM-{args.subset}")
 
     # 各プロセスで同じデータをロードしてOK（TrainerがSamplerをDDP用に設定）
     train_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_train")
@@ -109,4 +117,7 @@ if __name__ == "__main__":
 
     if is_main_process():
         print("Start training...")
-    train_glm(train_ds, eval_ds)
+    train_glm(train_ds, eval_ds, args)
+
+    if dist.is_initialized():
+        dist.destroy_process_group()
