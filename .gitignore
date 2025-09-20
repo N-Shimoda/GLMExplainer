@@ -11,4 +11,6 @@ fine-tuning/examples/
 fine-tuning/models/
 
 # logs
-logs
+logs/
+wandb/
+outputs/
