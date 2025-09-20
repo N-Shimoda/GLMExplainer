@@ -188,15 +188,23 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         assert (input_ids is not None) or (
             inputs_embeds is not None
         ), "input_ids か inputs_embeds のいずれかが必要です"
-        assert graph is not None, "graph（GNN入力）が必要です"
 
-        inputs_embeds, attention_mask, labels = self._concat_graph_tokens(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            labels=labels,
-            inputs_embeds=inputs_embeds,
-            graph=graph,
-        )
+        if graph is not None:
+            inputs_embeds, attention_mask, labels = self._concat_graph_tokens(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                labels=labels,
+                inputs_embeds=inputs_embeds,
+                graph=graph,
+            )
+        else:
+            # 生成時など、すでに graph tokens を結合済みの inputs_embeds が渡るケース
+            if inputs_embeds is None:
+                inputs_embeds = self.llm.get_input_embeddings()(input_ids)
+            if attention_mask is None:
+                if input_ids is None:
+                    raise ValueError("attention_mask が提供されていない場合、input_ids も必要です")
+                attention_mask = input_ids.ne(self.llm.config.pad_token_id).long()
 
         # Qwen3 の損失に影響しうるキーは除外（安全側）
         blocked = {

@@ -5,7 +5,7 @@ Reproductive experiment of Perozzi et al., ["Let Your Graph Do the Talking: Enco
 ## Train GraphToken model
 
 ```shell
-torchrun --nproc_per_node=2 --master_port=29501 main.py --wandb
+torchrun --nproc_per_node=2 train.py --wandb
 ```
 
 ## Files & Directories
