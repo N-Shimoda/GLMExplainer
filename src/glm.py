@@ -1,9 +1,38 @@
 import torch
 import torch.nn as nn
 from torch_geometric.nn import GCNConv, global_mean_pool
-from transformers import AutoConfig, AutoModelForCausalLM, PreTrainedModel
+from transformers import (
+    AutoConfig,
+    AutoModelForCausalLM,
+    PretrainedConfig,
+    PreTrainedModel,
+)
 from transformers.generation.utils import GenerationMixin
 from transformers.modeling_outputs import CausalLMOutputWithPast
+
+
+class GraphTokenLMConfig(PretrainedConfig):
+    model_type = "graph_token_lm"
+
+    def __init__(
+        self,
+        llm_name="Qwen/Qwen3-4B-Instruct-2507",
+        node_feat_dim=128,
+        gnn_hidden=256,
+        gnn_out=512,
+        num_gnn_layers=2,
+        num_graph_tokens=4,
+        freeze_llm=True,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.llm_name = llm_name
+        self.node_feat_dim = node_feat_dim
+        self.gnn_hidden = gnn_hidden
+        self.gnn_out = gnn_out
+        self.num_gnn_layers = num_gnn_layers
+        self.num_graph_tokens = num_graph_tokens
+        self.freeze_llm = freeze_llm
 
 
 class SimpleGCN(nn.Module):
@@ -66,35 +95,40 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
     LLM の入力埋め込み（inputs_embeds）の先頭に連結して学習するモデル。
     """
 
-    config_class = AutoConfig  # 形式上（必須ではない）
+    config_class = GraphTokenLMConfig
+    base_model_prefix = "llm"
 
-    def __init__(
-        self,
-        llm_name: str = "Qwen/Qwen3-4B-Instruct-2507",
-        node_feat_dim: int = 128,
-        gnn_hidden: int = 256,
-        gnn_out: int = 512,
-        num_gnn_layers: int = 2,
-        num_graph_tokens: int = 4,
-        freeze_llm: bool = True,
-    ):
-        llm = AutoModelForCausalLM.from_pretrained(llm_name)
-        super().__init__(llm.config)
-        self.llm = llm
-        self.num_graph_tokens = num_graph_tokens
+    def __init__(self, config: GraphTokenLMConfig, load_llm_weights: bool = True):
+        # 'config' は GraphTokenLMConfig（上で定義）
+        super().__init__(config)
+
+        # (重要) 内部 LLM は config から from_config で「空構造」を作る
+        # 後で GraphTokenLM.from_pretrained() が全体の state_dict をロードする
+        if load_llm_weights:
+            self.llm = AutoModelForCausalLM.from_pretrained(config.llm_name)
+        else:
+            llm_cfg = AutoConfig.from_pretrained(config.llm_name)
+            self.llm = AutoModelForCausalLM.from_config(llm_cfg)
+
+        self.num_graph_tokens = config.num_graph_tokens
 
         # 1) GNN エンコーダ
-        self.gnn = SimpleGCN(in_dim=node_feat_dim, hid_dim=gnn_hidden, out_dim=gnn_out, num_layers=num_gnn_layers)
+        self.gnn = SimpleGCN(
+            in_dim=config.node_feat_dim,
+            hid_dim=config.gnn_hidden,
+            out_dim=config.gnn_out,
+            num_layers=config.num_gnn_layers,
+        )
 
         # 2) graph→token 射影
         self.tokenizer_head = GraphTokenizer(
-            gnn_out_dim=gnn_out,
+            gnn_out_dim=config.gnn_out,
             llm_hidden_size=self.llm.config.hidden_size,
-            num_graph_tokens=num_graph_tokens,
+            num_graph_tokens=config.num_graph_tokens,
         )
 
-        # 3) LLM を凍結（推奨）
-        if freeze_llm:
+        # 3) LLM を凍結（必要なら）
+        if config.freeze_llm:
             for p in self.llm.parameters():
                 p.requires_grad = False
 
