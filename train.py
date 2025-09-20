@@ -39,15 +39,13 @@ def train_glm(train_ds, eval_ds, args):
         num_graph_tokens=args.num_graph_tokens,
     )
     model = GraphTokenLM(glm_cfg)
-    print("Loaded model.")
 
     tokenizer = AutoTokenizer.from_pretrained(glm_cfg.llm_name, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    print("Loaded tokenizer.")
 
     sft_config = SFTConfig(
-        output_dir="outputs",
+        output_dir=os.path.join("outputs", args.subset),
         per_device_train_batch_size=2,
         per_device_eval_batch_size=2,
         num_train_epochs=3,
