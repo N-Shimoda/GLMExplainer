@@ -8,13 +8,9 @@ from transformers import AutoTokenizer
 from trl import SFTConfig, SFTTrainer
 
 import wandb
-from glm import GraphTokenLM
 from src.collator import GraphQACollator
-from src.preprocess import (
-    create_pyg_dict,
-    extract_edges_from_text,
-    extract_nodes_from_text,
-)
+from src.glm import GraphTokenLM
+from src.preprocess import add_graph_column
 
 
 def is_main_process() -> bool:
@@ -34,14 +30,6 @@ def build_args():
     p.add_argument("--wandb", action="store_true", help="Use wandb logging")
     p.add_argument("--wandb_project", type=str, default="GraphQA-GLM")
     return p.parse_args()
-
-
-def add_graph_column(example):
-    text = example["question"]
-    nodes = extract_nodes_from_text(text)
-    edges = extract_edges_from_text(text)
-    example["graph"] = create_pyg_dict(nodes, edges, node_feat_dim=1)
-    return example
 
 
 def train_glm(train_ds, eval_ds, args):

@@ -5,6 +5,14 @@ from typing import Any, Dict, List, Tuple
 import torch
 
 
+def add_graph_column(example):
+    text = example["question"]
+    nodes = extract_nodes_from_text(text)
+    edges = extract_edges_from_text(text)
+    example["graph"] = create_pyg_dict(nodes, edges, node_feat_dim=1)
+    return example
+
+
 def extract_nodes_from_text(text: str) -> List[int]:
     """
     Extracts a list of graph nodes from the given text.
