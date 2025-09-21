@@ -226,14 +226,13 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         )
         return out
 
-    # 生成時のサポート（必要に応じて）
     def prepare_inputs_for_generation(
         self, input_ids=None, inputs_embeds=None, attention_mask=None, graph=None, **kwargs
     ):
+        assert graph is not None, "generate 時も graph が必要です"
         # 学習時と同様にグラフトークンを先頭へ連結して返す
         if inputs_embeds is None:
             inputs_embeds = self.llm.get_input_embeddings()(input_ids)
-        assert graph is not None, "generate 時も graph が必要です"
         inputs_embeds, attention_mask, _ = self._concat_graph_tokens(
             input_ids=None, attention_mask=attention_mask, labels=None, inputs_embeds=inputs_embeds, graph=graph
         )
