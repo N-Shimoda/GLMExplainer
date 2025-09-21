@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 from math import ceil
 
@@ -23,8 +24,8 @@ def build_args():
         default="edge_count",
     )
     p.add_argument("--model_path", type=str, required=True)
-    p.add_argument("--num_graph_tokens", type=int, default=8)
-    p.add_argument("--batch_size", type=int, default=4)
+    p.add_argument("--num_graph_tokens", type=int, default=4)
+    p.add_argument("--batch_size", type=int, default=16)
     p.add_argument("--max_new_tokens", type=int, default=32)
     return p.parse_args()
 
@@ -78,26 +79,19 @@ def create_pyg_batch(graph_dicts: list[dict[str, list]], device: torch.device) -
     return batch
 
 
-if __name__ == "__main__":
-    args = build_args()
-
-    test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
-    test_ds = test_ds.map(add_graph_column, desc="add_graph_column(test)")
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    ckpt_path = _resolve_checkpoint_path(args.model_path)
-    model = GraphTokenLM.from_pretrained(ckpt_path).to(device)
+@torch.no_grad()
+def eval_model(model, test_ds, args):
+    model.eval()
     tokenizer = AutoTokenizer.from_pretrained(model.config.llm_name)
-
     gen_cfg = GenerationConfig(
         max_new_tokens=args.max_new_tokens,
         do_sample=False,
         # eos_token_id=tokenizer.eos_token_id,
     )
 
+    results = []
     num_batches = ceil(len(test_ds) / args.batch_size)
-    preds = []
-    answers = []
+
     for i in tqdm(range(num_batches)):
         batch = test_ds[i * args.batch_size : (i + 1) * args.batch_size]
         pyg_batch = create_pyg_batch(batch["graph"], model.device)
@@ -109,12 +103,38 @@ if __name__ == "__main__":
             outputs = model.generate(**input_ids, graph=pyg_batch, generation_config=gen_cfg)
         decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
 
-        preds.extend([pred.split("\nA: ")[-1] for pred in decoded])
-        answers.extend(batch["answer"])
+        res_dict_li = [
+            {"preds": pred.split("\nA: ")[-1], "answers": ans} for pred, ans in zip(decoded, batch["answer"])
+        ]
+        results.extend(res_dict_li)
 
-    acc, unknowns = comp_accuracy(preds, answers, args.subset)
+    return results
+
+
+if __name__ == "__main__":
+    args = build_args()
+
+    test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
+    # test_ds = test_ds.select(range(32))  # デバッグ用にデータ数を制限
+    test_ds = test_ds.map(add_graph_column, desc="add_graph_column(test)")
+
+    ckpt_path = _resolve_checkpoint_path(args.model_path)
+    print(f"Checkpoint: {ckpt_path}")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = GraphTokenLM.from_pretrained(ckpt_path).to(device)
+
+    results = eval_model(model, test_ds, args)
+
+    # 評価
+    acc, unknowns = comp_accuracy([r["preds"] for r in results], [r["answers"] for r in results], args.subset)
     print(f"Accuracy: {acc * 100:.2f}%")
     if unknowns:
         print("Unknown predictions:")
         for pred in unknowns:
             print(f" - {pred}")
+
+    # 結果を書き出し
+    with open("results.json", "w", encoding="utf-8") as f:
+        json.dump(results, f, ensure_ascii=False, indent=2)
+    print("Saved results to results.json")
