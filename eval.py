@@ -168,7 +168,6 @@ def eval_model(
     for batch in progress:
         num_batches += 1
         graph_batch = batch["graph"].to(device)
-        print(graph_batch)
         input_ids = batch["input_ids"].to(device)
         attention_mask = batch["attention_mask"].to(device)
         labels = batch["labels"].to(device)

@@ -115,7 +115,6 @@ if __name__ == "__main__":
     args = build_args()
 
     test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
-    # test_ds = test_ds.select(range(32))  # デバッグ用にデータ数を制限
     test_ds = test_ds.map(add_graph_column, desc="add_graph_column(test)")
 
     ckpt_path = _resolve_checkpoint_path(args.model_path)
