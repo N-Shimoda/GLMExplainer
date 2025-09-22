@@ -26,7 +26,6 @@ def build_args():
     p.add_argument("--model_path", type=str, required=True)
     p.add_argument("--num_graph_tokens", type=int, default=4)
     p.add_argument("--batch_size", type=int, default=16)
-    p.add_argument("--max_new_tokens", type=int, default=32)
     return p.parse_args()
 
 
@@ -80,13 +79,16 @@ def create_pyg_batch(graph_dicts: list[dict[str, list]], device: torch.device) -
 
 
 @torch.no_grad()
-def eval_model(model, test_ds, args):
+def eval_model(model: GraphTokenLM, test_ds, args):
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(model.config.llm_name)
     gen_cfg = GenerationConfig(
-        max_new_tokens=args.max_new_tokens,
-        do_sample=False,
-        # eos_token_id=tokenizer.eos_token_id,
+        max_new_tokens=8,
+        # num_beams=3,
+        do_sample=True,
+        bos_token_id=tokenizer.bos_token_id,
+        eos_token_id=tokenizer.eos_token_id,
+        pad_token_id=tokenizer.pad_token_id,
     )
 
     results = []
@@ -99,8 +101,7 @@ def eval_model(model, test_ds, args):
 
         input_ids = tokenizer(batch["task_description"], return_tensors="pt", padding=True).to(model.device)
 
-        with torch.no_grad():
-            outputs = model.generate(**input_ids, graph=pyg_batch, generation_config=gen_cfg)
+        outputs = model.generate(**input_ids, graph=pyg_batch, generation_config=gen_cfg)
         decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
 
         res_dict_li = [
@@ -114,7 +115,8 @@ def eval_model(model, test_ds, args):
 if __name__ == "__main__":
     args = build_args()
 
-    test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
+    # test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test").select(range(96))
+    test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_train").select(range(96))
     test_ds = test_ds.map(add_graph_column, desc="add_graph_column(test)")
 
     ckpt_path = _resolve_checkpoint_path(args.model_path)
