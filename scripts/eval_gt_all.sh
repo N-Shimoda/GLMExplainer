@@ -28,8 +28,8 @@ subsets=(
 )
 
 for subset in "${subsets[@]}"; do
-  cmd=(torchrun --nproc_per_node=2 train.py --subset "${subset}" --wandb)
-  log "[START] subset=${subset} cmd: ${cmd[*]}"
+  cmd=(python rev_eval.py --subset "${subset}" --model_path "outputs/${subset}")
+  log "[START] ${cmd[*]}"
   start_ts=$(date +%s)
 
   # torchrun を実行して終了コードを取得（set -e の影響を避ける）
