@@ -28,7 +28,7 @@ subsets=(
 )
 
 for subset in "${subsets[@]}"; do
-  cmd=(torchrun --nproc_per_node=2 train.py --subset "${subset}" --wandb)
+  cmd=(torchrun --nproc_per_node=2 train.py --subset "${subset}" --do_eval --wandb)
   log "[START] subset=${subset} cmd: ${cmd[*]}"
   start_ts=$(date +%s)
 
