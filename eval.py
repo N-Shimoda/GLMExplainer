@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 from math import ceil
+from pprint import pprint  # noqa F401
 
 import torch
 from datasets import load_dataset
@@ -99,28 +100,55 @@ def eval_model(model: GraphTokenLM, test_ds, batch_size: int):
         pyg_batch = create_pyg_batch(batch["graph"], model.device)
         batch["graph"] = pyg_batch
 
+        pprint(batch)
+
         input_ids = tokenizer(batch["task_description"], return_tensors="pt", padding=True).to(model.device)
 
         outputs = model.generate(**input_ids, graph=pyg_batch, generation_config=gen_cfg)
         decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
 
         res_dict_li = [
-            {"preds": pred.split("\nA: ")[-1], "answers": ans} for pred, ans in zip(decoded, batch["answer"])
+            {
+                "question": batch["task_description"][i],
+                # "edges": batch["edge_str"][i],
+                "preds": pred.split("\nA: ")[-1],
+                "answer": batch["answer"][i],
+            }
+            for i, pred in enumerate(decoded)
         ]
         results.extend(res_dict_li)
 
     return results
 
 
+def collect_result(results: list[dict]):
+    # 評価
+    acc, unknowns = comp_accuracy([r["preds"] for r in results], [r["answer"] for r in results], args.subset)
+    print(f"Accuracy: {acc * 100:.2f}%")
+    if unknowns:
+        print("Unknown predictions:")
+        for pred in unknowns:
+            print(f" - {pred}")
+
+    # 結果を書き出し
+    res_file = os.path.join("results", args.subset, "results.json")
+    os.makedirs(os.path.dirname(res_file), exist_ok=True)
+
+    with open(res_file, "w", encoding="utf-8") as f:
+        json.dump(results, f, ensure_ascii=False, indent=2)
+    print(f"Saved results to {res_file}")
+
+
 if __name__ == "__main__":
     args = build_args()
 
-    test_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
+    test_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test").select(range(32))
     test_ds = test_raw.map(
         add_graph_column,
         desc="add_graph_column(test)",
         remove_columns=["question", "nnodes", "nedges", "algorithm", "text_encoding"],
     )
+    print("Test dataset:\n", test_ds)
 
     ckpt_path = _resolve_checkpoint_path(args.model_path)
     print(f"Checkpoint: {ckpt_path}")
@@ -129,18 +157,4 @@ if __name__ == "__main__":
     model = GraphTokenLM.from_pretrained(ckpt_path).to(device)
 
     results = eval_model(model, test_ds, args.batch_size)
-
-    # 評価
-    acc, unknowns = comp_accuracy([r["preds"] for r in results], [r["answers"] for r in results], args.subset)
-    print(f"Accuracy: {acc * 100:.2f}%")
-    if unknowns:
-        print("Unknown predictions:")
-        for pred in unknowns:
-            print(f" - {pred}")
-
-    # 結果を書き出し
-    res_file = os.path.join("results", f"{args.subset}.json")
-    os.makedirs("results", exist_ok=True)
-    with open(res_file, "w", encoding="utf-8") as f:
-        json.dump(results, f, ensure_ascii=False, indent=2)
-    print(f"Saved results to {res_file}")
+    collect_result(results)
