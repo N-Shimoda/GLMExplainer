@@ -83,14 +83,7 @@ def create_pyg_batch(graph_dicts: list[dict[str, list]], device: torch.device) -
 def eval_model(model: GraphTokenLM, test_ds, batch_size: int):
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(model.config.llm_name)
-    gen_cfg = GenerationConfig(
-        max_new_tokens=8,
-        # num_beams=3,
-        do_sample=True,
-        # bos_token_id=tokenizer.bos_token_id,
-        # eos_token_id=tokenizer.eos_token_id,
-        # pad_token_id=tokenizer.pad_token_id,
-    )
+    gen_cfg = GenerationConfig(max_new_tokens=8, do_sample=False)
 
     results = []
     num_batches = ceil(len(test_ds) / batch_size)
@@ -100,17 +93,13 @@ def eval_model(model: GraphTokenLM, test_ds, batch_size: int):
         pyg_batch = create_pyg_batch(batch["graph"], model.device)
         batch["graph"] = pyg_batch
 
-        pprint(batch)
-
         input_ids = tokenizer(batch["task_description"], return_tensors="pt", padding=True).to(model.device)
-
         outputs = model.generate(**input_ids, graph=pyg_batch, generation_config=gen_cfg)
         decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
 
         res_dict_li = [
             {
                 "question": batch["task_description"][i],
-                # "edges": batch["edge_str"][i],
                 "preds": pred.split("\nA: ")[-1],
                 "answer": batch["answer"][i],
             }
@@ -121,19 +110,29 @@ def eval_model(model: GraphTokenLM, test_ds, batch_size: int):
     return results
 
 
-def collect_result(results: list[dict]):
-    # 評価
-    acc, unknowns = comp_accuracy([r["preds"] for r in results], [r["answer"] for r in results], args.subset)
+def collect_result(results: list[dict], res_file: str, subset: str):
+    """
+    Evaluates prediction results, prints accuracy, unknown predictions, and saves results to a file.
+
+    Parameters
+    ----------
+    results : list of dict
+        A list of dictionaries containing prediction results. Each dictionary should have keys "preds" and "answer".
+    res_file : str
+        Path to the file where the results will be saved.
+    subset : str
+        The subset name used for accuracy computation.
+    """
+    # Compute accuracy
+    acc, unknowns = comp_accuracy([r["preds"] for r in results], [r["answer"] for r in results], subset)
     print(f"Accuracy: {acc * 100:.2f}%")
     if unknowns:
         print("Unknown predictions:")
         for pred in unknowns:
             print(f" - {pred}")
 
-    # 結果を書き出し
-    res_file = os.path.join("results", args.subset, "results.json")
+    # Save results to a file
     os.makedirs(os.path.dirname(res_file), exist_ok=True)
-
     with open(res_file, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
     print(f"Saved results to {res_file}")
@@ -142,19 +141,21 @@ def collect_result(results: list[dict]):
 if __name__ == "__main__":
     args = build_args()
 
+    # Load pre-trained model
+    ckpt_path = _resolve_checkpoint_path(args.model_path)
+    print(f"Checkpoint: {ckpt_path}")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = GraphTokenLM.from_pretrained(ckpt_path).to(device)
+
+    # Load dataset
     test_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test").select(range(32))
     test_ds = test_raw.map(
-        add_graph_column,
+        lambda x: add_graph_column(x, k=model.config.node_feat_dim),
         desc="add_graph_column(test)",
         remove_columns=["question", "nnodes", "nedges", "algorithm", "text_encoding"],
     )
     print("Test dataset:\n", test_ds)
 
-    ckpt_path = _resolve_checkpoint_path(args.model_path)
-    print(f"Checkpoint: {ckpt_path}")
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = GraphTokenLM.from_pretrained(ckpt_path).to(device)
-
     results = eval_model(model, test_ds, args.batch_size)
-    collect_result(results)
+    res_file = os.path.join("results", args.subset, "results.json")
+    collect_result(results, res_file, args.subset)
