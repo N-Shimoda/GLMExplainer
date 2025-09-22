@@ -23,13 +23,25 @@ def _to_tensor(x, dtype=None) -> Tensor:
 
 def pyg_from_dict(g: Dict[str, Any]) -> PygData:
     """
-    create_pyg_dict()（src/preprocess.py）で作成した辞書を PYG Data に変換する。
-    期待キー:
-      - x:         (N, F)   float
-      - edge_index:(2, E)   long
-      - num_nodes: int      （なくても x から推定）
-    任意:
-      - edge_attr: (E, Fe)  float
+    Convert a dictionary to a PyTorch Geometric Data object.
+
+    Parameters
+    ----------
+    g : dict
+        Dictionary containing graph data. Expected keys are:
+            x : array-like or Tensor, shape (N, F)
+                Node features.
+            edge_index : array-like or Tensor, shape (2, E)
+                Edge indices.
+            num_nodes : int, optional
+                Number of nodes. If not provided, inferred from x.
+            edge_attr : array-like or Tensor, shape (E, Fe), optional
+                Edge attributes.
+
+    Returns
+    -------
+    torch_geometric.data.Data
+        PyTorch Geometric Data object containing the graph.
     """
     if g is None:
         raise ValueError("graph is None")
@@ -130,11 +142,7 @@ class GraphQACollator:
     # ---- メイン ----
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
         # 1) グラフのバッチ化（CPU のまま返す）
-        pyg_list = []
-        for f in features:
-            if "graph" not in f:
-                raise KeyError("Example is missing 'graph'. Ensure add_graph_column() added it.")
-            pyg_list.append(pyg_from_dict(f["graph"]))
+        pyg_list = [pyg_from_dict(f["graph"]) for f in features]
         graph_batch = PygBatch.from_data_list(pyg_list)
 
         batch: Dict[str, Any] = {"graph": graph_batch}

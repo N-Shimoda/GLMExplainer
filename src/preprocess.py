@@ -5,11 +5,13 @@ from typing import Any, Dict, List, Tuple
 import torch
 
 
-def add_graph_column(example):
+def add_graph_column(example, k: int = 4):
+    """question テキストからノード/エッジを抽出し、LPE 次元 k で PyG 辞書を付与する。"""
     text = example["question"]
     nodes = extract_nodes_from_text(text)
     edges = extract_edges_from_text(text)
-    example["graph"] = create_pyg_dict(nodes, edges, node_feat_dim=1)
+    # k: LPE の次元数（固有ベクトル本数）。不足分は 0 でパディングします。
+    example["graph"] = create_pyg_dict(nodes, edges, k=k)
     example["answer"] = example["answer"].strip()
     return example
 
@@ -40,19 +42,81 @@ def extract_edges_from_text(text: str) -> List[Tuple[int, int]]:
     return []
 
 
-def create_pyg_dict(nodes: List[int], edges: List[Tuple[int, int]], node_feat_dim: int = 1) -> Dict[str, Any]:
+def create_pyg_dict(nodes: List[int], edges: List[Tuple[int, int]], k: int) -> Dict[str, Any]:
     """
-    Creates a PyG-format graph dictionary from lists of nodes and edges.
+    Create a PyG-format graph dictionary from lists of nodes and edges.
+
+    The node features `x` are initialized using Laplacian Positional Embeddings (LPE):
+    - The normalized Laplacian L = I - D^{-1/2} A D^{-1/2} is computed.
+    - The eigenvectors corresponding to the smallest eigenvalue (constant vector) are excluded.
+    - The top `k` nontrivial eigenvectors are used as node features.
+    - Node IDs are mapped to consecutive indices to ensure consistency in `edge_index` and `x`.
+
+    Parameters
+    ----------
+    nodes : list of int
+        List of node IDs extracted from text.
+    edges : list of tuple of int
+        List of undirected edges (u, v) extracted from text.
+    k : int
+        Number of Laplacian eigenvectors to use for node features.
+
+    Returns
+    -------
+    dict
+        PyG-format dictionary containing:
+        - 'x': Node feature matrix (LPE).
+        - 'edge_index': Edge indices (bidirectional, consecutive indices).
+        - 'batch': Batch vector (all zeros).
     """
     num_nodes = len(nodes)
-    x = torch.zeros((num_nodes, node_feat_dim), dtype=torch.float)
 
-    source_nodes = []
-    target_nodes = []
+    # ノード ID -> 連番インデックス
+    node_to_idx = {nid: i for i, nid in enumerate(nodes)}
+
+    # 隣接行列（無向）
+    A = torch.zeros((num_nodes, num_nodes), dtype=torch.float)
+    for u, v in edges:
+        if u in node_to_idx and v in node_to_idx:
+            i, j = node_to_idx[u], node_to_idx[v]
+            if i == j:
+                continue
+            A[i, j] = 1.0
+            A[j, i] = 1.0
+
+    # 正規化ラプラシアン L = I - D^{-1/2} A D^{-1/2}
+    if num_nodes == 0:
+        x = torch.zeros((0, max(k, 0)), dtype=torch.float)
+    else:
+        deg = A.sum(dim=1)
+        inv_sqrt_deg = torch.zeros_like(deg)
+        mask = deg > 0
+        inv_sqrt_deg[mask] = deg[mask].pow(-0.5)
+        D_inv_sqrt = torch.diag(inv_sqrt_deg)
+        S = D_inv_sqrt @ A @ D_inv_sqrt
+        eye = torch.eye(num_nodes, dtype=torch.float)
+        L = eye - S
+        L = (L + L.T) / 2  # 数値的な対称化
+
+        # 固有分解（昇順）。最小固有値（定数ベクトル）は除外
+        if k <= 0:
+            x = torch.zeros((num_nodes, 0), dtype=torch.float)
+        else:
+            _, evecs = torch.linalg.eigh(L)
+            nontrivial = min(k, max(num_nodes - 1, 0))
+            x = torch.zeros((num_nodes, k), dtype=torch.float)
+            if nontrivial > 0:
+                x[:, :nontrivial] = evecs[:, 1 : 1 + nontrivial]
+
+    # edge_index（連番インデックスで双方向に展開）
+    source_nodes: List[int] = []
+    target_nodes: List[int] = []
     if edges:
         for u, v in edges:
-            source_nodes.extend([u, v])
-            target_nodes.extend([v, u])
+            if u in node_to_idx and v in node_to_idx:
+                i, j = node_to_idx[u], node_to_idx[v]
+                source_nodes.extend([i, j])
+                target_nodes.extend([j, i])
 
     edge_index = torch.tensor([source_nodes, target_nodes], dtype=torch.long)
     batch = torch.zeros(num_nodes, dtype=torch.long)
@@ -102,7 +166,7 @@ if __name__ == "__main__":
     edges = extract_edges_from_text(text1)
 
     if nodes:
-        pyg_graph = create_pyg_dict(nodes, edges)
+        pyg_graph = create_pyg_dict(nodes, edges, k=4)
         print(f"✅ Extracted nodes: {nodes}")
         print(f"✅ Extracted edges: {edges}")
         print("\n✅ Generated PyG dictionary:")
