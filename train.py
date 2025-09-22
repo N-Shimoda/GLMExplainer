@@ -70,6 +70,13 @@ def train_glm(train_ds, eval_ds, output_dir, args):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    collator = GraphQACollator(
+        tokenizer=tokenizer,
+        text_field="task_description",
+        max_length=512,
+        num_graph_tokens=args.num_graph_tokens,
+    )
+
     sft_config = SFTConfig(
         output_dir=output_dir,
         per_device_train_batch_size=2,
@@ -80,19 +87,12 @@ def train_glm(train_ds, eval_ds, output_dir, args):
         logging_steps=10,
         save_strategy="epoch",
         gradient_accumulation_steps=4,
-        fp16=True,
+        bf16=True,
         optim="lion_32bit",
         report_to="wandb" if args.wandb else "none",
         dataset_text_field="task_description",
         remove_unused_columns=False,
         ddp_backend="nccl",  # DDP
-    )
-
-    collator = GraphQACollator(
-        tokenizer=tokenizer,
-        text_field="task_description",
-        max_length=512,
-        num_graph_tokens=args.num_graph_tokens,
     )
 
     trainer = SFTTrainer(
@@ -125,18 +125,18 @@ if __name__ == "__main__":
     if args.wandb and is_main_process():
         wandb.init(project=args.wandb_project, name=run_name)
 
-    # Dataset
-    train_ds, eval_ds, test_ds = create_dataset(args.subset, do_eval=args.do_eval)
-
     # Training
+    train_ds, eval_ds, test_ds = create_dataset(args.subset, do_eval=args.do_eval)
     model = train_glm(train_ds, eval_ds, output_dir, args)
 
     # Evaluation
     if is_main_process() and args.do_eval:
         print("***** Evaluation *****")
         results = eval_model(model, test_ds, batch_size=8)
-        res_file = os.path.join("results", args.subset, f"{run_name}.json")
-        collect_result(results, res_file)
+        res_file = os.path.join("results", args.subset, f"{date_str}.json")
+        acc = collect_result(results, res_file, args.subset)
+        if args.wandb:
+            wandb.log({"test_acc": acc})
 
     if dist.is_initialized():
         dist.destroy_process_group()

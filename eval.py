@@ -137,6 +137,8 @@ def collect_result(results: list[dict], res_file: str, subset: str):
         json.dump(results, f, ensure_ascii=False, indent=2)
     print(f"Saved results to {res_file}")
 
+    return acc
+
 
 if __name__ == "__main__":
     args = build_args()
