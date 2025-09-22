@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import warnings
 from math import ceil
 from pprint import pprint  # noqa F401
 
@@ -9,7 +10,7 @@ from datasets import load_dataset
 from torch_geometric.data import Batch as PygBatch
 from torch_geometric.data import Data as PygData
 from tqdm import tqdm
-from transformers import AutoTokenizer, GenerationConfig
+from transformers import AutoTokenizer
 
 from src.glm import GraphTokenLM
 from src.metrics import comp_accuracy
@@ -83,7 +84,6 @@ def create_pyg_batch(graph_dicts: list[dict[str, list]], device: torch.device) -
 def eval_model(model: GraphTokenLM, test_ds, batch_size: int):
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(model.config.llm_name)
-    gen_cfg = GenerationConfig(max_new_tokens=8, do_sample=False)
 
     results = []
     num_batches = ceil(len(test_ds) / batch_size)
@@ -94,7 +94,7 @@ def eval_model(model: GraphTokenLM, test_ds, batch_size: int):
         batch["graph"] = pyg_batch
 
         input_ids = tokenizer(batch["task_description"], return_tensors="pt", padding=True).to(model.device)
-        outputs = model.generate(**input_ids, graph=pyg_batch, generation_config=gen_cfg)
+        outputs = model.generate(**input_ids, graph=pyg_batch, max_new_tokens=8, do_sample=True)
         decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
 
         res_dict_li = [
@@ -127,9 +127,7 @@ def collect_result(results: list[dict], res_file: str, subset: str):
     acc, unknowns = comp_accuracy([r["preds"] for r in results], [r["answer"] for r in results], subset)
     print(f"Accuracy: {acc * 100:.2f}%")
     if unknowns:
-        print("Unknown predictions:")
-        for pred in unknowns:
-            print(f" - {pred}")
+        warnings.warn(f"{unknowns} unknown predictions found.", UserWarning)
 
     # Save results to a file
     os.makedirs(os.path.dirname(res_file), exist_ok=True)
@@ -147,10 +145,11 @@ if __name__ == "__main__":
     ckpt_path = _resolve_checkpoint_path(args.model_path)
     print(f"Checkpoint: {ckpt_path}")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = GraphTokenLM.from_pretrained(ckpt_path).to(device)
+    model = GraphTokenLM.from_pretrained(ckpt_path, load_llm_weights=False).to(device)
+    print(model)
 
     # Load dataset
-    test_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test").select(range(32))
+    test_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test").select(range(64))
     test_ds = test_raw.map(
         lambda x: add_graph_column(x, k=model.config.node_feat_dim),
         desc="add_graph_column(test)",

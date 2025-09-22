@@ -2,6 +2,7 @@ import warnings
 
 import torch
 import torch.nn as nn
+from accelerate import init_empty_weights
 from torch_geometric.nn import GCNConv, global_mean_pool
 from transformers import (
     AutoConfig,
@@ -123,7 +124,9 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
                 "Initialized LLM weights from scratch. If this is unintended, set load_llm_weights=True.", UserWarning
             )
             llm_cfg = AutoConfig.from_pretrained(config.llm_name)
-            self.llm = AutoModelForCausalLM.from_config(llm_cfg)
+            with init_empty_weights():
+                self.llm = AutoModelForCausalLM.from_config(llm_cfg)
+        self.llm.tie_weights()
 
         # ここで vocab_size などを config に反映
         llm_cfg = self.llm.config
@@ -154,6 +157,7 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         if config.freeze_llm:
             for p in self.llm.parameters():
                 p.requires_grad = False
+            self.llm.eval()
 
     @property
     def device(self):

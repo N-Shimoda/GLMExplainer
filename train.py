@@ -108,6 +108,9 @@ def train_glm(train_ds, eval_ds, output_dir, args):
         print("***** Training *****")
     trainer.train()
     if is_main_process():
+        # final_ckpt_path = os.path.join(output_dir, "checkpoint-final")
+        # tokenizer.save_pretrained(final_ckpt_path)  # 重要
+        # model.save_pretrained(final_ckpt_path)
         print("***** Done *****")
 
     return model

@@ -57,7 +57,7 @@ def comp_accuracy(
         case "edge_count" | "node_count" | "triangle_counting" | "maximum_flow":
             digit_ans_li = [ref.strip().split(".")[0] for ref in refs]
             # preds = [pred.split("assistant\n")[-1] for pred in preds]
-            # preds = [int(match.group()) if (match := re.search(r"\d+", pred)) else -1 for pred in preds]
+            preds = [str(match.group()) if (match := re.search(r"\d+", pred)) else "-1" for pred in preds]
             acc = sum([d in pred for d, pred in zip(digit_ans_li, preds)]) / max(1, len(refs))
             num_unknown = 0
 
