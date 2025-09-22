@@ -1,5 +1,6 @@
 import argparse
 import os
+from datetime import datetime
 from pprint import pprint
 
 import torch.distributed as dist
@@ -55,7 +56,6 @@ def train_glm(train_ds, eval_ds, args):
         save_strategy="epoch",
         gradient_accumulation_steps=4,
         fp16=True,
-        bf16=False,
         optim="lion_32bit",
         report_to="wandb" if args.wandb else "none",
         dataset_text_field="task_description",
@@ -91,7 +91,8 @@ if __name__ == "__main__":
     if is_main_process():
         print(f"Subset: {args.subset}")
     if args.wandb and is_main_process():
-        wandb.init(project=args.wandb_project, name=f"GraphQA-GLM-{args.subset}")
+        run_name = f"{args.subset}_{datetime.now().strftime('%m%d-%H%M')}"
+        wandb.init(project=args.wandb_project, name=run_name)
 
     # 各プロセスで同じデータをロードしてOK（TrainerがSamplerをDDP用に設定）
     train_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_train")
