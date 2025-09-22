@@ -10,6 +10,7 @@ def add_graph_column(example):
     nodes = extract_nodes_from_text(text)
     edges = extract_edges_from_text(text)
     example["graph"] = create_pyg_dict(nodes, edges, node_feat_dim=1)
+    example["answer"] = example["answer"].strip()
     return example
 
 

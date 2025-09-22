@@ -79,23 +79,23 @@ def create_pyg_batch(graph_dicts: list[dict[str, list]], device: torch.device) -
 
 
 @torch.no_grad()
-def eval_model(model: GraphTokenLM, test_ds, args):
+def eval_model(model: GraphTokenLM, test_ds, batch_size: int):
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(model.config.llm_name)
     gen_cfg = GenerationConfig(
         max_new_tokens=8,
         # num_beams=3,
         do_sample=True,
-        bos_token_id=tokenizer.bos_token_id,
-        eos_token_id=tokenizer.eos_token_id,
-        pad_token_id=tokenizer.pad_token_id,
+        # bos_token_id=tokenizer.bos_token_id,
+        # eos_token_id=tokenizer.eos_token_id,
+        # pad_token_id=tokenizer.pad_token_id,
     )
 
     results = []
-    num_batches = ceil(len(test_ds) / args.batch_size)
+    num_batches = ceil(len(test_ds) / batch_size)
 
     for i in tqdm(range(num_batches)):
-        batch = test_ds[i * args.batch_size : (i + 1) * args.batch_size]
+        batch = test_ds[i * batch_size : (i + 1) * batch_size]
         pyg_batch = create_pyg_batch(batch["graph"], model.device)
         batch["graph"] = pyg_batch
 
@@ -115,9 +115,12 @@ def eval_model(model: GraphTokenLM, test_ds, args):
 if __name__ == "__main__":
     args = build_args()
 
-    # test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test").select(range(96))
-    test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_train").select(range(96))
-    test_ds = test_ds.map(add_graph_column, desc="add_graph_column(test)")
+    test_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
+    test_ds = test_raw.map(
+        add_graph_column,
+        desc="add_graph_column(test)",
+        remove_columns=["question", "nnodes", "nedges", "algorithm", "text_encoding"],
+    )
 
     ckpt_path = _resolve_checkpoint_path(args.model_path)
     print(f"Checkpoint: {ckpt_path}")
@@ -125,7 +128,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = GraphTokenLM.from_pretrained(ckpt_path).to(device)
 
-    results = eval_model(model, test_ds, args)
+    results = eval_model(model, test_ds, args.batch_size)
 
     # 評価
     acc, unknowns = comp_accuracy([r["preds"] for r in results], [r["answers"] for r in results], args.subset)
@@ -136,6 +139,8 @@ if __name__ == "__main__":
             print(f" - {pred}")
 
     # 結果を書き出し
-    with open("results.json", "w", encoding="utf-8") as f:
+    res_file = os.path.join("results", f"{args.subset}.json")
+    os.makedirs("results", exist_ok=True)
+    with open(res_file, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
-    print("Saved results to results.json")
+    print(f"Saved results to {res_file}")

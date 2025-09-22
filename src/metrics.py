@@ -54,9 +54,10 @@ def comp_accuracy(
                 refs_yes_no = ["yes" if "yes" in ref else "no" if "no" in ref else "unknown" for ref in low_refs]
                 acc = sum(p == r for p, r in zip(preds_yes_no, refs_yes_no)) / max(1, len(refs_yes_no))
                 num_unknown = sum(p == "unknown" for p in preds_yes_no)
-        case "node_count" | "edge_count" | "triangle_counting" | "maximum_flow":
+        case "edge_count" | "node_count" | "triangle_counting" | "maximum_flow":
             digit_ans_li = [ref.strip().split(".")[0] for ref in refs]
-            preds = [pred.split("assistant\n")[-1] for pred in preds]
+            # preds = [pred.split("assistant\n")[-1] for pred in preds]
+            # preds = [int(match.group()) if (match := re.search(r"\d+", pred)) else -1 for pred in preds]
             acc = sum([d in pred for d, pred in zip(digit_ans_li, preds)]) / max(1, len(refs))
             num_unknown = 0
 
