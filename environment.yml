@@ -1,6 +1,7 @@
 name: graphtoken
 channels:
   - defaults
+  - conda-forge
 dependencies:
   - transformers
   - datasets
