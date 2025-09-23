@@ -3,11 +3,11 @@ import os
 from datetime import datetime
 
 import torch.distributed as dist
+import wandb
 from datasets import load_dataset
 from transformers import AutoTokenizer
 from trl import SFTConfig, SFTTrainer
 
-import wandb
 from eval import collect_result, eval_model
 from src.collator import GraphQACollator
 from src.glm import GraphTokenLM, GraphTokenLMConfig
