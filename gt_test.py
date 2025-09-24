@@ -5,7 +5,7 @@ from transformers import AutoTokenizer
 
 from src.glm import GraphTokenLM
 
-ckpt_path = "outputs/edge_count/checkpoint-189"
+ckpt_path = "outputs/edge_count/0922-2157/checkpoint-63"
 model = GraphTokenLM.from_pretrained(ckpt_path)
 model.eval()
 tokenizer = AutoTokenizer.from_pretrained(ckpt_path)

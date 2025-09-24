@@ -129,12 +129,12 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         self.llm.tie_weights()
 
         # ここで vocab_size などを config に反映
-        llm_cfg = self.llm.config
-        self.config.vocab_size = getattr(llm_cfg, "vocab_size", self.config.vocab_size)
-        for k in ("pad_token_id", "bos_token_id", "eos_token_id"):
-            v = getattr(llm_cfg, k, None)
-            if v is not None:
-                setattr(self.config, k, v)
+        # llm_cfg = self.llm.config
+        # self.config.vocab_size = getattr(llm_cfg, "vocab_size", self.config.vocab_size)
+        # for k in ("pad_token_id", "bos_token_id", "eos_token_id"):
+        #     v = getattr(llm_cfg, k, None)
+        #     if v is not None:
+        #         setattr(self.config, k, v)
 
         self.num_graph_tokens = config.num_graph_tokens
 
