@@ -1,0 +1,13 @@
+name: graphtoken
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - transformers
+  - datasets
+  - wandb
+  - pytorch
+  - trl
+  - python
+  - pytorch_geometric
+prefix: /opt/homebrew/anaconda3/envs/graphtoken

@@ -1,0 +1,145 @@
+import argparse
+import os
+from datetime import datetime
+
+import torch.distributed as dist
+import wandb
+from datasets import load_dataset
+from transformers import AutoTokenizer
+from trl import SFTConfig, SFTTrainer
+
+from eval import collect_result, eval_model
+from src.collator import GraphQACollator
+from src.glm import GraphTokenLM, GraphTokenLMConfig
+from src.preprocess import add_graph_column
+
+
+def is_main_process() -> bool:
+    # torchrun / accelerate で RANK=0 がメイン
+    return int(os.environ.get("RANK", "0")) == 0
+
+
+def build_args():
+    p = argparse.ArgumentParser()
+    p.add_argument(
+        "--subset",
+        type=str,
+        choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
+        default="edge_count",
+    )
+    p.add_argument("--epochs", type=int, default=3)
+    p.add_argument("--num_graph_tokens", type=int, default=4)
+    p.add_argument("--node_feat_dim", type=int, default=4)
+    p.add_argument("--wandb", action="store_true", help="Use wandb logging")
+    p.add_argument("--wandb_project", type=str, default="GraphQA-GLM")
+    p.add_argument("--do_eval", action="store_true", help="Run evaluation after training")
+    return p.parse_args()
+
+
+def create_dataset(subset: str, do_eval: bool = False):
+    def modify_dataset(example):
+        return add_graph_column(example, k=args.node_feat_dim)
+
+    train_raw = load_dataset("baharef/GraphQA", subset, split="zero_shot_train")
+    eval_raw = load_dataset(
+        "baharef/GraphQA",
+        subset,
+        split="zero_shot_validation" if subset != "maximum_flow" else "zero_shot_test",
+    )
+    train_ds = train_raw.map(modify_dataset, desc="modify_dataset(train)")
+    eval_ds = eval_raw.map(modify_dataset, desc="modify_dataset(eval)")
+
+    if do_eval:
+        test_raw = load_dataset("baharef/GraphQA", subset, split="zero_shot_test")
+        test_ds = test_raw.map(modify_dataset, desc="modify_dataset(test)")
+    else:
+        test_ds = None
+
+    return train_ds, eval_ds, test_ds
+
+
+def train_glm(train_ds, eval_ds, output_dir, args):
+    glm_cfg = GraphTokenLMConfig(
+        llm_name="Qwen/Qwen3-4B-Instruct-2507",
+        node_feat_dim=args.node_feat_dim,
+        num_graph_tokens=args.num_graph_tokens,
+    )
+    model = GraphTokenLM(glm_cfg)
+
+    tokenizer = AutoTokenizer.from_pretrained(glm_cfg.llm_name, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    collator = GraphQACollator(
+        tokenizer=tokenizer,
+        text_field="task_description",
+        max_length=512,
+        num_graph_tokens=args.num_graph_tokens,
+    )
+
+    sft_config = SFTConfig(
+        output_dir=output_dir,
+        per_device_train_batch_size=2,
+        per_device_eval_batch_size=2,
+        num_train_epochs=args.epochs,
+        learning_rate=0.05,
+        lr_scheduler_type="linear",
+        logging_steps=10,
+        save_strategy="epoch",
+        gradient_accumulation_steps=4,
+        bf16=True,
+        optim="lion_32bit",
+        report_to="wandb" if args.wandb else "none",
+        dataset_text_field="task_description",
+        remove_unused_columns=False,
+        ddp_backend="nccl",  # DDP
+    )
+
+    trainer = SFTTrainer(
+        model=model,
+        processing_class=tokenizer,
+        args=sft_config,
+        train_dataset=train_ds,
+        eval_dataset=eval_ds,
+        data_collator=collator,
+    )
+
+    if is_main_process():
+        print("***** Training *****")
+    trainer.train()
+    if is_main_process():
+        # final_ckpt_path = os.path.join(output_dir, "checkpoint-final")
+        # tokenizer.save_pretrained(final_ckpt_path)  # 重要
+        # model.save_pretrained(final_ckpt_path)
+        print("***** Done *****")
+
+    return model
+
+
+if __name__ == "__main__":
+    args = build_args()
+    if is_main_process():
+        print(f"Subset: {args.subset}")
+
+    date_str = datetime.now().strftime("%m%d-%H%M")
+    run_name = f"{args.subset}_{date_str}"
+    output_dir = os.path.join("outputs", args.subset, date_str)
+
+    if args.wandb and is_main_process():
+        wandb.init(project=args.wandb_project, name=run_name)
+
+    # Training
+    train_ds, eval_ds, test_ds = create_dataset(args.subset, do_eval=args.do_eval)
+    model = train_glm(train_ds, eval_ds, output_dir, args)
+
+    # Evaluation
+    if is_main_process() and args.do_eval:
+        print("***** Evaluation *****")
+        results = eval_model(model, test_ds, batch_size=8)
+        res_file = os.path.join("results", args.subset, f"{date_str}.json")
+        acc = collect_result(results, res_file, args.subset)
+        if args.wandb:
+            wandb.log({"test_acc": acc})
+
+    if dist.is_initialized():
+        dist.destroy_process_group()

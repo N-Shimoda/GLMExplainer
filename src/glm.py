@@ -1,9 +1,51 @@
+import warnings
+
 import torch
 import torch.nn as nn
+from accelerate import init_empty_weights
 from torch_geometric.nn import GCNConv, global_mean_pool
-from transformers import AutoConfig, AutoModelForCausalLM, PreTrainedModel
+from transformers import (
+    AutoConfig,
+    AutoModelForCausalLM,
+    PretrainedConfig,
+    PreTrainedModel,
+)
 from transformers.generation.utils import GenerationMixin
 from transformers.modeling_outputs import CausalLMOutputWithPast
+
+
+class GraphTokenLMConfig(PretrainedConfig):
+    model_type = "graph_token_lm"
+
+    def __init__(
+        self,
+        llm_name="Qwen/Qwen3-4B-Instruct-2507",
+        node_feat_dim=128,
+        gnn_hidden=256,
+        gnn_out=512,
+        num_gnn_layers=2,
+        num_graph_tokens=4,
+        freeze_llm=True,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.llm_name = llm_name
+        self.node_feat_dim = node_feat_dim
+        self.gnn_hidden = gnn_hidden
+        self.gnn_out = gnn_out
+        self.num_gnn_layers = num_gnn_layers
+        self.num_graph_tokens = num_graph_tokens
+        self.freeze_llm = freeze_llm
+
+        # generate 互換のためにフィールドを用意（後でモデル側で上書き）
+        self.vocab_size = kwargs.get("vocab_size", None)
+        self.pad_token_id = kwargs.get("pad_token_id", None)
+        self.bos_token_id = kwargs.get("bos_token_id", None)
+        self.eos_token_id = kwargs.get("eos_token_id", None)
+
+    # transformers の generate/GenerationConfig 互換
+    def get_text_config(self, decoder: bool | None = None, **kwargs):
+        return self
 
 
 class SimpleGCN(nn.Module):
@@ -66,37 +108,56 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
     LLM の入力埋め込み（inputs_embeds）の先頭に連結して学習するモデル。
     """
 
-    config_class = AutoConfig  # 形式上（必須ではない）
+    config_class = GraphTokenLMConfig
+    base_model_prefix = "llm"
 
-    def __init__(
-        self,
-        llm_name: str = "Qwen/Qwen3-4B-Instruct-2507",
-        node_feat_dim: int = 128,
-        gnn_hidden: int = 256,
-        gnn_out: int = 512,
-        num_gnn_layers: int = 2,
-        num_graph_tokens: int = 4,
-        freeze_llm: bool = True,
-    ):
-        llm = AutoModelForCausalLM.from_pretrained(llm_name)
-        super().__init__(llm.config)
-        self.llm = llm
-        self.num_graph_tokens = num_graph_tokens
+    def __init__(self, config: GraphTokenLMConfig, load_llm_weights: bool = True):
+
+        super().__init__(config)
+
+        # (重要) 内部 LLM は config から from_config で「空構造」を作る
+        # 後で GraphTokenLM.from_pretrained() が全体の state_dict をロードする
+        if load_llm_weights:
+            self.llm = AutoModelForCausalLM.from_pretrained(config.llm_name)
+        else:
+            warnings.warn(
+                "Initialized LLM weights from scratch. If this is unintended, set load_llm_weights=True.", UserWarning
+            )
+            llm_cfg = AutoConfig.from_pretrained(config.llm_name)
+            with init_empty_weights():
+                self.llm = AutoModelForCausalLM.from_config(llm_cfg)
+        self.llm.tie_weights()
+
+        # ここで vocab_size などを config に反映
+        # llm_cfg = self.llm.config
+        # self.config.vocab_size = getattr(llm_cfg, "vocab_size", self.config.vocab_size)
+        # for k in ("pad_token_id", "bos_token_id", "eos_token_id"):
+        #     v = getattr(llm_cfg, k, None)
+        #     if v is not None:
+        #         setattr(self.config, k, v)
+
+        self.num_graph_tokens = config.num_graph_tokens
 
         # 1) GNN エンコーダ
-        self.gnn = SimpleGCN(in_dim=node_feat_dim, hid_dim=gnn_hidden, out_dim=gnn_out, num_layers=num_gnn_layers)
+        self.gnn = SimpleGCN(
+            in_dim=config.node_feat_dim,
+            hid_dim=config.gnn_hidden,
+            out_dim=config.gnn_out,
+            num_layers=config.num_gnn_layers,
+        )
 
         # 2) graph→token 射影
         self.tokenizer_head = GraphTokenizer(
-            gnn_out_dim=gnn_out,
+            gnn_out_dim=config.gnn_out,
             llm_hidden_size=self.llm.config.hidden_size,
-            num_graph_tokens=num_graph_tokens,
+            num_graph_tokens=config.num_graph_tokens,
         )
 
-        # 3) LLM を凍結（推奨）
-        if freeze_llm:
+        # 3) LLM を凍結（必要なら）
+        if config.freeze_llm:
             for p in self.llm.parameters():
                 p.requires_grad = False
+            self.llm.eval()
 
     @property
     def device(self):
@@ -153,16 +214,24 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
     ) -> CausalLMOutputWithPast:
         assert (input_ids is not None) or (
             inputs_embeds is not None
-        ), "input_ids か inputs_embeds のいずれかが必要です"
-        assert graph is not None, "graph（GNN入力）が必要です"
+        ), "Either input_ids or inputs_embeds must be provided"
 
-        inputs_embeds, attention_mask, labels = self._concat_graph_tokens(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            labels=labels,
-            inputs_embeds=inputs_embeds,
-            graph=graph,
-        )
+        if graph is not None:
+            inputs_embeds, attention_mask, labels = self._concat_graph_tokens(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                labels=labels,
+                inputs_embeds=inputs_embeds,
+                graph=graph,
+            )
+        else:
+            # 生成時など、すでに graph tokens を結合済みの inputs_embeds が渡るケース
+            if inputs_embeds is None:
+                inputs_embeds = self.llm.get_input_embeddings()(input_ids)
+            if attention_mask is None:
+                if input_ids is None:
+                    raise ValueError("When attention_mask is not provided, input_ids must also be provided")
+                attention_mask = input_ids.ne(self.llm.config.pad_token_id).long()
 
         # Qwen3 の損失に影響しうるキーは除外（安全側）
         blocked = {
@@ -184,15 +253,19 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         )
         return out
 
-    # 生成時のサポート（必要に応じて）
     def prepare_inputs_for_generation(
         self, input_ids=None, inputs_embeds=None, attention_mask=None, graph=None, **kwargs
     ):
-        # 学習時と同様にグラフトークンを先頭へ連結して返す
+        if input_ids is None and inputs_embeds is None:
+            raise ValueError("Either input_ids or inputs_embeds must be provided")
+        if input_ids is not None and inputs_embeds is not None:
+            raise ValueError("Both input_ids and inputs_embeds cannot be provided at the same time")
+        # assert graph is not None, "graph is required at the first generation step"
+
         if inputs_embeds is None:
             inputs_embeds = self.llm.get_input_embeddings()(input_ids)
-        assert graph is not None, "generate 時も graph が必要です"
-        inputs_embeds, attention_mask, _ = self._concat_graph_tokens(
-            input_ids=None, attention_mask=attention_mask, labels=None, inputs_embeds=inputs_embeds, graph=graph
-        )
+        if graph is not None:
+            inputs_embeds, attention_mask, _ = self._concat_graph_tokens(
+                input_ids=None, attention_mask=attention_mask, labels=None, inputs_embeds=inputs_embeds, graph=graph
+            )
         return {"inputs_embeds": inputs_embeds, "attention_mask": attention_mask, "graph": None}
