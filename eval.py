@@ -145,8 +145,7 @@ if __name__ == "__main__":
     ckpt_path = _resolve_checkpoint_path(args.model_path)
     print(f"Checkpoint: {ckpt_path}")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = GraphTokenLM.from_pretrained(ckpt_path, load_llm_weights=False).to(device)
-    print(model)
+    model = GraphTokenLM.from_pretrained(ckpt_path, load_llm_weights=True).to(device)
 
     # Load dataset
     test_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test").select(range(64))

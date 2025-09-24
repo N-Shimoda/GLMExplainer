@@ -2,7 +2,7 @@ import warnings
 
 import torch
 import torch.nn as nn
-from accelerate import init_empty_weights
+from accelerate import init_empty_weights  # noqa
 from torch_geometric.nn import GCNConv, global_mean_pool
 from transformers import (
     AutoConfig,
@@ -26,9 +26,9 @@ class GraphTokenLMConfig(PretrainedConfig):
         num_gnn_layers=2,
         num_graph_tokens=4,
         freeze_llm=True,
+        tie_word_embeddings=True,
         **kwargs,
     ):
-        super().__init__(**kwargs)
         self.llm_name = llm_name
         self.node_feat_dim = node_feat_dim
         self.gnn_hidden = gnn_hidden
@@ -42,6 +42,8 @@ class GraphTokenLMConfig(PretrainedConfig):
         self.pad_token_id = kwargs.get("pad_token_id", None)
         self.bos_token_id = kwargs.get("bos_token_id", None)
         self.eos_token_id = kwargs.get("eos_token_id", None)
+
+        super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
 
     # transformers の generate/GenerationConfig 互換
     def get_text_config(self, decoder: bool | None = None, **kwargs):
@@ -124,17 +126,7 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
                 "Initialized LLM weights from scratch. If this is unintended, set load_llm_weights=True.", UserWarning
             )
             llm_cfg = AutoConfig.from_pretrained(config.llm_name)
-            with init_empty_weights():
-                self.llm = AutoModelForCausalLM.from_config(llm_cfg)
-        self.llm.tie_weights()
-
-        # ここで vocab_size などを config に反映
-        # llm_cfg = self.llm.config
-        # self.config.vocab_size = getattr(llm_cfg, "vocab_size", self.config.vocab_size)
-        # for k in ("pad_token_id", "bos_token_id", "eos_token_id"):
-        #     v = getattr(llm_cfg, k, None)
-        #     if v is not None:
-        #         setattr(self.config, k, v)
+            self.llm = AutoModelForCausalLM.from_config(llm_cfg)
 
         self.num_graph_tokens = config.num_graph_tokens
 
@@ -158,6 +150,14 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
             for p in self.llm.parameters():
                 p.requires_grad = False
             self.llm.eval()
+
+        # --- sync basic generation fields so GenerationMixin works cleanly ---
+        for k in ["vocab_size", "pad_token_id", "bos_token_id", "eos_token_id"]:
+            setattr(self.config, k, getattr(self.llm.config, k, None))
+
+        # make sure tying is done once at init (harmless if already tied)
+        if getattr(self.config, "tie_word_embeddings", False):
+            self.tie_weights()
 
     @property
     def device(self):
@@ -260,7 +260,6 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
             raise ValueError("Either input_ids or inputs_embeds must be provided")
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("Both input_ids and inputs_embeds cannot be provided at the same time")
-        # assert graph is not None, "graph is required at the first generation step"
 
         if inputs_embeds is None:
             inputs_embeds = self.llm.get_input_embeddings()(input_ids)
@@ -269,3 +268,24 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
                 input_ids=None, attention_mask=attention_mask, labels=None, inputs_embeds=inputs_embeds, graph=graph
             )
         return {"inputs_embeds": inputs_embeds, "attention_mask": attention_mask, "graph": None}
+
+    # delegate embeddings to inner LLM so HF can tie weights correctly
+    def get_input_embeddings(self):
+        return self.llm.get_input_embeddings()
+
+    def set_input_embeddings(self, new_embeddings):
+        self.llm.set_input_embeddings(new_embeddings)
+
+    def get_output_embeddings(self):
+        return self.llm.get_output_embeddings()
+
+    def set_output_embeddings(self, new_embeddings):
+        self.llm.set_output_embeddings(new_embeddings)
+
+    def tie_weights(self):
+        # honor config.tie_word_embeddings and delegate
+        if getattr(self.config, "tie_word_embeddings", False):
+            # inner LLM handles actual tying (lm_head <-> embeddings)
+            self.llm.tie_weights()
+        # keep parent behavior (no-op for most models)
+        return super().tie_weights()
