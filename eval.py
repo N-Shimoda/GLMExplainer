@@ -10,7 +10,7 @@ from datasets import load_dataset
 from torch_geometric.data import Batch as PygBatch
 from torch_geometric.data import Data as PygData
 from tqdm import tqdm
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, GenerationConfig
 
 from src.glm import GraphTokenLM
 from src.metrics import comp_accuracy
@@ -39,12 +39,38 @@ def _checkpoint_step(path: str) -> int:
         return -1
 
 
-def _resolve_checkpoint_path(model_path: str) -> str:
-    """Resolve the concrete checkpoint directory to load."""
+def _resolve_checkpoint_path(model_path: str) -> tuple[str, str]:
+    """
+    Resolve the concrete checkpoint directory to load.
+
+    Parameters
+    ----------
+    model_path : str
+        Path to the task directory, model directory or a specific checkpoint.
+
+    Returns
+    -------
+    ckpt_path : str
+        Resolved checkpoint path.
+    run_name : str
+        Run directory name if applicable, else empty string.
+    """
     if os.path.isdir(model_path):
+        dir_name = os.path.basename(model_path.rstrip(os.sep))
+        if dir_name in ["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"]:
+            run_dirs = os.listdir(model_path)
+            if not run_dirs:
+                raise FileNotFoundError(f"No run directories found under '{model_path}'.")
+            run_dirs.sort(key=lambda p: int(p.split("-")[0]))
+            run_dirs.sort(key=lambda p: int(p.split("-")[1]))
+
+            latest_dir = os.path.join(model_path, run_dirs[-1])
+            return _resolve_checkpoint_path(latest_dir)
+
         config_path = os.path.join(model_path, "config.json")
         if os.path.isfile(config_path):
-            return model_path
+            run_name = os.path.basename(os.path.dirname(model_path.rstrip(os.sep)))
+            return model_path, run_name
 
         candidates = [
             os.path.join(model_path, entry)
@@ -60,12 +86,12 @@ def _resolve_checkpoint_path(model_path: str) -> str:
             raise FileNotFoundError(
                 f"Could not infer the last checkpoint under '{model_path}'. Provide a direct checkpoint path."
             )
-        return best
+        return best, os.path.basename(model_path)
 
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Checkpoint path '{model_path}' does not exist.")
 
-    return model_path
+    return model_path, ""
 
 
 def create_pyg_batch(graph_dicts: list[dict[str, list]], device: torch.device) -> PygBatch:
@@ -85,6 +111,8 @@ def eval_model(model: GraphTokenLM, test_ds, batch_size: int):
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(model.config.llm_name)
 
+    gen_cfg = GenerationConfig(max_new_tokens=8, do_sample=False)
+
     results = []
     num_batches = ceil(len(test_ds) / batch_size)
 
@@ -94,7 +122,7 @@ def eval_model(model: GraphTokenLM, test_ds, batch_size: int):
         batch["graph"] = pyg_batch
 
         input_ids = tokenizer(batch["task_description"], return_tensors="pt", padding=True).to(model.device)
-        outputs = model.generate(**input_ids, graph=pyg_batch, max_new_tokens=8, do_sample=True)
+        outputs = model.generate(**input_ids, graph=pyg_batch, generation_config=gen_cfg)
         decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
 
         res_dict_li = [
@@ -142,13 +170,13 @@ if __name__ == "__main__":
     args = build_args()
 
     # Load pre-trained model
-    ckpt_path = _resolve_checkpoint_path(args.model_path)
+    ckpt_path, run_name = _resolve_checkpoint_path(args.model_path)
     print(f"Checkpoint: {ckpt_path}")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = GraphTokenLM.from_pretrained(ckpt_path, load_llm_weights=True).to(device)
 
     # Load dataset
-    test_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test").select(range(64))
+    test_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
     test_ds = test_raw.map(
         lambda x: add_graph_column(x, k=model.config.node_feat_dim),
         desc="add_graph_column(test)",
@@ -157,5 +185,5 @@ if __name__ == "__main__":
     print("Test dataset:\n", test_ds)
 
     results = eval_model(model, test_ds, args.batch_size)
-    res_file = os.path.join("results", args.subset, "results.json")
+    res_file = os.path.join("results", args.subset, f"{run_name}.json" if run_name else "results.json")
     collect_result(results, res_file, args.subset)
