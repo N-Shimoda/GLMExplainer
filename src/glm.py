@@ -110,6 +110,9 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
     LLM の入力埋め込み（inputs_embeds）の先頭に連結して学習するモデル。
     """
 
+    # _tied_weights_keys = ["llm.lm_head.weight"]
+    # _keys_to_ignore_on_load_missing = [r"^llm\.lm_head\.weight$"]
+
     config_class = GraphTokenLMConfig
     base_model_prefix = "llm"
 
@@ -120,7 +123,7 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         # (重要) 内部 LLM は config から from_config で「空構造」を作る
         # 後で GraphTokenLM.from_pretrained() が全体の state_dict をロードする
         if load_llm_weights:
-            self.llm = AutoModelForCausalLM.from_pretrained(config.llm_name)
+            self.llm = AutoModelForCausalLM.from_pretrained(config.llm_name, trust_remote_code=True)
         else:
             warnings.warn(
                 "Initialized LLM weights from scratch. If this is unintended, set load_llm_weights=True.", UserWarning
