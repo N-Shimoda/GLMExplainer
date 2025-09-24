@@ -1,7 +1,6 @@
 import argparse
 import json
 import os
-import warnings
 from math import ceil
 from pprint import pprint  # noqa F401
 
@@ -28,6 +27,7 @@ def build_args():
     p.add_argument("--model_path", type=str, required=True)
     p.add_argument("--num_graph_tokens", type=int, default=4)
     p.add_argument("--batch_size", type=int, default=16)
+    p.add_argument("--split", choices=["train", "validation", "test"], default="test")
     return p.parse_args()
 
 
@@ -155,7 +155,7 @@ def collect_result(results: list[dict], res_file: str, subset: str):
     acc, unknowns = comp_accuracy([r["preds"] for r in results], [r["answer"] for r in results], subset)
     print(f"Accuracy: {acc * 100:.2f}%")
     if unknowns:
-        warnings.warn(f"{unknowns} unknown predictions found.", UserWarning)
+        print(f"[WARNING] {unknowns} unknown predictions found.")
 
     # Save results to a file
     os.makedirs(os.path.dirname(res_file), exist_ok=True)
@@ -176,7 +176,7 @@ if __name__ == "__main__":
     model = GraphTokenLM.from_pretrained(ckpt_path, load_llm_weights=True).to(device)
 
     # Load dataset
-    test_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
+    test_raw = load_dataset("baharef/GraphQA", args.subset, split=f"zero_shot_{args.split}")
     test_ds = test_raw.map(
         lambda x: add_graph_column(x, k=model.config.node_feat_dim),
         desc="add_graph_column(test)",
@@ -185,5 +185,10 @@ if __name__ == "__main__":
     print("Test dataset:\n", test_ds)
 
     results = eval_model(model, test_ds, args.batch_size)
-    res_file = os.path.join("results", args.subset, f"{run_name}.json" if run_name else "results.json")
+    match args.split:
+        case "test":
+            file_name = f"{run_name}.json" if run_name else "results.json"
+        case _:
+            file_name = f"{run_name}_{args.split}.json" if run_name else f"results_{args.split}.json"
+    res_file = os.path.join("results", args.subset, file_name)
     collect_result(results, res_file, args.subset)

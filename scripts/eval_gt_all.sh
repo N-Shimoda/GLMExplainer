@@ -19,6 +19,47 @@ log() {
   echo "[$ts] $*" | tee -a "$LOG_FILE"
 }
 
+# -----------------------------------------
+# 引数処理
+# --split {test|train|validation} を受け取り、eval.py に渡す
+# デフォルトは test
+# -----------------------------------------
+SPLIT="test"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --split)
+      if [[ $# -lt 2 ]]; then
+        echo "ERROR: --split に値が必要です (test|train|validation)" >&2
+        exit 2
+      fi
+      SPLIT="$2"
+      shift 2
+      ;;
+    -h|--help)
+      cat <<USAGE
+Usage: $(basename "$0") [--split {test|train|validation}]
+
+Options:
+  --split   Which dataset split to evaluate (default: test)
+USAGE
+      exit 0
+      ;;
+    *)
+      echo "ERROR: 未知の引数: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+# 値検証
+case "$SPLIT" in
+  test|train|validation) ;;
+  *)
+    echo "ERROR: --split should be chosen from test|train|validation (got: $SPLIT)" >&2
+    exit 2
+    ;;
+esac
+
 subsets=(
   node_count
   edge_count
@@ -28,7 +69,7 @@ subsets=(
 )
 
 for subset in "${subsets[@]}"; do
-  cmd=(python eval.py --subset "${subset}" --model_path "outputs/${subset}")
+  cmd=(python eval.py --subset "${subset}" --model_path "outputs/${subset}" --split "${SPLIT}")
   log "[START] ${cmd[*]}"
   start_ts=$(date +%s)
 

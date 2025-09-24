@@ -123,10 +123,13 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         # (重要) 内部 LLM は config から from_config で「空構造」を作る
         # 後で GraphTokenLM.from_pretrained() が全体の state_dict をロードする
         if load_llm_weights:
-            self.llm = AutoModelForCausalLM.from_pretrained(config.llm_name, trust_remote_code=True)
+            self.llm = AutoModelForCausalLM.from_pretrained(
+                config.llm_name, trust_remote_code=True, tie_word_embeddings=True
+            )
         else:
             warnings.warn(
-                "Initialized LLM weights from scratch. If this is unintended, set load_llm_weights=True.", UserWarning
+                "Initialized LLM weights from scratch. If this is unintended, set load_llm_weights=True.",
+                UserWarning,
             )
             llm_cfg = AutoConfig.from_pretrained(config.llm_name)
             self.llm = AutoModelForCausalLM.from_config(llm_cfg)
@@ -192,6 +195,10 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         batch = graph["batch"]  # [N_nodes]
         node_repr = self.gnn(x, edge_index)  # [N_nodes, gnn_out]
         graph_tokens = self.tokenizer_head(node_repr, batch)  # [B, k, H]
+
+        # print("graph_tokens.shape:", graph_tokens.shape)
+        # print("inputs_embeds.shape:", inputs_embeds.shape)
+        # print("input_embeds:", inputs_embeds)
 
         # ---- 連結（先頭に GraphToken を挿入）----
         new_inputs = torch.cat([graph_tokens, inputs_embeds], dim=1)  # [B, k+T, H]
@@ -268,8 +275,16 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
             inputs_embeds = self.llm.get_input_embeddings()(input_ids)
         if graph is not None:
             inputs_embeds, attention_mask, _ = self._concat_graph_tokens(
-                input_ids=None, attention_mask=attention_mask, labels=None, inputs_embeds=inputs_embeds, graph=graph
+                input_ids=None,
+                attention_mask=attention_mask,
+                labels=None,
+                inputs_embeds=inputs_embeds,
+                graph=graph,
             )
+        print("input_embeds", inputs_embeds.shape)
+        print(inputs_embeds)
+        print("attention_mask", attention_mask.shape)
+        print(attention_mask)
         return {"inputs_embeds": inputs_embeds, "attention_mask": attention_mask, "graph": None}
 
     # delegate embeddings to inner LLM so HF can tie weights correctly
