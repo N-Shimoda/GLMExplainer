@@ -281,10 +281,10 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
                 inputs_embeds=inputs_embeds,
                 graph=graph,
             )
-        print("input_embeds", inputs_embeds.shape)
-        print(inputs_embeds)
-        print("attention_mask", attention_mask.shape)
-        print(attention_mask)
+        # print("input_embeds", inputs_embeds.shape)
+        # print(inputs_embeds)
+        # print("attention_mask", attention_mask.shape)
+        # print(attention_mask)
         return {"inputs_embeds": inputs_embeds, "attention_mask": attention_mask, "graph": None}
 
     # delegate embeddings to inner LLM so HF can tie weights correctly

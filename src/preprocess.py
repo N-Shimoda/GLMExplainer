@@ -10,9 +10,10 @@ def add_graph_column(example, k: int = 4):
     text = example["question"]
     nodes = extract_nodes_from_text(text)
     edges = extract_edges_from_text(text)
-    # k: LPE の次元数（固有ベクトル本数）。不足分は 0 でパディングします。
-    example["graph"] = create_pyg_dict(nodes, edges, k=k)
-    example["answer"] = example["answer"].strip()
+
+    example["prompt"] = example["task_description"]
+    example["completion"] = example["answer"].strip()
+    example["graph"] = create_pyg_dict(nodes, edges, k=k)  # k: dimension of LPE
     return example
 
 

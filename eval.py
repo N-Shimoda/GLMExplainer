@@ -5,12 +5,12 @@ from math import ceil
 from pprint import pprint  # noqa F401
 
 import torch
-from datasets import load_dataset
 from torch_geometric.data import Batch as PygBatch
 from torch_geometric.data import Data as PygData
 from tqdm import tqdm
 from transformers import AutoTokenizer, GenerationConfig
 
+from datasets import load_dataset
 from src.glm import GraphTokenLM
 from src.metrics import comp_accuracy
 from src.preprocess import add_graph_column
@@ -107,11 +107,14 @@ def create_pyg_batch(graph_dicts: list[dict[str, list]], device: torch.device) -
 
 
 @torch.no_grad()
-def eval_model(model: GraphTokenLM, test_ds, batch_size: int):
+def eval_model(model: GraphTokenLM, test_ds, batch_size: int, subset: str):
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(model.config.llm_name)
 
-    gen_cfg = GenerationConfig(max_new_tokens=8, do_sample=False)
+    gen_cfg = GenerationConfig(
+        max_new_tokens=4 if subset != "maximum_flow" else 8,
+        do_sample=True,
+    )
 
     results = []
     num_batches = ceil(len(test_ds) / batch_size)
@@ -121,15 +124,15 @@ def eval_model(model: GraphTokenLM, test_ds, batch_size: int):
         pyg_batch = create_pyg_batch(batch["graph"], model.device)
         batch["graph"] = pyg_batch
 
-        input_ids = tokenizer(batch["task_description"], return_tensors="pt", padding=True).to(model.device)
+        input_ids = tokenizer(batch["prompt"], return_tensors="pt", padding=True).to(model.device)
         outputs = model.generate(**input_ids, graph=pyg_batch, generation_config=gen_cfg)
         decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
 
         res_dict_li = [
             {
-                "question": batch["task_description"][i],
+                "question": batch["prompt"][i],
                 "preds": pred.split("\nA: ")[-1],
-                "answer": batch["answer"][i],
+                "answer": batch["completion"][i],
             }
             for i, pred in enumerate(decoded)
         ]
@@ -180,11 +183,11 @@ if __name__ == "__main__":
     test_ds = test_raw.map(
         lambda x: add_graph_column(x, k=model.config.node_feat_dim),
         desc="add_graph_column(test)",
-        remove_columns=["question", "nnodes", "nedges", "algorithm", "text_encoding"],
+        remove_columns=["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"],
     )
     print("Test dataset:\n", test_ds)
 
-    results = eval_model(model, test_ds, args.batch_size)
+    results = eval_model(model, test_ds, args.batch_size, args.subset)
     match args.split:
         case "test":
             file_name = f"{run_name}.json" if run_name else "results.json"

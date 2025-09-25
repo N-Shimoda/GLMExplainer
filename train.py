@@ -3,11 +3,11 @@ import os
 from datetime import datetime
 
 import torch.distributed as dist
-from datasets import load_dataset
 from transformers import AutoTokenizer
 from trl import SFTConfig, SFTTrainer
 
 import wandb
+from datasets import load_dataset
 from eval import collect_result, eval_model
 from src.collator import GraphQACollator
 from src.glm import GraphTokenLM, GraphTokenLMConfig
@@ -50,20 +50,28 @@ def create_dataset(subset: str, do_eval: bool = False):
     def modify_dataset(example):
         return add_graph_column(example, k=args.node_feat_dim)
 
+    cols = ["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"]
+
     train_raw = load_dataset("baharef/GraphQA", subset, split="zero_shot_train")
     eval_raw = load_dataset(
         "baharef/GraphQA",
         subset,
         split="zero_shot_validation" if subset != "maximum_flow" else "zero_shot_test",
     )
-    train_ds = train_raw.map(modify_dataset, desc="modify_dataset(train)")
-    eval_ds = eval_raw.map(modify_dataset, desc="modify_dataset(eval)")
+    train_ds = train_raw.map(modify_dataset, remove_columns=cols, desc="Preprocessing train")
+    eval_ds = eval_raw.map(modify_dataset, remove_columns=cols, desc="Preprocessing eval")
 
     if do_eval:
         test_raw = load_dataset("baharef/GraphQA", subset, split="zero_shot_test")
-        test_ds = test_raw.map(modify_dataset, desc="modify_dataset(test)")
+        test_ds = test_raw.map(modify_dataset, remove_columns=cols, desc="Preprocessing test")
     else:
         test_ds = None
+
+    DS_DIR = "datasets"
+    train_ds.to_json(os.path.join(DS_DIR, "train_ds.jsonl"))
+    eval_ds.to_json(os.path.join(DS_DIR, "eval_ds.jsonl"))
+    if do_eval:
+        test_ds.to_json(os.path.join(DS_DIR, "test_ds.jsonl"))
 
     return train_ds, eval_ds, test_ds
 
@@ -78,7 +86,7 @@ def train_glm(train_ds, eval_ds, output_dir, args):
         num_gnn_layers=args.num_gnn_layers,
     )
     model = GraphTokenLM(glm_cfg)
-    print(model)
+    # print("Model architecture:\n", model)
 
     tokenizer = AutoTokenizer.from_pretrained(glm_cfg.llm_name, trust_remote_code=True)
     if tokenizer.pad_token is None:
@@ -86,7 +94,7 @@ def train_glm(train_ds, eval_ds, output_dir, args):
 
     collator = GraphQACollator(
         tokenizer=tokenizer,
-        text_field="task_description",
+        # text_field="task_description",
         max_length=512,
         num_graph_tokens=args.num_graph_tokens,
     )
@@ -100,11 +108,11 @@ def train_glm(train_ds, eval_ds, output_dir, args):
         lr_scheduler_type="linear",
         logging_steps=10,
         save_strategy="epoch",
+        save_total_limit=1,
         gradient_accumulation_steps=4,
         bf16=True,
         optim="lion_32bit",
         report_to="wandb" if args.wandb else "none",
-        dataset_text_field="task_description",
         completion_only_loss=True,
         remove_unused_columns=False,
         ddp_backend="nccl",  # DDP
@@ -147,7 +155,7 @@ if __name__ == "__main__":
     # Evaluation
     if is_main_process() and args.do_eval:
         print("***** Evaluation *****")
-        results = eval_model(model, test_ds, batch_size=8)
+        results = eval_model(model, test_ds, batch_size=8, subset=args.subset)
         res_file = os.path.join("results", args.subset, f"{date_str}.json")
         acc = collect_result(results, res_file, args.subset)
         if args.wandb:

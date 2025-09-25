@@ -28,10 +28,11 @@ subsets=(
 )
 
 for subset in "${subsets[@]}"; do
-  # cmd=(torchrun --nproc_per_node=2 train.py --subset "${subset}" --do_eval --wandb)
   cmd=(
     torchrun --nproc_per_node=2 train.py --subset "${subset}"
-    --gnn_hidden_dim 32 --gnn_out_dim 32 --num_gnn_layers 2 --lr 0.0001
+    --node_feat_dim 8
+    --gnn_hidden_dim 256 --gnn_out_dim 512 --num_gnn_layers 4
+    --lr 0.01
     --do_eval --wandb
   )
   log "[START] ${cmd[*]}"

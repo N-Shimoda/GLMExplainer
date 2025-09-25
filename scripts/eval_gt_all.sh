@@ -7,7 +7,7 @@ cd "$ROOT_DIR"
 
 LOG_DIR="$ROOT_DIR/logs"
 mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/train_gt_all.log"
+LOG_FILE="$LOG_DIR/eval_gt_all.log"
 
 # 既存のログを削除
 rm -f "$LOG_FILE"
