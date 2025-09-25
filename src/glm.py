@@ -1,8 +1,5 @@
-import warnings
-
 import torch
 import torch.nn as nn
-from accelerate import init_empty_weights  # noqa
 from torch_geometric.nn import GCNConv, global_mean_pool
 from transformers import (
     AutoConfig,
@@ -110,8 +107,8 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
     LLM の入力埋め込み（inputs_embeds）の先頭に連結して学習するモデル。
     """
 
-    # _tied_weights_keys = ["llm.lm_head.weight"]
-    # _keys_to_ignore_on_load_missing = [r"^llm\.lm_head\.weight$"]
+    _tied_weights_keys = ["llm.lm_head.weight"]
+    _keys_to_ignore_on_load_missing = [r"^llm\.lm_head\.weight$"]
 
     config_class = GraphTokenLMConfig
     base_model_prefix = "llm"
@@ -127,11 +124,7 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
                 config.llm_name, trust_remote_code=True, tie_word_embeddings=True
             )
         else:
-            warnings.warn(
-                "Initialized LLM weights from scratch. If this is unintended, set load_llm_weights=True.",
-                UserWarning,
-            )
-            llm_cfg = AutoConfig.from_pretrained(config.llm_name)
+            llm_cfg = AutoConfig.from_pretrained(config.llm_name, torch_dtype=torch.float32)
             self.llm = AutoModelForCausalLM.from_config(llm_cfg)
 
         self.num_graph_tokens = config.num_graph_tokens
