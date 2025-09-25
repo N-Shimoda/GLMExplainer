@@ -3,11 +3,11 @@ import os
 from datetime import datetime
 
 import torch.distributed as dist
-import wandb
 from datasets import load_dataset
 from transformers import AutoTokenizer
 from trl import SFTConfig, SFTTrainer
 
+import wandb
 from eval import collect_result, eval_model
 from src.collator import GraphQACollator
 from src.glm import GraphTokenLM, GraphTokenLMConfig
@@ -30,6 +30,9 @@ def build_args():
     p.add_argument("--epochs", type=int, default=3)
     p.add_argument("--num_graph_tokens", type=int, default=4)
     p.add_argument("--node_feat_dim", type=int, default=4)
+    p.add_argument("--gnn_hidden_dim", type=int, default=64)
+    p.add_argument("--gnn_out_dim", type=int, default=64)
+    p.add_argument("--num_gnn_layers", type=int, default=2)
     p.add_argument("--wandb", action="store_true", help="Use wandb logging")
     p.add_argument("--wandb_project", type=str, default="GraphQA-GLM")
     p.add_argument("--do_eval", action="store_true", help="Run evaluation after training")
@@ -63,6 +66,9 @@ def train_glm(train_ds, eval_ds, output_dir, args):
         llm_name="Qwen/Qwen3-4B-Instruct-2507",
         node_feat_dim=args.node_feat_dim,
         num_graph_tokens=args.num_graph_tokens,
+        gnn_hidden=args.gnn_hidden_dim,
+        gnn_out=args.gnn_out_dim,
+        num_gnn_layers=args.num_gnn_layers,
     )
     model = GraphTokenLM(glm_cfg)
 
@@ -108,9 +114,6 @@ def train_glm(train_ds, eval_ds, output_dir, args):
         print("***** Training *****")
     trainer.train()
     if is_main_process():
-        # final_ckpt_path = os.path.join(output_dir, "checkpoint-final")
-        # tokenizer.save_pretrained(final_ckpt_path)  # 重要
-        # model.save_pretrained(final_ckpt_path)
         print("***** Done *****")
 
     return model
