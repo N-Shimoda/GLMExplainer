@@ -196,10 +196,6 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         node_repr = self.gnn(x, edge_index)  # [N_nodes, gnn_out]
         graph_tokens = self.tokenizer_head(node_repr, batch)  # [B, k, H]
 
-        # print("graph_tokens.shape:", graph_tokens.shape)
-        # print("inputs_embeds.shape:", inputs_embeds.shape)
-        # print("input_embeds:", inputs_embeds)
-
         # ---- 連結（先頭に GraphToken を挿入）----
         new_inputs = torch.cat([graph_tokens, inputs_embeds], dim=1)  # [B, k+T, H]
 
@@ -281,10 +277,7 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
                 inputs_embeds=inputs_embeds,
                 graph=graph,
             )
-        # print("input_embeds", inputs_embeds.shape)
-        # print(inputs_embeds)
-        # print("attention_mask", attention_mask.shape)
-        # print(attention_mask)
+
         return {"inputs_embeds": inputs_embeds, "attention_mask": attention_mask, "graph": None}
 
     # delegate embeddings to inner LLM so HF can tie weights correctly
