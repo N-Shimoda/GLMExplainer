@@ -11,13 +11,14 @@ import time
 from typing import Dict
 
 import torch
-import wandb
 from accelerate.utils import set_seed
 from datasets import load_dataset
-from eval import eval_model
 from peft import LoraConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
+
+import wandb
+from eval import eval_model
 
 
 def build_args():
@@ -78,7 +79,7 @@ def to_conv_prompt_completion(example: Dict) -> Dict:
     #     ],
     #     "completion": [{"role": "user", "content": example["answer"]}],
     # }
-    return {"prompt": example["question"].strip(), "completion": example["answer"].strip()}
+    return {"prompt": example["question"], "completion": example["answer"].strip()}
 
 
 def train_model(train_raw, eval_raw, run_name: str, output_dir: str):
@@ -130,11 +131,11 @@ def train_model(train_raw, eval_raw, run_name: str, output_dir: str):
         logging_steps=10,
         eval_steps=25,
         save_steps=25,
+        save_total_limit=2,
         packing=True,
         bf16=True,
         optim="adamw_8bit",
         report_to="wandb" if args.wandb else "none",
-        # run_name=run_name if args.wandb else None,
         completion_only_loss=True,  # prompt は損失から除外（prompt-completion）
         eos_token=tokenizer.eos_token,
         # Qwen3 は tokenizer に chat template が入っているので自動適用される

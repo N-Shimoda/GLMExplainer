@@ -126,7 +126,7 @@ def eval_model(model_path, eval_raw: arrow_dataset.Dataset, subset: str):
         print(f"[RESULT] Unknown Predictions (n={len(eval_raw)}): {unknowns}")
 
     # Save 10 examples to JSON
-    save_dir = "examples"
+    save_dir = "results"
     filename = os.path.join(save_dir, f"{subset}.json")
     os.makedirs(save_dir, exist_ok=True)
     examples = [{"question": q, "prediction": p, "ground_truth": r} for q, p, r in list(zip(inputs, preds, refs))[:10]]
