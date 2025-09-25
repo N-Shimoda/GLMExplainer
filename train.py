@@ -27,12 +27,19 @@ def build_args():
         choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
         default="edge_count",
     )
-    p.add_argument("--epochs", type=int, default=3)
+
+    # Model architecture
     p.add_argument("--num_graph_tokens", type=int, default=4)
     p.add_argument("--node_feat_dim", type=int, default=4)
     p.add_argument("--gnn_hidden_dim", type=int, default=64)
     p.add_argument("--gnn_out_dim", type=int, default=64)
     p.add_argument("--num_gnn_layers", type=int, default=2)
+
+    # Training parameters
+    p.add_argument("--epochs", type=int, default=3)
+    p.add_argument("--lr", type=float, default=0.05)
+
+    # Logging
     p.add_argument("--wandb", action="store_true", help="Use wandb logging")
     p.add_argument("--wandb_project", type=str, default="GraphQA-GLM")
     p.add_argument("--do_eval", action="store_true", help="Run evaluation after training")
@@ -71,6 +78,7 @@ def train_glm(train_ds, eval_ds, output_dir, args):
         num_gnn_layers=args.num_gnn_layers,
     )
     model = GraphTokenLM(glm_cfg)
+    print(model)
 
     tokenizer = AutoTokenizer.from_pretrained(glm_cfg.llm_name, trust_remote_code=True)
     if tokenizer.pad_token is None:
@@ -88,7 +96,7 @@ def train_glm(train_ds, eval_ds, output_dir, args):
         per_device_train_batch_size=2,
         per_device_eval_batch_size=2,
         num_train_epochs=args.epochs,
-        learning_rate=0.05,
+        learning_rate=args.lr,
         lr_scheduler_type="linear",
         logging_steps=10,
         save_strategy="epoch",
@@ -97,6 +105,7 @@ def train_glm(train_ds, eval_ds, output_dir, args):
         optim="lion_32bit",
         report_to="wandb" if args.wandb else "none",
         dataset_text_field="task_description",
+        completion_only_loss=True,
         remove_unused_columns=False,
         ddp_backend="nccl",  # DDP
     )
