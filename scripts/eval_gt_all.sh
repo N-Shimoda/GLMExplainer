@@ -92,7 +92,7 @@ for subset in "${subsets[@]}"; do
       if [[ -n "$acc_value" ]]; then
         acc_percent="$(awk -v acc="$acc_value" 'BEGIN { printf "%.2f", acc * 100 }')"
         acc_note=" accuracy=${acc_percent}% (raw=${acc_value})"
-        log "[METRIC] subset=${subset}${acc_note}"
+        log "[INFO] subset=${subset}${acc_note}"
       else
         log "[WARNING] subset=${subset} accuracy value not found in summary output."
       fi

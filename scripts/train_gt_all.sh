@@ -33,7 +33,7 @@ for subset in "${subsets[@]}"; do
     --base_model "Qwen/Qwen3-4B-Base"
     --node_feat_dim 8
     --gnn_hidden_dim 256 --gnn_out_dim 512 --num_gnn_layers 4
-    --lr 0.01
+    --epochs 3 --lr 0.01
     --do_eval --wandb
   )
   log "[START] ${cmd[*]}"
