@@ -73,16 +73,33 @@ for subset in "${subsets[@]}"; do
   log "[START] ${cmd[*]}"
   start_ts=$(date +%s)
 
+  tmp_output_file="$(mktemp)"
   set +e
-  "${cmd[@]}"
-  rc=$?
+  "${cmd[@]}" 2>&1 | tee "$tmp_output_file"
+  rc=${PIPESTATUS[0]}
   set -e
 
   end_ts=$(date +%s)
   dur=$(( end_ts - start_ts ))
 
+  summary_line="$(grep -E '\[SUMMARY\]' "$tmp_output_file" | tail -n 1 || true)"
+  rm -f "$tmp_output_file"
+
   if [[ $rc -eq 0 ]]; then
-    log "[COMPLETED] subset=${subset} duration=${dur}s"
+    acc_note=""
+    if [[ -n "$summary_line" ]]; then
+      acc_value="$(sed -n 's/.*accuracy=\([0-9.][0-9.]*\).*/\1/p' <<<"$summary_line")"
+      if [[ -n "$acc_value" ]]; then
+        acc_percent="$(awk -v acc="$acc_value" 'BEGIN { printf "%.2f", acc * 100 }')"
+        acc_note=" accuracy=${acc_percent}% (raw=${acc_value})"
+        log "[METRIC] subset=${subset}${acc_note}"
+      else
+        log "[WARNING] subset=${subset} accuracy value not found in summary output."
+      fi
+    else
+      log "[WARNING] subset=${subset} summary line not found in eval output."
+    fi
+    log "[COMPLETED] subset=${subset} duration=${dur}s${acc_note}"
   else
     log "[ERROR] subset=${subset} rc=${rc} duration=${dur}s"
     exit $rc

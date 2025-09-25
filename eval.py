@@ -194,4 +194,5 @@ if __name__ == "__main__":
         case _:
             file_name = f"{run_name}_{args.split}.json" if run_name else f"results_{args.split}.json"
     res_file = os.path.join("results", args.subset, file_name)
-    collect_result(results, res_file, args.subset)
+    acc = collect_result(results, res_file, args.subset)
+    print(f"[SUMMARY] subset={args.subset} accuracy={acc:.6f}")
