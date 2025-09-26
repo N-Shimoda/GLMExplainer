@@ -2,7 +2,6 @@ import argparse
 import json
 import os
 from math import ceil
-from pprint import pprint  # noqa F401
 
 import torch
 from torch_geometric.data import Batch as PygBatch
@@ -57,7 +56,7 @@ def _resolve_checkpoint_path(model_path: str) -> tuple[str, str]:
     """
     if os.path.isdir(model_path):
         dir_name = os.path.basename(model_path.rstrip(os.sep))
-        if dir_name in ["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"]:
+        if dir_name in ["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow", "combined"]:
             run_dirs = os.listdir(model_path)
             if not run_dirs:
                 raise FileNotFoundError(f"No run directories found under '{model_path}'.")
@@ -94,6 +93,16 @@ def _resolve_checkpoint_path(model_path: str) -> tuple[str, str]:
     return model_path, ""
 
 
+def build_dataset(subset: str, split: str, node_feat_dim: int):
+    test_raw = load_dataset("baharef/GraphQA", subset, split=f"zero_shot_{split}")
+    test_ds = test_raw.map(
+        lambda x: add_graph_column(x, k=node_feat_dim),
+        desc="add_graph_column(test)",
+        remove_columns=["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"],
+    )
+    return test_ds
+
+
 def create_pyg_batch(graph_dicts: list[dict[str, list]], device: torch.device) -> PygBatch:
     data_list = [
         PygData(
@@ -107,7 +116,7 @@ def create_pyg_batch(graph_dicts: list[dict[str, list]], device: torch.device) -
 
 
 @torch.no_grad()
-def eval_model(model: GraphTokenLM, test_ds, batch_size: int, subset: str):
+def eval_model(model: GraphTokenLM, test_ds, batch_size: int, subset: str) -> list[dict]:
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(model.config.llm_name)
 
@@ -178,12 +187,7 @@ if __name__ == "__main__":
     model = GraphTokenLM.from_pretrained(ckpt_path, load_llm_weights=False, device_map="auto")
 
     # Load dataset
-    test_raw = load_dataset("baharef/GraphQA", args.subset, split=f"zero_shot_{args.split}")
-    test_ds = test_raw.map(
-        lambda x: add_graph_column(x, k=model.config.node_feat_dim),
-        desc="add_graph_column(test)",
-        remove_columns=["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"],
-    )
+    test_ds = build_dataset(args.subset, args.split, model.config.node_feat_dim)
     print("Test dataset:\n", test_ds)
 
     results = eval_model(model, test_ds, args.batch_size, args.subset)
@@ -194,4 +198,4 @@ if __name__ == "__main__":
             file_name = f"{run_name}_{args.split}.json" if run_name else f"results_{args.split}.json"
     res_file = os.path.join("results", args.subset, file_name)
     acc = collect_result(results, res_file, args.subset)
-    print(f"[SUMMARY] subset={args.subset} accuracy={acc:.6f}")
+    print(f"[SUMMARY] subset={args.subset} accuracy={acc:.2f}")

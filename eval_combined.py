@@ -3,6 +3,7 @@ import os
 
 import torch
 
+from datasets import concatenate_datasets
 from eval import _resolve_checkpoint_path, build_dataset, collect_result, eval_model
 from src.glm import GraphTokenLM
 
@@ -12,6 +13,7 @@ def build_args():
     p.add_argument("--model_path", type=str, required=True)
     p.add_argument("--batch_size", type=int, default=16)
     p.add_argument("--split", choices=["train", "validation", "test"], default="test")
+    p.add_argument("--num_trials", type=int, default=1)
     return p.parse_args()
 
 
@@ -19,7 +21,7 @@ if __name__ == "__main__":
     args = build_args()
     model_path, run_name = _resolve_checkpoint_path(args.model_path)
     print(f"Checkpoint: {model_path}")
-    print(f"Run name: {run_name if run_name else '(none)'}")
+    print(f"Number of trials: {args.num_trials}")
 
     # Load model
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -29,10 +31,11 @@ if __name__ == "__main__":
     for subset in subsets:
         # Load dataset
         test_ds = build_dataset(subset, args.split, model.config.node_feat_dim)
+        repeated_ds = concatenate_datasets([test_ds] * args.num_trials)
 
         # Evaluate
         print(f"Evaluating subset: {subset}")
-        results = eval_model(model, test_ds, args.batch_size, subset)
+        results = eval_model(model, repeated_ds, args.batch_size, subset)
 
         # Save results
         out_dir = os.path.join("results", subset)
