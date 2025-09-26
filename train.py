@@ -110,8 +110,7 @@ def train_glm(train_ds, eval_ds, output_dir, args):
         learning_rate=args.lr,
         lr_scheduler_type="linear",
         logging_steps=10,
-        save_strategy="epoch",
-        save_total_limit=1,
+        save_strategy="no",
         gradient_accumulation_steps=4,
         bf16=True,
         optim="lion_32bit",
@@ -134,6 +133,10 @@ def train_glm(train_ds, eval_ds, output_dir, args):
         print("***** Training *****")
     trainer.train()
     if is_main_process():
+        final_step = trainer.state.global_step
+        final_ckpt_dir = os.path.join(output_dir, f"checkpoint-{final_step}")
+        trainer.save_model(final_ckpt_dir)
+        trainer.save_state()
         print("***** Done *****")
 
     return model
