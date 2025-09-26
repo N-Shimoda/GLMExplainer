@@ -112,7 +112,7 @@ def eval_model(model: GraphTokenLM, test_ds, batch_size: int, subset: str):
     tokenizer = AutoTokenizer.from_pretrained(model.config.llm_name)
 
     gen_cfg = GenerationConfig(
-        max_new_tokens=4 if subset != "maximum_flow" else 8,
+        max_new_tokens=8 if subset == "cycle_check" else 6,
         do_sample=True,
     )
 
@@ -175,8 +175,7 @@ if __name__ == "__main__":
     # Load pre-trained model
     ckpt_path, run_name = _resolve_checkpoint_path(args.model_path)
     print(f"Checkpoint: {ckpt_path}")
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = GraphTokenLM.from_pretrained(ckpt_path, load_llm_weights=False).to(device)
+    model = GraphTokenLM.from_pretrained(ckpt_path, load_llm_weights=False, device_map="auto")
 
     # Load dataset
     test_raw = load_dataset("baharef/GraphQA", args.subset, split=f"zero_shot_{args.split}")
