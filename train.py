@@ -3,11 +3,11 @@ import os
 from datetime import datetime
 
 import torch.distributed as dist
-from datasets import load_dataset
 from transformers import AutoTokenizer
 from trl import SFTConfig, SFTTrainer
 
 import wandb
+from datasets import load_dataset
 from eval import collect_result, eval_model
 from src.collator import GraphQACollator
 from src.glm import GraphTokenLM, GraphTokenLMConfig
@@ -27,21 +27,33 @@ def build_args():
         choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
         default="edge_count",
     )
-    p.add_argument("--epochs", type=int, default=3)
+
+    # Model architecture
+    p.add_argument("--base_model", type=str, default="Qwen/Qwen3-4B-Instruct-2507")
     p.add_argument("--num_graph_tokens", type=int, default=4)
-    p.add_argument("--node_feat_dim", type=int, default=4)
-    p.add_argument("--gnn_hidden_dim", type=int, default=64)
-    p.add_argument("--gnn_out_dim", type=int, default=64)
+    p.add_argument("--node_feat_dim", type=int, default=8)
+    p.add_argument("--node_pos_dim", type=int, default=8)
+    p.add_argument("--gnn_hidden_dim", type=int, default=128)
+    p.add_argument("--gnn_out_dim", type=int, default=128)
     p.add_argument("--num_gnn_layers", type=int, default=2)
+
+    # Training parameters
+    p.add_argument("--epochs", type=int, default=3)
+    p.add_argument("--per_device_train_batch_size", type=int, default=2)
+    p.add_argument("--lr", type=float, default=0.01)
+
+    # Logging
     p.add_argument("--wandb", action="store_true", help="Use wandb logging")
     p.add_argument("--wandb_project", type=str, default="GraphQA-GLM")
     p.add_argument("--do_eval", action="store_true", help="Run evaluation after training")
     return p.parse_args()
 
 
-def create_dataset(subset: str, do_eval: bool = False):
+def build_dataset(subset: str, do_eval: bool = False):
     def modify_dataset(example):
         return add_graph_column(example, k=args.node_feat_dim)
+
+    cols = ["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"]
 
     train_raw = load_dataset("baharef/GraphQA", subset, split="zero_shot_train")
     eval_raw = load_dataset(
@@ -49,26 +61,34 @@ def create_dataset(subset: str, do_eval: bool = False):
         subset,
         split="zero_shot_validation" if subset != "maximum_flow" else "zero_shot_test",
     )
-    train_ds = train_raw.map(modify_dataset, desc="modify_dataset(train)")
-    eval_ds = eval_raw.map(modify_dataset, desc="modify_dataset(eval)")
+    train_ds = train_raw.map(modify_dataset, remove_columns=cols, desc="Preprocessing train")
+    eval_ds = eval_raw.map(modify_dataset, remove_columns=cols, desc="Preprocessing eval")
 
     if do_eval:
         test_raw = load_dataset("baharef/GraphQA", subset, split="zero_shot_test")
-        test_ds = test_raw.map(modify_dataset, desc="modify_dataset(test)")
+        test_ds = test_raw.map(modify_dataset, remove_columns=cols, desc="Preprocessing test")
     else:
         test_ds = None
+
+    DS_DIR = "datasets"
+    train_ds.to_json(os.path.join(DS_DIR, "train_ds.jsonl"))
+    eval_ds.to_json(os.path.join(DS_DIR, "eval_ds.jsonl"))
+    if do_eval:
+        test_ds.to_json(os.path.join(DS_DIR, "test_ds.jsonl"))
 
     return train_ds, eval_ds, test_ds
 
 
 def train_glm(train_ds, eval_ds, output_dir, args):
     glm_cfg = GraphTokenLMConfig(
-        llm_name="Qwen/Qwen3-4B-Instruct-2507",
+        llm_name=args.base_model,
         node_feat_dim=args.node_feat_dim,
-        num_graph_tokens=args.num_graph_tokens,
+        node_pos_dim=args.node_pos_dim,
         gnn_hidden=args.gnn_hidden_dim,
         gnn_out=args.gnn_out_dim,
         num_gnn_layers=args.num_gnn_layers,
+        num_graph_tokens=args.num_graph_tokens,
+        num_max_nodes=20 * args.per_device_train_batch_size,
     )
     model = GraphTokenLM(glm_cfg)
 
@@ -78,25 +98,24 @@ def train_glm(train_ds, eval_ds, output_dir, args):
 
     collator = GraphQACollator(
         tokenizer=tokenizer,
-        text_field="task_description",
         max_length=512,
         num_graph_tokens=args.num_graph_tokens,
     )
 
     sft_config = SFTConfig(
         output_dir=output_dir,
-        per_device_train_batch_size=2,
+        per_device_train_batch_size=args.per_device_train_batch_size,
         per_device_eval_batch_size=2,
         num_train_epochs=args.epochs,
-        learning_rate=0.05,
+        learning_rate=args.lr,
         lr_scheduler_type="linear",
         logging_steps=10,
-        save_strategy="epoch",
+        save_strategy="no",
         gradient_accumulation_steps=4,
         bf16=True,
         optim="lion_32bit",
         report_to="wandb" if args.wandb else "none",
-        dataset_text_field="task_description",
+        completion_only_loss=True,
         remove_unused_columns=False,
         ddp_backend="nccl",  # DDP
     )
@@ -114,6 +133,10 @@ def train_glm(train_ds, eval_ds, output_dir, args):
         print("***** Training *****")
     trainer.train()
     if is_main_process():
+        final_step = trainer.state.global_step
+        final_ckpt_dir = os.path.join(output_dir, f"checkpoint-{final_step}")
+        trainer.save_model(final_ckpt_dir)
+        trainer.save_state()
         print("***** Done *****")
 
     return model
@@ -132,13 +155,13 @@ if __name__ == "__main__":
         wandb.init(project=args.wandb_project, name=run_name)
 
     # Training
-    train_ds, eval_ds, test_ds = create_dataset(args.subset, do_eval=args.do_eval)
+    train_ds, eval_ds, test_ds = build_dataset(args.subset, do_eval=args.do_eval)
     model = train_glm(train_ds, eval_ds, output_dir, args)
 
     # Evaluation
     if is_main_process() and args.do_eval:
         print("***** Evaluation *****")
-        results = eval_model(model, test_ds, batch_size=8)
+        results = eval_model(model, test_ds, batch_size=8, subset=args.subset)
         res_file = os.path.join("results", args.subset, f"{date_str}.json")
         acc = collect_result(results, res_file, args.subset)
         if args.wandb:

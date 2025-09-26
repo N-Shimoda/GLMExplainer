@@ -67,7 +67,7 @@ def pyg_from_dict(g: Dict[str, Any]) -> PygData:
 class GraphQACollator:
     """
     GraphQA 用のコラトラ。
-    - 各サンプルに 'graph'（dict）と 'task_description'（学習テキスト）がある前提。
+    - 各サンプルに 'graph'（dict）と 'prompt'/'completion' テキストがある前提。
     - tokenizer があればここでトークナイズ、無ければ既に tokenized と見做してテンソル化のみ。
     - 返り値には 'graph'（PyG Batch）を入れる（モデルの forward が graph を受ける想定）。
     - SFTTrainer / Transformers の損失と整合させるため、labels と attention_mask を
@@ -75,27 +75,95 @@ class GraphQACollator:
     """
 
     tokenizer: Optional[PreTrainedTokenizerBase] = None
-    text_field: str = "task_description"
+    prompt_field: str = "prompt"
+    completion_field: str = "completion"
     max_length: int = 512
     pad_to_multiple_of: Optional[int] = None
     num_graph_tokens: int = 4  # ← モデルの k と一致させること
+    add_eos_token: bool = True
 
     # ---- 内部ユーティリティ ----
-    def _tokenize_texts(self, texts: Sequence[str]) -> Dict[str, Tensor]:
+    def _encode(self, text: str) -> List[int]:
         assert self.tokenizer is not None, "tokenizer is required to tokenize texts"
-        toks = self.tokenizer(
-            list(texts),
-            padding=True,
-            truncation=True,
-            max_length=self.max_length,
-            return_tensors="pt",
-            pad_to_multiple_of=self.pad_to_multiple_of,
+        return self.tokenizer.encode(text, add_special_tokens=False)
+
+    def _build_prompt_completion(self, prompts: Sequence[str], completions: Sequence[str]) -> Dict[str, Tensor]:
+        assert self.tokenizer is not None, "tokenizer is required to tokenize texts"
+
+        pad_token_id = (
+            self.tokenizer.pad_token_id
+            if self.tokenizer.pad_token_id is not None
+            else self.tokenizer.eos_token_id
         )
-        # labels を生成（pad を -100 に）
-        labels = toks.input_ids.clone()
-        labels[labels == self.tokenizer.pad_token_id] = -100
-        toks["labels"] = labels
-        return toks
+        if pad_token_id is None:
+            raise ValueError("Tokenizer must define either pad_token_id or eos_token_id")
+
+        input_ids_per_sample: List[List[int]] = []
+        prompt_lengths: List[int] = []
+
+        for prompt, completion in zip(prompts, completions):
+            prompt_ids = self._encode(prompt)
+            completion_ids = self._encode(completion)
+
+            if self.add_eos_token and self.tokenizer.eos_token_id is not None:
+                if not completion_ids or completion_ids[-1] != self.tokenizer.eos_token_id:
+                    completion_ids.append(self.tokenizer.eos_token_id)
+
+            combined = prompt_ids + completion_ids
+            prompt_len = len(prompt_ids)
+
+            if self.max_length and self.max_length > 0 and len(combined) > self.max_length:
+                overflow = len(combined) - self.max_length
+
+                # プロンプト側から優先的に切り詰める
+                if overflow >= prompt_len:
+                    overflow -= prompt_len
+                    prompt_ids = []
+                    prompt_len = 0
+                else:
+                    prompt_ids = prompt_ids[overflow:]
+                    prompt_len = len(prompt_ids)
+                    overflow = 0
+
+                if overflow > 0:
+                    completion_ids = completion_ids[overflow:]
+
+                combined = (prompt_ids + completion_ids)[: self.max_length]
+                prompt_len = min(prompt_len, len(combined))
+
+            input_ids_per_sample.append(combined)
+            prompt_lengths.append(prompt_len)
+
+        max_seq_len = max((len(ids) for ids in input_ids_per_sample), default=0)
+        if self.pad_to_multiple_of and max_seq_len % self.pad_to_multiple_of != 0:
+            max_seq_len = (
+                (max_seq_len + self.pad_to_multiple_of - 1) // self.pad_to_multiple_of
+            ) * self.pad_to_multiple_of
+
+        padded_input_ids: List[List[int]] = []
+        padded_attention: List[List[int]] = []
+        padded_labels: List[List[int]] = []
+
+        for ids, prompt_len in zip(input_ids_per_sample, prompt_lengths):
+            pad_len = max_seq_len - len(ids)
+            padded_ids = ids + [pad_token_id] * pad_len
+            attention = [1] * len(ids) + [0] * pad_len
+
+            label_ids = [-100] * prompt_len
+            label_ids.extend(ids[prompt_len:])
+            label_ids.extend([-100] * pad_len)
+
+            padded_input_ids.append(padded_ids)
+            padded_attention.append(attention)
+            padded_labels.append(label_ids)
+
+        result = {
+            "input_ids": torch.tensor(padded_input_ids, dtype=torch.long),
+            "attention_mask": torch.tensor(padded_attention, dtype=torch.long),
+            "labels": torch.tensor(padded_labels, dtype=torch.long),
+            "pad_token_id": int(pad_token_id),
+        }
+        return result
 
     def _prepend_ignore_to_toks(
         self,
@@ -149,13 +217,14 @@ class GraphQACollator:
 
         # 2) テキスト（tokenize or stack）
         if self.tokenizer is not None:
-            if self.text_field not in features[0]:
-                raise KeyError(
-                    f"'{self.text_field}' not found in dataset features. "
-                    "Set SFTConfig(dataset_text_field=...) or adjust collator.text_field."
-                )
-            texts = [f[self.text_field] for f in features]
-            toks = self._tokenize_texts(texts)
+            if self.prompt_field not in features[0]:
+                raise KeyError(f"'{self.prompt_field}' not found in dataset features")
+            if self.completion_field not in features[0]:
+                raise KeyError(f"'{self.completion_field}' not found in dataset features")
+
+            prompts = [f[self.prompt_field] for f in features]
+            completions = [f[self.completion_field] for f in features]
+            toks = self._build_prompt_completion(prompts, completions)
 
             # ★ labels / attention_mask を (k+T) に拡張（先頭前置）
             T = toks["input_ids"].size(1)
@@ -168,7 +237,6 @@ class GraphQACollator:
             toks["attention_mask"] = padded["attention_mask"]
 
             batch.update(toks)
-            batch["pad_token_id"] = int(self.tokenizer.pad_token_id)  # int でOK（CPU）
         else:
             # 既に tokenized 済み（input_ids/attention_mask/labels が入っている想定）
             def _stack(name: str, dtype=None):

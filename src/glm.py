@@ -1,9 +1,7 @@
-import warnings
-
 import torch
 import torch.nn as nn
-from accelerate import init_empty_weights  # noqa
 from torch_geometric.nn import GCNConv, global_mean_pool
+from torch_geometric.utils import to_dense_batch
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
@@ -20,21 +18,25 @@ class GraphTokenLMConfig(PretrainedConfig):
     def __init__(
         self,
         llm_name="Qwen/Qwen3-4B-Instruct-2507",
-        node_feat_dim=128,
+        node_feat_dim=8,
+        node_pos_dim=8,
         gnn_hidden=256,
         gnn_out=512,
         num_gnn_layers=2,
         num_graph_tokens=4,
+        num_max_nodes=20,  # maximum number of nodes per batch
         freeze_llm=True,
         tie_word_embeddings=True,
         **kwargs,
     ):
         self.llm_name = llm_name
         self.node_feat_dim = node_feat_dim
+        self.node_pos_dim = node_pos_dim
         self.gnn_hidden = gnn_hidden
         self.gnn_out = gnn_out
         self.num_gnn_layers = num_gnn_layers
         self.num_graph_tokens = num_graph_tokens
+        self.num_max_nodes = num_max_nodes
         self.freeze_llm = freeze_llm
 
         # generate 互換のためにフィールドを用意（後でモデル側で上書き）
@@ -50,19 +52,38 @@ class GraphTokenLMConfig(PretrainedConfig):
         return self
 
 
-class SimpleGCN(nn.Module):
-    """最小限の GCN。ノード埋め込みを出力。"""
+class GNNEncoder(nn.Module):
+    """GNN Encoder to generate a graph embedding for a given graph."""
 
-    def __init__(self, in_dim, hid_dim, out_dim, num_layers=2, dropout=0.1):
+    def __init__(
+        self,
+        in_dim: int,
+        hid_dim: int,
+        out_dim: int,
+        max_nodes: int,
+        num_layers: int = 2,
+        node_pos_dim: int = 8,
+        dropout: float = 0.1,
+    ):
         super().__init__()
+        dims = [hid_dim] * num_layers + [out_dim]
+
+        self.max_nodes = max_nodes
+        self.pos_emb = nn.Embedding(max_nodes, node_pos_dim)
+        self.lin_in = nn.Linear(in_dim + node_pos_dim, hid_dim)
         self.convs = nn.ModuleList()
-        dims = [in_dim] + [hid_dim] * (num_layers - 1) + [out_dim]
         for i in range(len(dims) - 1):
             self.convs.append(GCNConv(dims[i], dims[i + 1]))
         self.act = nn.ReLU()
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, edge_index):
+    def forward(self, x, edge_index, batch):
+        # バッチ内でグラフごとに 0 から始まる位置インデックスを割り当てる
+        _, mask = to_dense_batch(x, batch, max_num_nodes=self.max_nodes)
+        pos_idx = torch.arange(self.max_nodes, device=x.device).unsqueeze(0).expand(mask.size(0), -1)
+        pos_idx = pos_idx[mask]
+        x = torch.cat([x, self.pos_emb(pos_idx)], dim=-1)
+        x = self.lin_in(x)
         for i, conv in enumerate(self.convs):
             x = conv(x, edge_index)
             if i < len(self.convs) - 1:
@@ -71,7 +92,7 @@ class SimpleGCN(nn.Module):
         return x  # [num_nodes, out_dim]
 
 
-class GraphTokenizer(nn.Module):
+class DomainProjector(nn.Module):
     """
     Graph → k 個のグラフトークン（LLM埋め込み次元）へ。
     - pool: global_mean_pool（ノード）＋任意で追加プール（例：学習可能トークン数 k を project で生成）
@@ -110,8 +131,8 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
     LLM の入力埋め込み（inputs_embeds）の先頭に連結して学習するモデル。
     """
 
-    # _tied_weights_keys = ["llm.lm_head.weight"]
-    # _keys_to_ignore_on_load_missing = [r"^llm\.lm_head\.weight$"]
+    _tied_weights_keys = ["llm.lm_head.weight"]
+    _keys_to_ignore_on_load_missing = [r"^llm\.lm_head\.weight$"]
 
     config_class = GraphTokenLMConfig
     base_model_prefix = "llm"
@@ -120,38 +141,32 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
 
         super().__init__(config)
 
-        # (重要) 内部 LLM は config から from_config で「空構造」を作る
-        # 後で GraphTokenLM.from_pretrained() が全体の state_dict をロードする
+        # LLM
         if load_llm_weights:
             self.llm = AutoModelForCausalLM.from_pretrained(
                 config.llm_name, trust_remote_code=True, tie_word_embeddings=True
             )
         else:
-            warnings.warn(
-                "Initialized LLM weights from scratch. If this is unintended, set load_llm_weights=True.",
-                UserWarning,
-            )
-            llm_cfg = AutoConfig.from_pretrained(config.llm_name)
+            llm_cfg = AutoConfig.from_pretrained(config.llm_name, torch_dtype=torch.float32)
             self.llm = AutoModelForCausalLM.from_config(llm_cfg)
 
         self.num_graph_tokens = config.num_graph_tokens
 
-        # 1) GNN エンコーダ
-        self.gnn = SimpleGCN(
+        # GNN + Domain Projector
+        self.gnn = GNNEncoder(
+            node_pos_dim=config.node_pos_dim,
             in_dim=config.node_feat_dim,
             hid_dim=config.gnn_hidden,
             out_dim=config.gnn_out,
             num_layers=config.num_gnn_layers,
+            max_nodes=config.num_max_nodes,
         )
-
-        # 2) graph→token 射影
-        self.tokenizer_head = GraphTokenizer(
+        self.tokenizer_head = DomainProjector(
             gnn_out_dim=config.gnn_out,
             llm_hidden_size=self.llm.config.hidden_size,
             num_graph_tokens=config.num_graph_tokens,
         )
 
-        # 3) LLM を凍結（必要なら）
         if config.freeze_llm:
             for p in self.llm.parameters():
                 p.requires_grad = False
@@ -190,15 +205,17 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         B, T, H = inputs_embeds.size()
 
         # ---- Graph → tokens ----
+        graph_device = next(self.gnn.parameters()).device
+        if hasattr(graph, "to"):
+            graph = graph.to(graph_device)
+
         x = graph["x"]  # [N_nodes, node_feat_dim]
         edge_index = graph["edge_index"]  # [2, N_edges]
         batch = graph["batch"]  # [N_nodes]
-        node_repr = self.gnn(x, edge_index)  # [N_nodes, gnn_out]
+        node_repr = self.gnn(x, edge_index, batch)  # [N_nodes, gnn_out]
         graph_tokens = self.tokenizer_head(node_repr, batch)  # [B, k, H]
-
-        # print("graph_tokens.shape:", graph_tokens.shape)
-        # print("inputs_embeds.shape:", inputs_embeds.shape)
-        # print("input_embeds:", inputs_embeds)
+        if inputs_embeds is not None:
+            graph_tokens = graph_tokens.to(inputs_embeds.device)
 
         # ---- 連結（先頭に GraphToken を挿入）----
         new_inputs = torch.cat([graph_tokens, inputs_embeds], dim=1)  # [B, k+T, H]
@@ -222,9 +239,8 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         graph=None,
         **generate_kwargs,
     ) -> CausalLMOutputWithPast:
-        assert (input_ids is not None) or (
-            inputs_embeds is not None
-        ), "Either input_ids or inputs_embeds must be provided"
+        if (input_ids is None) and (inputs_embeds is None):
+            raise ValueError("Either input_ids or inputs_embeds must be provided")
 
         if graph is not None:
             inputs_embeds, attention_mask, labels = self._concat_graph_tokens(
@@ -281,10 +297,7 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
                 inputs_embeds=inputs_embeds,
                 graph=graph,
             )
-        print("input_embeds", inputs_embeds.shape)
-        print(inputs_embeds)
-        print("attention_mask", attention_mask.shape)
-        print(attention_mask)
+
         return {"inputs_embeds": inputs_embeds, "attention_mask": attention_mask, "graph": None}
 
     # delegate embeddings to inner LLM so HF can tie weights correctly

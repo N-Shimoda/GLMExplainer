@@ -1,28 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# リポジトリルートへ移動（このスクリプトの場所が scripts/ の直下である前提）
+# Move to repository root (assuming this script is directly under scripts/)
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 LOG_DIR="$ROOT_DIR/logs"
 mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/train_gt_all.log"
+LOG_FILE="$LOG_DIR/eval_gt_all.log"
 
-# 既存のログを削除
+# Remove existing log file
 rm -f "$LOG_FILE"
 
 log() {
-  # 両方へ出力（標準出力 + ログファイル）
+  # Output to both stdout and log file
   local ts
   ts="$(date '+%Y-%m-%d %H:%M:%S')"
   echo "[$ts] $*" | tee -a "$LOG_FILE"
 }
 
 # -----------------------------------------
-# 引数処理
-# --split {test|train|validation} を受け取り、eval.py に渡す
-# デフォルトは test
+# Argument parsing
+# Accepts --split {test|train|validation} and passes to eval.py
+# Default is test
 # -----------------------------------------
 SPLIT="test"
 while [[ $# -gt 0 ]]; do
@@ -51,7 +51,7 @@ USAGE
   esac
 done
 
-# 値検証
+# Validate split value
 case "$SPLIT" in
   test|train|validation) ;;
   *)
@@ -69,20 +69,42 @@ subsets=(
 )
 
 for subset in "${subsets[@]}"; do
-  cmd=(python eval.py --subset "${subset}" --model_path "outputs/${subset}" --split "${SPLIT}")
+  cmd=(
+    python eval.py --subset "${subset}"
+    --model_path "outputs/${subset}"
+    --split "${SPLIT}"
+    --num_trials 5
+  )
   log "[START] ${cmd[*]}"
   start_ts=$(date +%s)
 
+  tmp_output_file="$(mktemp)"
   set +e
-  "${cmd[@]}"
-  rc=$?
+  "${cmd[@]}" 2>&1 | tee "$tmp_output_file"
+  rc=${PIPESTATUS[0]}
   set -e
 
   end_ts=$(date +%s)
   dur=$(( end_ts - start_ts ))
 
+  summary_line="$(grep -E '\[SUMMARY\]' "$tmp_output_file" | tail -n 1 || true)"
+  rm -f "$tmp_output_file"
+
   if [[ $rc -eq 0 ]]; then
-    log "[COMPLETED] subset=${subset} duration=${dur}s"
+    acc_note=""
+    if [[ -n "$summary_line" ]]; then
+      acc_value="$(sed -n 's/.*accuracy=\([0-9.][0-9.]*\).*/\1/p' <<<"$summary_line")"
+      if [[ -n "$acc_value" ]]; then
+        acc_percent="$(awk -v acc="$acc_value" 'BEGIN { printf "%.2f", acc * 100 }')"
+        acc_note=" accuracy=${acc_percent}% (raw=${acc_value})"
+        log "[INFO] subset=${subset}${acc_note}"
+      else
+        log "[WARNING] subset=${subset} accuracy value not found in summary output."
+      fi
+    else
+      log "[WARNING] subset=${subset} summary line not found in eval output."
+    fi
+    log "[COMPLETED] subset=${subset} duration=${dur}s${acc_note}"
   else
     log "[ERROR] subset=${subset} rc=${rc} duration=${dur}s"
     exit $rc
