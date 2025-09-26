@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from torch_geometric.nn import GCNConv, global_mean_pool
+from torch_geometric.utils import to_dense_batch
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
@@ -17,21 +18,25 @@ class GraphTokenLMConfig(PretrainedConfig):
     def __init__(
         self,
         llm_name="Qwen/Qwen3-4B-Instruct-2507",
-        node_feat_dim=128,
+        node_feat_dim=8,
+        node_pos_dim=8,
         gnn_hidden=256,
         gnn_out=512,
         num_gnn_layers=2,
         num_graph_tokens=4,
+        num_max_nodes=20,  # maximum number of nodes per batch
         freeze_llm=True,
         tie_word_embeddings=True,
         **kwargs,
     ):
         self.llm_name = llm_name
         self.node_feat_dim = node_feat_dim
+        self.node_pos_dim = node_pos_dim
         self.gnn_hidden = gnn_hidden
         self.gnn_out = gnn_out
         self.num_gnn_layers = num_gnn_layers
         self.num_graph_tokens = num_graph_tokens
+        self.num_max_nodes = num_max_nodes
         self.freeze_llm = freeze_llm
 
         # generate 互換のためにフィールドを用意（後でモデル側で上書き）
@@ -47,19 +52,38 @@ class GraphTokenLMConfig(PretrainedConfig):
         return self
 
 
-class SimpleGCN(nn.Module):
-    """最小限の GCN。ノード埋め込みを出力。"""
+class GNNEncoder(nn.Module):
+    """GNN Encoder to generate a graph embedding for a given graph."""
 
-    def __init__(self, in_dim, hid_dim, out_dim, num_layers=2, dropout=0.1):
+    def __init__(
+        self,
+        in_dim: int,
+        hid_dim: int,
+        out_dim: int,
+        max_nodes: int,
+        num_layers: int = 2,
+        node_pos_dim: int = 8,
+        dropout: float = 0.1,
+    ):
         super().__init__()
+        dims = [hid_dim] * num_layers + [out_dim]
+
+        self.max_nodes = max_nodes
+        self.pos_emb = nn.Embedding(max_nodes, node_pos_dim)
+        self.lin_in = nn.Linear(in_dim + node_pos_dim, hid_dim)
         self.convs = nn.ModuleList()
-        dims = [in_dim] + [hid_dim] * (num_layers - 1) + [out_dim]
         for i in range(len(dims) - 1):
             self.convs.append(GCNConv(dims[i], dims[i + 1]))
         self.act = nn.ReLU()
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, edge_index):
+    def forward(self, x, edge_index, batch):
+        # バッチ内でグラフごとに 0 から始まる位置インデックスを割り当てる
+        _, mask = to_dense_batch(x, batch, max_num_nodes=self.max_nodes)
+        pos_idx = torch.arange(self.max_nodes, device=x.device).unsqueeze(0).expand(mask.size(0), -1)
+        pos_idx = pos_idx[mask]
+        x = torch.cat([x, self.pos_emb(pos_idx)], dim=-1)
+        x = self.lin_in(x)
         for i, conv in enumerate(self.convs):
             x = conv(x, edge_index)
             if i < len(self.convs) - 1:
@@ -68,7 +92,7 @@ class SimpleGCN(nn.Module):
         return x  # [num_nodes, out_dim]
 
 
-class GraphTokenizer(nn.Module):
+class DomainProjector(nn.Module):
     """
     Graph → k 個のグラフトークン（LLM埋め込み次元）へ。
     - pool: global_mean_pool（ノード）＋任意で追加プール（例：学習可能トークン数 k を project で生成）
@@ -117,8 +141,7 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
 
         super().__init__(config)
 
-        # (重要) 内部 LLM は config から from_config で「空構造」を作る
-        # 後で GraphTokenLM.from_pretrained() が全体の state_dict をロードする
+        # LLM
         if load_llm_weights:
             self.llm = AutoModelForCausalLM.from_pretrained(
                 config.llm_name, trust_remote_code=True, tie_word_embeddings=True
@@ -129,22 +152,21 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
 
         self.num_graph_tokens = config.num_graph_tokens
 
-        # 1) GNN エンコーダ
-        self.gnn = SimpleGCN(
+        # GNN + Domain Projector
+        self.gnn = GNNEncoder(
+            node_pos_dim=config.node_pos_dim,
             in_dim=config.node_feat_dim,
             hid_dim=config.gnn_hidden,
             out_dim=config.gnn_out,
             num_layers=config.num_gnn_layers,
+            max_nodes=config.num_max_nodes,
         )
-
-        # 2) graph→token 射影
-        self.tokenizer_head = GraphTokenizer(
+        self.tokenizer_head = DomainProjector(
             gnn_out_dim=config.gnn_out,
             llm_hidden_size=self.llm.config.hidden_size,
             num_graph_tokens=config.num_graph_tokens,
         )
 
-        # 3) LLM を凍結（必要なら）
         if config.freeze_llm:
             for p in self.llm.parameters():
                 p.requires_grad = False
@@ -190,7 +212,7 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         x = graph["x"]  # [N_nodes, node_feat_dim]
         edge_index = graph["edge_index"]  # [2, N_edges]
         batch = graph["batch"]  # [N_nodes]
-        node_repr = self.gnn(x, edge_index)  # [N_nodes, gnn_out]
+        node_repr = self.gnn(x, edge_index, batch)  # [N_nodes, gnn_out]
         graph_tokens = self.tokenizer_head(node_repr, batch)  # [B, k, H]
         if inputs_embeds is not None:
             graph_tokens = graph_tokens.to(inputs_embeds.device)

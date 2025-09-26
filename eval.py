@@ -234,7 +234,6 @@ if __name__ == "__main__":
     ckpt_path, run_name = _resolve_checkpoint_path(args.model_path)
     print(f"Checkpoint: {ckpt_path}")
     model = load_model_for_eval(ckpt_path, load_llm_weights=False)
-    model.eval()
 
     # Load dataset
     test_ds = build_dataset(args.subset, args.split, model.config.node_feat_dim)

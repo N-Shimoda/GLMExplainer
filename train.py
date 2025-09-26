@@ -31,13 +31,15 @@ def build_args():
     # Model architecture
     p.add_argument("--base_model", type=str, default="Qwen/Qwen3-4B-Instruct-2507")
     p.add_argument("--num_graph_tokens", type=int, default=4)
-    p.add_argument("--node_feat_dim", type=int, default=4)
-    p.add_argument("--gnn_hidden_dim", type=int, default=64)
-    p.add_argument("--gnn_out_dim", type=int, default=64)
+    p.add_argument("--node_feat_dim", type=int, default=8)
+    p.add_argument("--node_pos_dim", type=int, default=8)
+    p.add_argument("--gnn_hidden_dim", type=int, default=128)
+    p.add_argument("--gnn_out_dim", type=int, default=128)
     p.add_argument("--num_gnn_layers", type=int, default=2)
 
     # Training parameters
     p.add_argument("--epochs", type=int, default=3)
+    p.add_argument("--per_device_train_batch_size", type=int, default=2)
     p.add_argument("--lr", type=float, default=0.05)
 
     # Logging
@@ -81,13 +83,14 @@ def train_glm(train_ds, eval_ds, output_dir, args):
     glm_cfg = GraphTokenLMConfig(
         llm_name=args.base_model,
         node_feat_dim=args.node_feat_dim,
-        num_graph_tokens=args.num_graph_tokens,
+        node_pos_dim=args.node_pos_dim,
         gnn_hidden=args.gnn_hidden_dim,
         gnn_out=args.gnn_out_dim,
         num_gnn_layers=args.num_gnn_layers,
+        num_graph_tokens=args.num_graph_tokens,
+        num_max_nodes=20 * args.per_device_train_batch_size,
     )
     model = GraphTokenLM(glm_cfg)
-    # print("Model architecture:\n", model)
 
     tokenizer = AutoTokenizer.from_pretrained(glm_cfg.llm_name, trust_remote_code=True)
     if tokenizer.pad_token is None:
@@ -101,7 +104,7 @@ def train_glm(train_ds, eval_ds, output_dir, args):
 
     sft_config = SFTConfig(
         output_dir=output_dir,
-        per_device_train_batch_size=2,
+        per_device_train_batch_size=args.per_device_train_batch_size,
         per_device_eval_batch_size=2,
         num_train_epochs=args.epochs,
         learning_rate=args.lr,

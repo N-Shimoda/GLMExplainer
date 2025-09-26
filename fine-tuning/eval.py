@@ -6,9 +6,10 @@ import time
 from typing import List, Literal
 
 import torch
-from datasets import arrow_dataset, load_dataset
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
+
+from datasets import arrow_dataset, load_dataset
 
 
 def build_args():
@@ -29,7 +30,7 @@ def build_args():
         help="Specifies GraphQA subset（https://huggingface.co/datasets/baharef/GraphQA）",
     )
     p.add_argument("--model_path", type=str, default=None, help="Checkpoint path of the fine-tuned model.")
-    p.add_argument("--quick", action="store_true", help="Whether to run in quick mode.")
+    p.add_argument("--quick", action="store_true", help="Run evaluation on a smaller subset for quick testing.")
 
     return p.parse_args()
 
