@@ -25,14 +25,16 @@ def build_args():
     # Model architecture
     p.add_argument("--base_model", type=str, default="Qwen/Qwen3-4B-Instruct-2507")
     p.add_argument("--num_graph_tokens", type=int, default=4)
-    p.add_argument("--node_feat_dim", type=int, default=4)
-    p.add_argument("--gnn_hidden_dim", type=int, default=64)
-    p.add_argument("--gnn_out_dim", type=int, default=64)
+    p.add_argument("--node_feat_dim", type=int, default=8)
+    p.add_argument("--node_pos_dim", type=int, default=8)
+    p.add_argument("--gnn_hidden_dim", type=int, default=128)
+    p.add_argument("--gnn_out_dim", type=int, default=128)
     p.add_argument("--num_gnn_layers", type=int, default=2)
 
     # Training parameters
     p.add_argument("--epochs", type=int, default=3)
-    p.add_argument("--lr", type=float, default=0.05)
+    p.add_argument("--per_device_train_batch_size", type=int, default=2)
+    p.add_argument("--lr", type=float, default=0.01)
 
     # Logging
     p.add_argument("--wandb", action="store_true", help="Use wandb logging")

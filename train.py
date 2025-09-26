@@ -40,7 +40,7 @@ def build_args():
     # Training parameters
     p.add_argument("--epochs", type=int, default=3)
     p.add_argument("--per_device_train_batch_size", type=int, default=2)
-    p.add_argument("--lr", type=float, default=0.05)
+    p.add_argument("--lr", type=float, default=0.01)
 
     # Logging
     p.add_argument("--wandb", action="store_true", help="Use wandb logging")
