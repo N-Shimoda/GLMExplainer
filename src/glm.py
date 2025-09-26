@@ -1,6 +1,8 @@
+from typing import Literal
+
 import torch
 import torch.nn as nn
-from torch_geometric.nn import GCNConv, global_mean_pool
+from torch_geometric.nn import GATConv, GCNConv, GINConv, GraphSAGE, global_mean_pool
 from torch_geometric.utils import to_dense_batch
 from transformers import (
     AutoConfig,
@@ -18,6 +20,7 @@ class GraphTokenLMConfig(PretrainedConfig):
     def __init__(
         self,
         llm_name="Qwen/Qwen3-4B-Instruct-2507",
+        gnn_type: Literal["GCN", "GAT", "GIN", "GraphSAGE"] = "GCN",
         node_feat_dim=8,
         node_pos_dim=8,
         gnn_hidden=256,
@@ -30,6 +33,7 @@ class GraphTokenLMConfig(PretrainedConfig):
         **kwargs,
     ):
         self.llm_name = llm_name
+        self.gnn_type = gnn_type
         self.node_feat_dim = node_feat_dim
         self.node_pos_dim = node_pos_dim
         self.gnn_hidden = gnn_hidden
@@ -64,6 +68,7 @@ class GNNEncoder(nn.Module):
         num_layers: int = 2,
         node_pos_dim: int = 8,
         dropout: float = 0.1,
+        gnn_type: Literal["GCN", "GAT", "GIN", "GraphSAGE"] = "GCN",
     ):
         super().__init__()
         dims = [hid_dim] * num_layers + [out_dim]
@@ -73,7 +78,17 @@ class GNNEncoder(nn.Module):
         self.lin_in = nn.Linear(in_dim + node_pos_dim, hid_dim)
         self.convs = nn.ModuleList()
         for i in range(len(dims) - 1):
-            self.convs.append(GCNConv(dims[i], dims[i + 1]))
+            match gnn_type:
+                case "GCN":
+                    self.convs.append(GCNConv(dims[i], dims[i + 1]))
+                case "GAT":
+                    self.convs.append(GATConv(dims[i], dims[i + 1]))
+                case "GIN":
+                    self.convs.append(GINConv(nn.Linear(dims[i], dims[i + 1])))
+                case "GraphSAGE":
+                    self.convs.append(GraphSAGE(dims[i], dims[i + 1]))
+                case _:
+                    raise ValueError(f"Unsupported gnn_type: {gnn_type}")
         self.act = nn.ReLU()
         self.dropout = nn.Dropout(dropout)
 
@@ -154,6 +169,7 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
 
         # GNN + Domain Projector
         self.gnn = GNNEncoder(
+            gnn_type=config.gnn_type,
             node_pos_dim=config.node_pos_dim,
             in_dim=config.node_feat_dim,
             hid_dim=config.gnn_hidden,
