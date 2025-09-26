@@ -183,11 +183,17 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         B, T, H = inputs_embeds.size()
 
         # ---- Graph → tokens ----
+        graph_device = next(self.gnn.parameters()).device
+        if hasattr(graph, "to"):
+            graph = graph.to(graph_device)
+
         x = graph["x"]  # [N_nodes, node_feat_dim]
         edge_index = graph["edge_index"]  # [2, N_edges]
         batch = graph["batch"]  # [N_nodes]
         node_repr = self.gnn(x, edge_index)  # [N_nodes, gnn_out]
         graph_tokens = self.tokenizer_head(node_repr, batch)  # [B, k, H]
+        if inputs_embeds is not None:
+            graph_tokens = graph_tokens.to(inputs_embeds.device)
 
         # ---- 連結（先頭に GraphToken を挿入）----
         new_inputs = torch.cat([graph_tokens, inputs_embeds], dim=1)  # [B, k+T, H]
@@ -211,9 +217,8 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         graph=None,
         **generate_kwargs,
     ) -> CausalLMOutputWithPast:
-        assert (input_ids is not None) or (
-            inputs_embeds is not None
-        ), "Either input_ids or inputs_embeds must be provided"
+        if (input_ids is None) and (inputs_embeds is None):
+            raise ValueError("Either input_ids or inputs_embeds must be provided")
 
         if graph is not None:
             inputs_embeds, attention_mask, labels = self._concat_graph_tokens(

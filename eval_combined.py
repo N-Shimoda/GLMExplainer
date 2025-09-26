@@ -1,17 +1,20 @@
 import argparse
 import os
 
-import torch
-
 from datasets import concatenate_datasets
-from eval import _resolve_checkpoint_path, build_dataset, collect_result, eval_model
-from src.glm import GraphTokenLM
+from eval import (
+    _resolve_checkpoint_path,
+    build_dataset,
+    collect_result,
+    eval_model,
+    load_model_for_eval,
+)
 
 
 def build_args():
     p = argparse.ArgumentParser()
     p.add_argument("--model_path", type=str, required=True)
-    p.add_argument("--batch_size", type=int, default=16)
+    p.add_argument("--batch_size", type=int, default=64)
     p.add_argument("--split", choices=["train", "validation", "test"], default="test")
     p.add_argument("--num_trials", type=int, default=1)
     return p.parse_args()
@@ -24,8 +27,8 @@ if __name__ == "__main__":
     print(f"Number of trials: {args.num_trials}")
 
     # Load model
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = GraphTokenLM.from_pretrained(model_path, load_llm_weights=False).to(device)
+    model = load_model_for_eval(model_path, load_llm_weights=False)
+    model.eval()
 
     subsets = ["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"]
     for subset in subsets:
@@ -43,4 +46,4 @@ if __name__ == "__main__":
         file_name = f"{run_name}_{args.split}.json" if run_name else f"results_{args.split}.json"
         res_file = os.path.join(out_dir, file_name)
         acc = collect_result(results, res_file, subset)
-        print(f"[SUMMARY] subset={subset} accuracy={acc:.2f}")
+        print(f"[SUMMARY] subset={subset} accuracy={acc:.4f}")
