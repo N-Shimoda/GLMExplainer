@@ -168,8 +168,9 @@ def eval_model(model: GraphTokenLM, test_ds, batch_size: int, subset: str) -> li
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(model.config.llm_name)
 
+    max_new_token_dict = {"node_count": 3, "cycle_check": 8}
     gen_cfg = GenerationConfig(
-        max_new_tokens=8 if subset == "cycle_check" else 6,
+        max_new_tokens=max_new_token_dict.get(subset, 6),
         do_sample=True,
     )
 
@@ -214,7 +215,7 @@ def collect_result(results: list[dict], res_file: str, subset: str):
     """
     # Compute accuracy
     acc, unknowns = comp_accuracy([r["preds"] for r in results], [r["answer"] for r in results], subset)
-    print(f"Accuracy: {acc * 100:.2f}%")
+    print(f"Accuracy: {acc * 100:.3f}%")
     if unknowns:
         print(f"[WARNING] {unknowns} unknown predictions found.")
 
@@ -248,4 +249,4 @@ if __name__ == "__main__":
             file_name = f"{run_name}_{args.split}.json" if run_name else f"results_{args.split}.json"
     res_file = os.path.join("results", args.subset, file_name)
     acc = collect_result(results, res_file, args.subset)
-    print(f"[SUMMARY] subset={args.subset} accuracy={acc:.4f}")
+    print(f"[SUMMARY] subset={args.subset} accuracy={acc:.3f}")
