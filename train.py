@@ -29,6 +29,7 @@ def build_args():
     )
 
     # Model architecture
+    p.add_argument("--base_model", type=str, default="Qwen/Qwen3-4B-Instruct-2507")
     p.add_argument("--num_graph_tokens", type=int, default=4)
     p.add_argument("--node_feat_dim", type=int, default=4)
     p.add_argument("--gnn_hidden_dim", type=int, default=64)
@@ -46,7 +47,7 @@ def build_args():
     return p.parse_args()
 
 
-def create_dataset(subset: str, do_eval: bool = False):
+def build_dataset(subset: str, do_eval: bool = False):
     def modify_dataset(example):
         return add_graph_column(example, k=args.node_feat_dim)
 
@@ -78,7 +79,7 @@ def create_dataset(subset: str, do_eval: bool = False):
 
 def train_glm(train_ds, eval_ds, output_dir, args):
     glm_cfg = GraphTokenLMConfig(
-        llm_name="Qwen/Qwen3-4B-Instruct-2507",
+        llm_name=args.base_model,
         node_feat_dim=args.node_feat_dim,
         num_graph_tokens=args.num_graph_tokens,
         gnn_hidden=args.gnn_hidden_dim,
@@ -94,7 +95,6 @@ def train_glm(train_ds, eval_ds, output_dir, args):
 
     collator = GraphQACollator(
         tokenizer=tokenizer,
-        # text_field="task_description",
         max_length=512,
         num_graph_tokens=args.num_graph_tokens,
     )
@@ -149,7 +149,7 @@ if __name__ == "__main__":
         wandb.init(project=args.wandb_project, name=run_name)
 
     # Training
-    train_ds, eval_ds, test_ds = create_dataset(args.subset, do_eval=args.do_eval)
+    train_ds, eval_ds, test_ds = build_dataset(args.subset, do_eval=args.do_eval)
     model = train_glm(train_ds, eval_ds, output_dir, args)
 
     # Evaluation
