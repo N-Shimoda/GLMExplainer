@@ -86,7 +86,7 @@ class GNNEncoder(nn.Module):
                 case "GIN":
                     self.convs.append(GINConv(nn.Linear(dims[i], dims[i + 1])))
                 case "GraphSAGE":
-                    self.convs.append(GraphSAGE(dims[i], dims[i + 1]))
+                    self.convs.append(GraphSAGE(dims[i], dims[i + 1], 1))
                 case _:
                     raise ValueError(f"Unsupported gnn_type: {gnn_type}")
         self.act = nn.ReLU()
