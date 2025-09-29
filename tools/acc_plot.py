@@ -7,54 +7,24 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Given data (restructured): Outer keys are model names, inner keys are dataset/subtask names
-# NOTE: User requested outer keys: GCN, GAT, GIT, GraphSAGE. Original data used "GIN"; here we keep the
-# original values but rename the model to "GIN" unless explicitly confirmed to change to "GIT".
-# If "GIT" was intentional (typo vs different model), change the key below and downstream lists accordingly.
 d = {
-    # v10 row in the screenshot
-    "GCN": {
-        "node_count": 97.32,
-        "edge_count": 5.00,
-        "cycle_check": 90.32,
-        "triangle_counting": 18.4,
-    },
-    # v11 rows in the screenshot
-    "GIN": {
-        "node_count": 6.0,
-        "edge_count": 6.2,
-        "cycle_check": 71.6,
-        "triangle_counting": 10.8,
-    },
-    "GAT": {
-        "node_count": 20.6,
-        "edge_count": 6.0,
-        "cycle_check": 92.2,
-        "triangle_counting": 17.0,
-    },
-    "GraphSAGE": {
-        "node_count": 21.4,
-        "edge_count": 5.4,
-        "cycle_check": 72.4,
-        "triangle_counting": 10.6,
-    },
-    "Zero-Shot": {
-        "node_count": 96.4,
-        "edge_count": 37.0,
-        "cycle_check": 87.8,
-        "triangle_counting": 43.6,
-    },
-    "QLoRA": {
-        "node_count": 100,
-        "edge_count": 56.2,
-        "cycle_check": 97.2,
-        "triangle_counting": 35.8,
-    },
+    "GCN": {"node_count": 97.32, "edge_count": 5.00, "cycle_check": 90.32, "triangle_counting": 18.4},
+    "GIN": {"node_count": 6.0, "edge_count": 6.2, "cycle_check": 71.6, "triangle_counting": 10.8},
+    "GAT": {"node_count": 20.6, "edge_count": 6.0, "cycle_check": 92.2, "triangle_counting": 17.0},
+    "GraphSAGE": {"node_count": 21.4, "edge_count": 5.4, "cycle_check": 72.4, "triangle_counting": 10.6},
+    "Zero-Shot": {"node_count": 96.4, "edge_count": 37.0, "cycle_check": 87.8, "triangle_counting": 43.6},
+    "QLoRA": {"node_count": 100, "edge_count": 56.2, "cycle_check": 97.2, "triangle_counting": 35.8},
 }
+# d = {
+#     "GCN (LPE + IDX)": {"node_count": 97.32, "edge_count": 5.00, "cycle_check": 90.32, "triangle_counting": 18.4},
+#     "GCN (LPE only)": {"node_count": 8.2, "edge_count": 8.4, "cycle_check": 90.2, "triangle_counting": 21.4},
+# }
 
 # Order datasets and methods
 dataset_keys = ["node_count", "edge_count", "cycle_check", "triangle_counting"]
 dataset_labels = ["Node Count", "Edge Count", "Cycle Check", "Triangle Counting"]
 methods = ["GCN", "GAT", "GIN", "GraphSAGE", "Zero-Shot", "QLoRA"]  # Keep order explicit
+# methods = ["GCN (LPE + IDX)", "GCN (LPE only)"]  # Keep order explicit
 
 # Explicit color mapping (color-blind friendly palette inspired by Tableau/Matplotlib)
 # Adjust if you need brand colors.
@@ -65,11 +35,14 @@ method_colors = {
     "GraphSAGE": "gold",
     "Zero-Shot": "lightgray",
     "QLoRA": "gray",
+    "GCN (LPE + IDX)": "royalblue",
+    "GCN (LPE only)": "lightblue",
 }
 
 # Optional hatch (pattern) settings per method. Add patterns to distinguish certain methods in grayscale printing.
 method_hatches = {
     "GCN": "////",  # diagonal stripes for GCN
+    "GCN (LPE + IDX)": "////",  # diagonal stripes for GCN
 }
 
 # Prepare data matrix: rows=datasets, cols=methods
@@ -107,12 +80,12 @@ plt.xticks(x, dataset_labels)
 plt.ylabel("Score")
 plt.ylim(0, 105)
 plt.title("Accuracy per Subset (%)")
-plt.legend(title="Model", ncol=2, frameon=False)
+plt.legend(frameon=False)
 plt.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.6)
 
 plt.tight_layout()
 
 # Save and show
-output_path = "fig/acc_plot.svg"
+output_path = "fig/acc_plot.png"
 os.makedirs("fig", exist_ok=True)
-plt.savefig(output_path, bbox_inches="tight")
+plt.savefig(output_path, bbox_inches="tight", dpi=480)
