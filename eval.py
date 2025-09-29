@@ -61,8 +61,8 @@ def _resolve_checkpoint_path(model_path: str) -> tuple[str, str]:
             run_dirs = os.listdir(model_path)
             if not run_dirs:
                 raise FileNotFoundError(f"No run directories found under '{model_path}'.")
-            run_dirs.sort(key=lambda p: int(p.split("-")[0]))
             run_dirs.sort(key=lambda p: int(p.split("-")[1]))
+            run_dirs.sort(key=lambda p: int(p.split("-")[0]))
 
             latest_dir = os.path.join(model_path, run_dirs[-1])
             return _resolve_checkpoint_path(latest_dir)
