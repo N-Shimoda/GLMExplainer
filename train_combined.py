@@ -24,6 +24,7 @@ def build_args():
 
     # Model architecture
     p.add_argument("--base_model", type=str, default="Qwen/Qwen3-4B-Instruct-2507")
+    p.add_argument("--gnn_type", type=str, default="GCN", choices=["GCN", "GAT", "GIN", "GraphSAGE"])
     p.add_argument("--num_graph_tokens", type=int, default=4)
     p.add_argument("--node_feat_dim", type=int, default=8)
     p.add_argument("--node_pos_dim", type=int, default=8)

@@ -30,6 +30,7 @@ def build_args():
 
     # Model architecture
     p.add_argument("--base_model", type=str, default="Qwen/Qwen3-4B-Instruct-2507")
+    p.add_argument("--gnn_type", type=str, default="GCN", choices=["GCN", "GAT", "GIN", "GraphSAGE"])
     p.add_argument("--num_graph_tokens", type=int, default=4)
     p.add_argument("--node_feat_dim", type=int, default=8)
     p.add_argument("--node_pos_dim", type=int, default=8)
@@ -82,6 +83,7 @@ def build_dataset(subset: str, do_eval: bool = False):
 def train_glm(train_ds, eval_ds, output_dir, args):
     glm_cfg = GraphTokenLMConfig(
         llm_name=args.base_model,
+        gnn_type=args.gnn_type,
         node_feat_dim=args.node_feat_dim,
         node_pos_dim=args.node_pos_dim,
         gnn_hidden=args.gnn_hidden_dim,
