@@ -1,4 +1,4 @@
-torchrun --nproc_per_node 2 train_combined.py \
+torchrun --nproc_per_node 2 train_multitask.py \
 --base_model "Qwen/Qwen3-4B-Base" \
 --gnn_type "GCN" \
 --num_graph_tokens 4 --node_feat_dim 8 --node_pos_dim 8 \
