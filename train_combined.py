@@ -11,7 +11,7 @@ from src.preprocess import add_graph_column
 from train import train_glm
 
 # 複数サブセットをまとめて学習するための対象一覧
-subsets = ["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"]
+subsets = ["node_count", "edge_count", "cycle_check", "triangle_counting"]
 
 
 def is_main_process() -> bool:
