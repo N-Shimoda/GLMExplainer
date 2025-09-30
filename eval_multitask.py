@@ -30,7 +30,7 @@ if __name__ == "__main__":
     model = load_model_for_eval(model_path, load_llm_weights=False)
     model.eval()
 
-    subsets = ["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"]
+    subsets = ["node_count", "edge_count", "cycle_check", "triangle_counting"]
     for subset in subsets:
         # Load dataset
         test_ds = build_dataset(subset, args.split, model.config.node_feat_dim)

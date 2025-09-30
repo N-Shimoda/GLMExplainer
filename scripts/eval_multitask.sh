@@ -1,1 +1,1 @@
-python eval_combined.py --model_path outputs/combined --num_trials 10
+python eval_multitask.py --model_path outputs/multitask --num_trials 10

@@ -99,8 +99,8 @@ if __name__ == "__main__":
     args = build_args()
 
     date_str = datetime.now().strftime("%m%d-%H%M")
-    run_name = f"combined_{date_str}"
-    output_dir = os.path.join("outputs", "combined", date_str)
+    run_name = f"multitask_{date_str}"
+    output_dir = os.path.join("outputs", "multitask", date_str)
 
     if args.wandb and is_main_process():
         wandb.init(project=args.wandb_project, name=run_name)

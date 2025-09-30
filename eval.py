@@ -57,7 +57,7 @@ def _resolve_checkpoint_path(model_path: str) -> tuple[str, str]:
     """
     if os.path.isdir(model_path):
         dir_name = os.path.basename(model_path.rstrip(os.sep))
-        if dir_name in ["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow", "combined"]:
+        if dir_name in ["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow", "multitask"]:
             run_dirs = os.listdir(model_path)
             if not run_dirs:
                 raise FileNotFoundError(f"No run directories found under '{model_path}'.")
