@@ -4,19 +4,20 @@ __pycache__/
 # dev
 .vscode/
 
+# GraphToken
+outputs/
+results/
+fig/
+
 # Fine-tuning
 fine-tuning/qwen3-4b-*/
 fine-tuning/wandb/
 fine-tuning/examples/
 fine-tuning/models/
 
-# GraphToken
-outputs/
-results/
-datasets/
-fig/
+# Dataset
+GraphQA/
 
 # logs
 logs/
 wandb/
-
