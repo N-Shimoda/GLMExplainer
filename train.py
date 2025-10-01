@@ -19,14 +19,15 @@ def is_main_process() -> bool:
     return int(os.environ.get("RANK", "0")) == 0
 
 
-def build_args():
+def build_args(*, multitask: bool = False):
     p = argparse.ArgumentParser()
-    p.add_argument(
-        "--subset",
-        type=str,
-        choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
-        default="edge_count",
-    )
+    if not multitask:
+        p.add_argument(
+            "--subset",
+            type=str,
+            choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
+            default="edge_count",
+        )
 
     # Model architecture
     p.add_argument("--base-model", type=str, default="Qwen/Qwen3-4B-Instruct-2507")

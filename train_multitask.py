@@ -1,4 +1,3 @@
-import argparse
 import os
 from datetime import datetime
 
@@ -8,7 +7,7 @@ import wandb
 from datasets import concatenate_datasets, load_dataset
 from eval import collect_result, eval_model
 from src.preprocess import add_graph_column
-from train import train_glm
+from train import build_args, train_glm
 
 # 複数サブセットをまとめて学習するための対象一覧
 subsets = ["node_count", "edge_count", "cycle_check", "triangle_counting"]
@@ -17,32 +16,6 @@ subsets = ["node_count", "edge_count", "cycle_check", "triangle_counting"]
 def is_main_process() -> bool:
     # torchrun / accelerate で RANK=0 がメイン
     return int(os.environ.get("RANK", "0")) == 0
-
-
-def build_args():
-    p = argparse.ArgumentParser()
-
-    # Model architecture
-    p.add_argument("--base-model", type=str, default="Qwen/Qwen3-4B-Instruct-2507")
-    p.add_argument("--gnn-type", type=str, default="GCN", choices=["GCN", "GAT", "GIN", "GraphSAGE"])
-    p.add_argument("--num-graph-tokens", type=int, default=4)
-    p.add_argument("--node-feat-dim", type=int, default=8)
-    p.add_argument("--node-pos-emb-dim", type=int, default=8)
-    p.add_argument("--gnn-hidden-dim", type=int, default=128)
-    p.add_argument("--gnn-out-dim", type=int, default=128)
-    p.add_argument("--num-gnn-layers", type=int, default=2)
-
-    # Training parameters
-    p.add_argument("--epochs", type=int, default=3)
-    p.add_argument("--per-device-train-batch-size", type=int, default=2)
-    p.add_argument("--lr", type=float, default=0.01)
-
-    # Logging
-    p.add_argument("--wandb", action="store_true", help="Use wandb logging")
-    p.add_argument("--wandb-project", type=str, default="GraphQA-GLM")
-    p.add_argument("--do-eval", action="store_true", help="Run evaluation after training")
-
-    return p.parse_args()
 
 
 def build_dataset(do_eval: bool = False):
@@ -96,7 +69,7 @@ def build_dataset(do_eval: bool = False):
 
 
 if __name__ == "__main__":
-    args = build_args()
+    args = build_args(multitask=True)
 
     date_str = datetime.now().strftime("%m%d-%H%M")
     run_name = f"multitask_{date_str}"

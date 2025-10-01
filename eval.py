@@ -15,14 +15,15 @@ from src.metrics import comp_accuracy
 from src.preprocess import add_graph_column
 
 
-def build_args():
+def build_args(*, multitask: bool = False):
     p = argparse.ArgumentParser()
-    p.add_argument(
-        "--subset",
-        type=str,
-        choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
-        default="edge_count",
-    )
+    if not multitask:
+        p.add_argument(
+            "--subset",
+            type=str,
+            choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
+            default="edge_count",
+        )
     p.add_argument("--model-path", type=str, required=True)
     p.add_argument("--num-graph-tokens", type=int, default=4)
     p.add_argument("--batch-size", type=int, default=64)
