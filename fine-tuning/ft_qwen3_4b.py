@@ -41,26 +41,26 @@ def build_args():
         default=DEFAULT_SUBSET,
         help="GraphQA subset（see https://huggingface.co/datasets/baharef/GraphQA）",
     )
-    p.add_argument("--output_dir", type=str, default=f"qwen3-4b-{DEFAULT_SUBSET}")
+    p.add_argument("--output-dir", type=str, default=f"qwen3-4b-{DEFAULT_SUBSET}")
     p.add_argument("--wandb", action="store_true", help="Use Weights & Biases for logging")
     p.add_argument("--seed", type=int, default=42)
 
     # flow
-    p.add_argument("--do_eval", action="store_true", help="Whether to run evaluation after fine-tuning")
+    p.add_argument("--do-eval", action="store_true", help="Whether to run evaluation after fine-tuning")
 
     # Hyperparameters (general)
     p.add_argument("--epochs", type=float, default=3)
-    p.add_argument("--per_device_train_batch_size", type=int, default=2)
-    p.add_argument("--per_device_eval_batch_size", type=int, default=2)
-    p.add_argument("--grad_accum_steps", type=int, default=8)
+    p.add_argument("--per-device-train-batch-size", type=int, default=2)
+    p.add_argument("--per-device-eval-batch-size", type=int, default=2)
+    p.add_argument("--grad-accum-steps", type=int, default=8)
     p.add_argument("--lr", type=float, default=1e-4)  # LoRA なので大きめ
-    p.add_argument("--warmup_ratio", type=float, default=0.03)
-    p.add_argument("--weight_decay", type=float, default=0.1)
+    p.add_argument("--warmup-ratio", type=float, default=0.03)
+    p.add_argument("--weight-decay", type=float, default=0.1)
 
     # LoRA
-    p.add_argument("--lora_r", type=int, default=16)
-    p.add_argument("--lora_alpha", type=int, default=16)
-    p.add_argument("--lora_dropout", type=float, default=0.05)
+    p.add_argument("--lora-r", type=int, default=16)
+    p.add_argument("--lora-alpha", type=int, default=16)
+    p.add_argument("--lora-dropout", type=float, default=0.05)
     return p.parse_args()
 
 

@@ -22,7 +22,7 @@ class GraphTokenLMConfig(PretrainedConfig):
         llm_name="Qwen/Qwen3-4B-Instruct-2507",
         gnn_type: Literal["GCN", "GAT", "GIN", "GraphSAGE"] = "GCN",
         node_feat_dim=8,
-        node_pos_dim=8,
+        node_pos_emb_dim=8,
         gnn_hidden=256,
         gnn_out=512,
         num_gnn_layers=2,
@@ -34,8 +34,12 @@ class GraphTokenLMConfig(PretrainedConfig):
     ):
         self.llm_name = llm_name
         self.gnn_type = gnn_type
+        legacy_node_pos_dim = kwargs.pop("node_pos_dim", None)
+        if legacy_node_pos_dim is not None:
+            node_pos_emb_dim = legacy_node_pos_dim
+
         self.node_feat_dim = node_feat_dim
-        self.node_pos_dim = node_pos_dim
+        self.node_pos_emb_dim = node_pos_emb_dim
         self.gnn_hidden = gnn_hidden
         self.gnn_out = gnn_out
         self.num_gnn_layers = num_gnn_layers
@@ -66,16 +70,20 @@ class GNNEncoder(nn.Module):
         out_dim: int,
         max_nodes: int,
         num_layers: int = 2,
-        node_pos_dim: int = 8,
+        node_pos_emb_dim: int = 8,
         dropout: float = 0.1,
         gnn_type: Literal["GCN", "GAT", "GIN", "GraphSAGE"] = "GCN",
     ):
         super().__init__()
-        dims = [hid_dim] * num_layers + [out_dim]
-
         self.max_nodes = max_nodes
-        self.pos_emb = nn.Embedding(max_nodes, node_pos_dim)
-        self.lin_in = nn.Linear(in_dim + node_pos_dim, hid_dim)
+        self.pos_emb = nn.Embedding(max_nodes, node_pos_emb_dim) if node_pos_emb_dim > 0 else None
+
+        in_channels = in_dim + (node_pos_emb_dim if node_pos_emb_dim > 0 else 0)
+        if in_channels <= 0:
+            raise ValueError("GNNEncoder requires a positive input feature dimension.")
+
+        hidden_dims = [hid_dim] * max(num_layers - 1, 0)
+        dims = [in_channels, *hidden_dims, out_dim]
         self.convs = nn.ModuleList()
         for i in range(len(dims) - 1):
             match gnn_type:
@@ -93,12 +101,12 @@ class GNNEncoder(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, edge_index, batch):
-        # バッチ内でグラフごとに 0 から始まる位置インデックスを割り当てる
-        _, mask = to_dense_batch(x, batch, max_num_nodes=self.max_nodes)
-        pos_idx = torch.arange(self.max_nodes, device=x.device).unsqueeze(0).expand(mask.size(0), -1)
-        pos_idx = pos_idx[mask]
-        x = torch.cat([x, self.pos_emb(pos_idx)], dim=-1)
-        x = self.lin_in(x)
+        if self.pos_emb is not None:
+            # バッチ内でグラフごとに 0 から始まる位置インデックスを割り当てる
+            _, mask = to_dense_batch(x, batch, max_num_nodes=self.max_nodes)
+            pos_idx = torch.arange(self.max_nodes, device=x.device).unsqueeze(0).expand(mask.size(0), -1)
+            pos_idx = pos_idx[mask]
+            x = torch.cat([x, self.pos_emb(pos_idx)], dim=-1)
         for i, conv in enumerate(self.convs):
             x = conv(x, edge_index)
             if i < len(self.convs) - 1:
@@ -170,7 +178,7 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         # GNN + Domain Projector
         self.gnn = GNNEncoder(
             gnn_type=config.gnn_type,
-            node_pos_dim=config.node_pos_dim,
+            node_pos_emb_dim=config.node_pos_emb_dim,
             in_dim=config.node_feat_dim,
             hid_dim=config.gnn_hidden,
             out_dim=config.gnn_out,

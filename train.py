@@ -29,24 +29,24 @@ def build_args():
     )
 
     # Model architecture
-    p.add_argument("--base_model", type=str, default="Qwen/Qwen3-4B-Instruct-2507")
-    p.add_argument("--gnn_type", type=str, default="GCN", choices=["GCN", "GAT", "GIN", "GraphSAGE"])
-    p.add_argument("--num_graph_tokens", type=int, default=4)
-    p.add_argument("--node_feat_dim", type=int, default=8)
-    p.add_argument("--node_pos_dim", type=int, default=8)
-    p.add_argument("--gnn_hidden_dim", type=int, default=128)
-    p.add_argument("--gnn_out_dim", type=int, default=128)
-    p.add_argument("--num_gnn_layers", type=int, default=2)
+    p.add_argument("--base-model", type=str, default="Qwen/Qwen3-4B-Instruct-2507")
+    p.add_argument("--gnn-type", type=str, default="GCN", choices=["GCN", "GAT", "GIN", "GraphSAGE"])
+    p.add_argument("--num-graph-tokens", type=int, default=4)
+    p.add_argument("--node-feat-dim", type=int, default=8)
+    p.add_argument("--node-pos-emb-dim", type=int, default=8)
+    p.add_argument("--gnn-hidden-dim", type=int, default=128)
+    p.add_argument("--gnn-out-dim", type=int, default=128)
+    p.add_argument("--num-gnn-layers", type=int, default=2)
 
     # Training parameters
     p.add_argument("--epochs", type=int, default=3)
-    p.add_argument("--per_device_train_batch_size", type=int, default=2)
+    p.add_argument("--per-device-train-batch-size", type=int, default=2)
     p.add_argument("--lr", type=float, default=0.01)
 
     # Logging
     p.add_argument("--wandb", action="store_true", help="Use wandb logging")
-    p.add_argument("--wandb_project", type=str, default="GraphQA-GLM")
-    p.add_argument("--do_eval", action="store_true", help="Run evaluation after training")
+    p.add_argument("--wandb-project", type=str, default="GraphQA-GLM")
+    p.add_argument("--do-eval", action="store_true", help="Run evaluation after training")
     return p.parse_args()
 
 
@@ -85,7 +85,7 @@ def train_glm(train_ds, eval_ds, output_dir, args):
         llm_name=args.base_model,
         gnn_type=args.gnn_type,
         node_feat_dim=args.node_feat_dim,
-        node_pos_dim=args.node_pos_dim,
+        node_pos_emb_dim=args.node_pos_emb_dim,
         gnn_hidden=args.gnn_hidden_dim,
         gnn_out=args.gnn_out_dim,
         num_gnn_layers=args.num_gnn_layers,

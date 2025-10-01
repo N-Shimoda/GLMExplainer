@@ -29,7 +29,7 @@ def build_args():
         required=True,
         help="Specifies GraphQA subset（https://huggingface.co/datasets/baharef/GraphQA）",
     )
-    p.add_argument("--model_path", type=str, default=None, help="Checkpoint path of the fine-tuned model.")
+    p.add_argument("--model-path", type=str, default=None, help="Checkpoint path of the fine-tuned model.")
     p.add_argument("--quick", action="store_true", help="Run evaluation on a smaller subset for quick testing.")
 
     return p.parse_args()

@@ -20,7 +20,7 @@ for subset in node_count edge_count cycle_check triangle_counting maximum_flow; 
       echo "[WARN] Model directory not found: ./models/$subset/"
       continue
     fi
-    CMD+=(--model_path "${MODEL_DIR}checkpoint-final")
+    CMD+=(--model-path "${MODEL_DIR}checkpoint-final")
   fi
   if [ "$USE_QUICK" = true ]; then
     CMD+=(--quick)

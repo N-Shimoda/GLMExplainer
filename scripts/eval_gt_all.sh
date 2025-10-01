@@ -71,9 +71,9 @@ subsets=(
 for subset in "${subsets[@]}"; do
   cmd=(
     python eval.py --subset "${subset}"
-    --model_path "outputs/${subset}"
+    --model-path "outputs/${subset}"
     --split "${SPLIT}"
-    --num_trials 5
+    --num-trials 5
   )
   log "[START] ${cmd[*]}"
   start_ts=$(date +%s)

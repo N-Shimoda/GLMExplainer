@@ -9,7 +9,7 @@ for subset in node_count edge_count cycle_check triangle_counting maximum_flow; 
   python ft_qwen3_4b.py \
     --subset "$subset" \
     --epochs 3 \
-    --wandb --do_eval
+    --wandb --do-eval
   status=$?
   end_time=$(date +%s)
   duration=$((end_time - start_time))

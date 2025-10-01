@@ -13,10 +13,10 @@ from eval import (
 
 def build_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--model_path", type=str, required=True)
-    p.add_argument("--batch_size", type=int, default=64)
+    p.add_argument("--model-path", type=str, required=True)
+    p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--split", choices=["train", "validation", "test"], default="test")
-    p.add_argument("--num_trials", type=int, default=1)
+    p.add_argument("--num-trials", type=int, default=1)
     return p.parse_args()
 
 
