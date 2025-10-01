@@ -24,7 +24,7 @@ subsets=(
   edge_count
   cycle_check
   triangle_counting
-  maximum_flow
+  # maximum_flow
 )
 
 for subset in "${subsets[@]}"; do
