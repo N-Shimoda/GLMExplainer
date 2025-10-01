@@ -34,7 +34,7 @@ def build_args(*, multitask: bool = False):
     p.add_argument("--gnn-type", type=str, default="GCN", choices=["GCN", "GAT", "GIN", "GraphSAGE"])
     p.add_argument("--num-graph-tokens", type=int, default=4)
     p.add_argument("--node-feat-dim", type=int, default=8)
-    p.add_argument("--node-pos-emb-dim", type=int, default=8)
+    p.add_argument("--pos-emb-dim", type=int, default=8)
     p.add_argument("--gnn-hidden-dim", type=int, default=128)
     p.add_argument("--gnn-out-dim", type=int, default=128)
     p.add_argument("--num-gnn-layers", type=int, default=2)
@@ -86,7 +86,7 @@ def train_glm(train_ds, eval_ds, output_dir, args):
         llm_name=args.base_model,
         gnn_type=args.gnn_type,
         node_feat_dim=args.node_feat_dim,
-        node_pos_emb_dim=args.node_pos_emb_dim,
+        node_pos_emb_dim=args.pos_emb_dim,
         gnn_hidden=args.gnn_hidden_dim,
         gnn_out=args.gnn_out_dim,
         num_gnn_layers=args.num_gnn_layers,
