@@ -47,3 +47,9 @@ if __name__ == "__main__":
         res_file = os.path.join(out_dir, file_name)
         acc = collect_result(results, res_file, subset)
         print(f"[SUMMARY] subset={subset} accuracy={acc:.4f}")
+
+        # 正答率をログに追記 (collect_result により acc が得られた後)
+        log_path = os.path.join("logs", "eval_multitask.log")
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as log_file:
+            log_file.write(f"subset={subset}, split={args.split}, trials={args.num_trials}, accuracy={acc:.4f}\n")
