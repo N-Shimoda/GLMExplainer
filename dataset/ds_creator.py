@@ -25,13 +25,20 @@ def extract_cycles(nodes: list[int], edges: list[tuple[int, int]]) -> list[list[
     if not nodes or not edges:
         return []
 
-    adjacency: dict[int, set[int]] = {node: set() for node in nodes}
+    nodes_sorted = sorted(nodes)
+    node_to_idx = {node: idx for idx, node in enumerate(nodes_sorted)}
+    n = len(nodes_sorted)
+
+    adjacency_mask = [0] * n
     for u, v in edges:
         if u == v:
             continue
-        if u in adjacency and v in adjacency:
-            adjacency[u].add(v)
-            adjacency[v].add(u)
+        if u not in node_to_idx or v not in node_to_idx:
+            continue
+        ui = node_to_idx[u]
+        vi = node_to_idx[v]
+        adjacency_mask[ui] |= 1 << vi
+        adjacency_mask[vi] |= 1 << ui
 
     def canonical_cycle(path: list[int]) -> tuple[int, ...]:
         forward = tuple(path)
@@ -39,15 +46,32 @@ def extract_cycles(nodes: list[int], edges: list[tuple[int, int]]) -> list[list[
         return forward if forward <= backward else backward
 
     cycles: set[tuple[int, ...]] = set()
-    for start in sorted(adjacency):
-        stack: list[tuple[int, list[int], set[int]]] = [(start, [start], {start})]
-        while stack:
-            current, path, visited = stack.pop()
-            for neighbor in adjacency[current]:
-                if neighbor == start and len(path) >= 3:
+    for start_idx, start in enumerate(nodes_sorted):
+        neighbor_mask = adjacency_mask[start_idx]
+        if neighbor_mask == 0:
+            continue
+
+        path: list[int] = [start]
+        visited_mask = 1 << start_idx
+
+        def dfs(current_idx: int) -> None:
+            nonlocal visited_mask
+            mask = adjacency_mask[current_idx]
+            while mask:
+                lsb = mask & -mask
+                mask ^= lsb
+                neighbor_idx = lsb.bit_length() - 1
+                neighbor_id = nodes_sorted[neighbor_idx]
+                if neighbor_idx == start_idx and len(path) >= 3:
                     cycles.add(canonical_cycle(path))
-                elif neighbor > start and neighbor not in visited:
-                    stack.append((neighbor, path + [neighbor], visited | {neighbor}))
+                elif neighbor_id > start and not (visited_mask & (1 << neighbor_idx)):
+                    visited_mask |= 1 << neighbor_idx
+                    path.append(neighbor_id)
+                    dfs(neighbor_idx)
+                    path.pop()
+                    visited_mask &= ~(1 << neighbor_idx)
+
+        dfs(start_idx)
 
     return [list(cycle) for cycle in sorted(cycles)]
 
@@ -96,9 +120,9 @@ def modify_columns(example, subset: str):
 
 
 def create_dataset(subset: str) -> Dict[str, Any]:
-    train_raw = load_dataset("baharef/GraphQA", subset, split="zero_shot_train").select(range(32))
-    eval_raw = load_dataset("baharef/GraphQA", subset, split="zero_shot_validation").select(range(32))
-    test_raw = load_dataset("baharef/GraphQA", subset, split="zero_shot_test").select(range(32))
+    train_raw = load_dataset("baharef/GraphQA", subset, split="zero_shot_train")
+    eval_raw = load_dataset("baharef/GraphQA", subset, split="zero_shot_validation")
+    test_raw = load_dataset("baharef/GraphQA", subset, split="zero_shot_test")
 
     COL_ORDER = ["question", "answer", "task_description", "nodes", "edges", "nnodes", "nedges"] + [
         "cycles" if subset == "cycle_check" else "triangles" if subset == "triangle_counting" else []
