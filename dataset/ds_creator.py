@@ -124,9 +124,9 @@ def create_dataset(subset: str) -> Dict[str, Any]:
     eval_raw = load_dataset("baharef/GraphQA", subset, split="zero_shot_validation")
     test_raw = load_dataset("baharef/GraphQA", subset, split="zero_shot_test")
 
-    COL_ORDER = ["question", "answer", "task_description", "nodes", "edges", "nnodes", "nedges"] + [
-        "cycles" if subset == "cycle_check" else "triangles" if subset == "triangle_counting" else []
-    ]
+    base_columns = ["question", "answer", "task_description", "nodes", "edges", "nnodes", "nedges"]
+    extra_columns = ["cycles"] if subset == "cycle_check" else ["triangles"] if subset == "triangle_counting" else []
+    COL_ORDER = base_columns + extra_columns
     COL_REMOVE = ["algorithm", "text_encoding"]
 
     def column_editor(example):
