@@ -15,9 +15,6 @@ fine-tuning/wandb/
 fine-tuning/examples/
 fine-tuning/models/
 
-# Dataset
-GraphQA/
-
 # logs
 logs/
 wandb/

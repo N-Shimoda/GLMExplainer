@@ -1,10 +1,13 @@
 import argparse
 import os
+import sys
 from typing import Any, Dict
 
 from datasets import load_dataset
 
-from preprocess import extract_edges_from_text, extract_nodes_from_text
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
+
+from preprocess import extract_edges_from_text, extract_nodes_from_text  # noqa: E402
 
 
 def build_args():
@@ -13,7 +16,7 @@ def build_args():
         "--subset",
         type=str,
         choices=["node_count", "edge_count", "cycle_check", "triangle_counting"],
-        required=True,
+        default="node_count",
     )
     return p.parse_args()
 
@@ -56,7 +59,7 @@ if __name__ == "__main__":
     args = build_args()
     datasets = create_dataset(args.subset)
 
-    output_dir = os.path.join("GraphQA", args.subset)
+    output_dir = os.path.join("dataset", args.subset)
     os.makedirs(output_dir, exist_ok=True)
 
     for split, ds in datasets.items():
