@@ -1,13 +1,14 @@
 import argparse
 import os
 from datetime import datetime
+from math import ceil
 
 import torch.distributed as dist
+from datasets import load_dataset
 from transformers import AutoTokenizer
 from trl import SFTConfig, SFTTrainer
 
 import wandb
-from datasets import load_dataset
 from eval import collect_result, eval_model
 from src.collator import GraphQACollator
 from src.glm import GraphTokenLM, GraphTokenLMConfig
@@ -42,7 +43,11 @@ def build_args(*, multitask: bool = False):
     # Training parameters
     p.add_argument("--epochs", type=int, default=3)
     p.add_argument("--per-device-train-batch-size", type=int, default=2)
+    p.add_argument("--per-device-eval-batch-size", type=int, default=2)
+    p.add_argument("--gradient-accumulation-steps", type=int, default=4)
     p.add_argument("--lr", type=float, default=0.01)
+    p.add_argument("--save-intermediate-models", action="store_true", help="Save intermediate models")
+    p.add_argument("--save-epoch-interval", type=int, default=1, help="Save every N epochs")
 
     # Logging
     p.add_argument("--wandb", action="store_true", help="Use wandb logging")
@@ -72,12 +77,6 @@ def build_dataset(subset: str, do_eval: bool = False):
     else:
         test_ds = None
 
-    DS_DIR = "datasets"
-    train_ds.to_json(os.path.join(DS_DIR, "train_ds.jsonl"))
-    eval_ds.to_json(os.path.join(DS_DIR, "eval_ds.jsonl"))
-    if do_eval:
-        test_ds.to_json(os.path.join(DS_DIR, "test_ds.jsonl"))
-
     return train_ds, eval_ds, test_ds
 
 
@@ -105,16 +104,23 @@ def train_glm(train_ds, eval_ds, output_dir, args):
         num_graph_tokens=args.num_graph_tokens,
     )
 
+    world_size = int(os.environ.get("WORLD_SIZE"))
+    micro_batches_per_epoch = ceil(len(train_ds) / (args.per_device_train_batch_size * world_size))
+    steps_per_epoch = ceil(micro_batches_per_epoch / args.gradient_accumulation_steps)
+    if is_main_process():
+        print(f"[INFO] Steps per epoch: {steps_per_epoch}")
+
     sft_config = SFTConfig(
         output_dir=output_dir,
         per_device_train_batch_size=args.per_device_train_batch_size,
-        per_device_eval_batch_size=2,
+        per_device_eval_batch_size=args.per_device_eval_batch_size,
         num_train_epochs=args.epochs,
         learning_rate=args.lr,
         lr_scheduler_type="linear",
         logging_steps=10,
-        save_strategy="no",
-        gradient_accumulation_steps=4,
+        save_strategy="steps" if args.save_intermediate_models else "no",
+        save_steps=steps_per_epoch * args.save_epoch_interval,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
         bf16=True,
         optim="lion_32bit",
         report_to="wandb" if args.wandb else "none",
@@ -127,7 +133,7 @@ def train_glm(train_ds, eval_ds, output_dir, args):
         model=model,
         processing_class=tokenizer,
         args=sft_config,
-        train_dataset=train_ds,
+        train_dataset=train_ds,  # Dataset should be `prompt-completion` format
         eval_dataset=eval_ds,
         data_collator=collator,
     )
@@ -171,4 +177,5 @@ if __name__ == "__main__":
             wandb.log({"test_acc": acc})
 
     if dist.is_initialized():
+        dist.destroy_process_group()
         dist.destroy_process_group()
