@@ -42,10 +42,10 @@ def build_args(*, multitask: bool = False):
 
     # Training parameters
     p.add_argument("--epochs", type=int, default=3)
+    p.add_argument("--lr", type=float, default=0.01)
     p.add_argument("--per-device-train-batch-size", type=int, default=2)
     p.add_argument("--per-device-eval-batch-size", type=int, default=2)
     p.add_argument("--gradient-accumulation-steps", type=int, default=4)
-    p.add_argument("--lr", type=float, default=0.01)
     p.add_argument("--save-intermediate-models", action="store_true", help="Save intermediate models")
     p.add_argument("--save-epoch-interval", type=int, default=1, help="Save every N epochs")
 
@@ -66,10 +66,21 @@ def build_args(*, multitask: bool = False):
         "num_graph_tokens": args.num_graph_tokens,
     }
 
-    for attr in glm_args.keys():
-        delattr(args, attr)
+    sft_args = {
+        "per_device_train_batch_size": args.per_device_train_batch_size,
+        "per_device_eval_batch_size": args.per_device_eval_batch_size,
+        "num_train_epochs": args.epochs,
+        "learning_rate": args.lr,
+        "gradient_accumulation_steps": args.gradient_accumulation_steps,
+        "save_intermediate_models": args.save_intermediate_models,
+        "save_epoch_interval": args.save_epoch_interval,
+    }
 
-    return args, glm_args
+    for attr in [*glm_args.keys(), *sft_args.keys(), "epochs", "lr"]:
+        if hasattr(args, attr):
+            delattr(args, attr)
+
+    return glm_args, sft_args, args
 
 
 def build_dataset(subset: str, node_feat_dim: int, do_eval: bool = False):
@@ -96,9 +107,9 @@ def build_dataset(subset: str, node_feat_dim: int, do_eval: bool = False):
     return train_ds, eval_ds, test_ds
 
 
-def train_glm(train_ds, eval_ds, output_dir, args, glm_args):
+def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
     glm_cfg = GraphTokenLMConfig(
-        num_max_nodes=args.per_device_train_batch_size,
+        num_max_nodes=20 * sft_args["per_device_train_batch_size"],
         **glm_args,
     )
     model = GraphTokenLM(glm_cfg)
@@ -113,29 +124,29 @@ def train_glm(train_ds, eval_ds, output_dir, args, glm_args):
         num_graph_tokens=glm_cfg.num_graph_tokens,
     )
 
-    world_size = int(os.environ.get("WORLD_SIZE"))
-    micro_batches_per_epoch = ceil(len(train_ds) / (args.per_device_train_batch_size * world_size))
-    steps_per_epoch = ceil(micro_batches_per_epoch / args.gradient_accumulation_steps)
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    micro_batches_per_epoch = ceil(len(train_ds) / (sft_args["per_device_train_batch_size"] * world_size))
+    steps_per_epoch = ceil(micro_batches_per_epoch / sft_args["gradient_accumulation_steps"])
     if is_main_process():
         print(f"[INFO] Steps per epoch: {steps_per_epoch}")
 
     sft_config = SFTConfig(
         output_dir=output_dir,
-        per_device_train_batch_size=args.per_device_train_batch_size,
-        per_device_eval_batch_size=args.per_device_eval_batch_size,
-        num_train_epochs=args.epochs,
-        learning_rate=args.lr,
         lr_scheduler_type="linear",
         logging_steps=10,
-        save_strategy="steps" if args.save_intermediate_models else "no",
-        save_steps=steps_per_epoch * args.save_epoch_interval,
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        save_strategy="steps" if sft_args["save_intermediate_models"] else "no",
+        save_steps=steps_per_epoch * sft_args["save_epoch_interval"],
         bf16=True,
         optim="lion_32bit",
         report_to="wandb" if args.wandb else "none",
         completion_only_loss=True,
         remove_unused_columns=False,
         ddp_backend="nccl",  # DDP
+        **{
+            key: value
+            for key, value in sft_args.items()
+            if key not in {"save_intermediate_models", "save_epoch_interval"}
+        },
     )
 
     trainer = SFTTrainer(
@@ -161,7 +172,7 @@ def train_glm(train_ds, eval_ds, output_dir, args, glm_args):
 
 
 if __name__ == "__main__":
-    args, glm_args = build_args()
+    glm_args, sft_args, args = build_args()
     if is_main_process():
         print(f"Subset: {args.subset}")
 
@@ -178,7 +189,7 @@ if __name__ == "__main__":
         glm_args["node_feat_dim"],
         do_eval=args.do_eval,
     )
-    model = train_glm(train_ds, eval_ds, output_dir, args, glm_args)
+    model = train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args)
 
     # Evaluation
     if is_main_process() and args.do_eval:

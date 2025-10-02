@@ -69,7 +69,7 @@ def build_dataset(node_feat_dim: int, do_eval: bool = False):
 
 
 if __name__ == "__main__":
-    args, glm_args = build_args(multitask=True)
+    glm_args, sft_args, args = build_args(multitask=True)
 
     date_str = datetime.now().strftime("%m%d-%H%M")
     run_name = f"multitask_{date_str}"
@@ -83,7 +83,7 @@ if __name__ == "__main__":
         glm_args["node_feat_dim"],
         do_eval=args.do_eval,
     )
-    model = train_glm(train_ds, eval_ds, output_dir, args, glm_args)
+    model = train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args)
 
     # Evaluation
     if is_main_process() and args.do_eval:
