@@ -4,12 +4,12 @@ import os
 from math import ceil
 
 import torch
+from datasets import concatenate_datasets, load_dataset
 from torch_geometric.data import Batch as PygBatch
 from torch_geometric.data import Data as PygData
 from tqdm import tqdm
 from transformers import AutoTokenizer, GenerationConfig
 
-from datasets import concatenate_datasets, load_dataset
 from src.glm import GraphTokenLM
 from src.metrics import comp_accuracy
 from src.preprocess import add_graph_column
@@ -168,7 +168,7 @@ def eval_model(model: GraphTokenLM, test_ds, batch_size: int, subset: str) -> li
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(model.config.base_model)
 
-    max_new_token_dict = {"node_count": 3, "cycle_check": 8}
+    max_new_token_dict = {"node_count": 3, "edge_count": 3, "cycle_check": 8}
     gen_cfg = GenerationConfig(
         max_new_tokens=max_new_token_dict.get(subset, 6),
         do_sample=True,

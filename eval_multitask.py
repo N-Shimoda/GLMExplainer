@@ -1,6 +1,7 @@
 import os
 
 from datasets import concatenate_datasets
+
 from eval import (
     _resolve_checkpoint_path,
     build_args,
@@ -29,7 +30,6 @@ if __name__ == "__main__":
 
     # Load model
     model = load_model_for_eval(model_path, load_llm_weights=False)
-    model.eval()
 
     subsets = ["node_count", "edge_count", "cycle_check", "triangle_counting"]
     for subset in subsets:

@@ -16,7 +16,7 @@ from src.preprocess import add_graph_column
 
 
 def is_main_process() -> bool:
-    # torchrun / accelerate で RANK=0 がメイン
+    # RANK = 0 is the main process
     return int(os.environ.get("RANK", "0")) == 0
 
 
@@ -55,6 +55,8 @@ def build_args(*, multitask: bool = False):
     p.add_argument("--do-eval", action="store_true", help="Run evaluation after training")
 
     args = p.parse_args()
+
+    # Args for GraphTokenLMConfig and SFTConfig
     glm_args = {
         "base_model": args.base_model,
         "gnn_type": args.gnn_type,
@@ -65,7 +67,6 @@ def build_args(*, multitask: bool = False):
         "num_gnn_layers": args.num_gnn_layers,
         "num_graph_tokens": args.num_graph_tokens,
     }
-
     sft_args = {
         "per_device_train_batch_size": args.per_device_train_batch_size,
         "per_device_eval_batch_size": args.per_device_eval_batch_size,
@@ -76,6 +77,7 @@ def build_args(*, multitask: bool = False):
         "save_epoch_interval": args.save_epoch_interval,
     }
 
+    # Remove overlapped args
     for attr in [*glm_args.keys(), *sft_args.keys(), "epochs", "lr"]:
         if hasattr(args, attr):
             delattr(args, attr)
@@ -191,7 +193,7 @@ if __name__ == "__main__":
     )
     model = train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args)
 
-    # Evaluation
+    # Quick evaluation with 1 trial
     if is_main_process() and args.do_eval:
         print("***** Evaluation *****")
         results = eval_model(model, test_ds, batch_size=8, subset=args.subset)
@@ -201,5 +203,4 @@ if __name__ == "__main__":
             wandb.log({"test_acc": acc})
 
     if dist.is_initialized():
-        dist.destroy_process_group()
         dist.destroy_process_group()
