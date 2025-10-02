@@ -166,7 +166,7 @@ def create_pyg_batch(graph_dicts: list[dict[str, list]], device: torch.device | 
 @torch.no_grad()
 def eval_model(model: GraphTokenLM, test_ds, batch_size: int, subset: str) -> list[dict]:
     model.eval()
-    tokenizer = AutoTokenizer.from_pretrained(model.config.llm_name)
+    tokenizer = AutoTokenizer.from_pretrained(model.config.base_model)
 
     max_new_token_dict = {"node_count": 3, "cycle_check": 8}
     gen_cfg = GenerationConfig(

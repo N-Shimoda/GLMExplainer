@@ -19,12 +19,12 @@ class GraphTokenLMConfig(PretrainedConfig):
 
     def __init__(
         self,
-        llm_name="Qwen/Qwen3-4B-Instruct-2507",
+        base_model="Qwen/Qwen3-4B-Instruct-2507",
         gnn_type: Literal["GCN", "GAT", "GIN", "GraphSAGE"] = "GCN",
         node_feat_dim=8,
-        node_pos_emb_dim=8,
-        gnn_hidden=256,
-        gnn_out=512,
+        pos_emb_dim=8,
+        gnn_hidden_dim=256,
+        gnn_out_dim=512,
         num_gnn_layers=2,
         num_graph_tokens=4,
         num_max_nodes=20,  # maximum number of nodes per batch
@@ -32,16 +32,34 @@ class GraphTokenLMConfig(PretrainedConfig):
         tie_word_embeddings=True,
         **kwargs,
     ):
-        self.llm_name = llm_name
-        self.gnn_type = gnn_type
+        legacy_llm_name = kwargs.pop("llm_name", None)
+        legacy_node_pos_emb_dim = kwargs.pop("node_pos_emb_dim", None)
         legacy_node_pos_dim = kwargs.pop("node_pos_dim", None)
-        if legacy_node_pos_dim is not None:
-            node_pos_emb_dim = legacy_node_pos_dim
+        legacy_gnn_hidden = kwargs.pop("gnn_hidden", None)
+        legacy_gnn_out = kwargs.pop("gnn_out", None)
+
+        if legacy_llm_name is not None:
+            base_model = legacy_llm_name
+        if legacy_node_pos_emb_dim is not None:
+            pos_emb_dim = legacy_node_pos_emb_dim
+        elif legacy_node_pos_dim is not None:
+            pos_emb_dim = legacy_node_pos_dim
+        if legacy_gnn_hidden is not None:
+            gnn_hidden_dim = legacy_gnn_hidden
+        if legacy_gnn_out is not None:
+            gnn_out_dim = legacy_gnn_out
+
+        self.base_model = base_model
+        self.llm_name = base_model  # backward compatibility
+        self.gnn_type = gnn_type
 
         self.node_feat_dim = node_feat_dim
-        self.node_pos_emb_dim = node_pos_emb_dim
-        self.gnn_hidden = gnn_hidden
-        self.gnn_out = gnn_out
+        self.pos_emb_dim = pos_emb_dim
+        self.node_pos_emb_dim = pos_emb_dim  # backward compatibility
+        self.gnn_hidden_dim = gnn_hidden_dim
+        self.gnn_hidden = gnn_hidden_dim  # backward compatibility
+        self.gnn_out_dim = gnn_out_dim
+        self.gnn_out = gnn_out_dim  # backward compatibility
         self.num_gnn_layers = num_gnn_layers
         self.num_graph_tokens = num_graph_tokens
         self.num_max_nodes = num_max_nodes
@@ -167,10 +185,10 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         # LLM
         if load_llm_weights:
             self.llm = AutoModelForCausalLM.from_pretrained(
-                config.llm_name, trust_remote_code=True, tie_word_embeddings=True
+                config.base_model, trust_remote_code=True, tie_word_embeddings=True
             )
         else:
-            llm_cfg = AutoConfig.from_pretrained(config.llm_name, torch_dtype=torch.float32)
+            llm_cfg = AutoConfig.from_pretrained(config.base_model, torch_dtype=torch.float32)
             self.llm = AutoModelForCausalLM.from_config(llm_cfg)
 
         self.num_graph_tokens = config.num_graph_tokens
@@ -178,15 +196,15 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         # GNN + Domain Projector
         self.gnn = GNNEncoder(
             gnn_type=config.gnn_type,
-            node_pos_emb_dim=config.node_pos_emb_dim,
+            node_pos_emb_dim=config.pos_emb_dim,
             in_dim=config.node_feat_dim,
-            hid_dim=config.gnn_hidden,
-            out_dim=config.gnn_out,
+            hid_dim=config.gnn_hidden_dim,
+            out_dim=config.gnn_out_dim,
             num_layers=config.num_gnn_layers,
             max_nodes=config.num_max_nodes,
         )
         self.tokenizer_head = DomainProjector(
-            gnn_out_dim=config.gnn_out,
+            gnn_out_dim=config.gnn_out_dim,
             llm_hidden_size=self.llm.config.hidden_size,
             num_graph_tokens=config.num_graph_tokens,
         )

@@ -36,9 +36,9 @@ def build_args(*, multitask: bool = False):
     p.add_argument("--num-graph-tokens", type=int, default=4)
     p.add_argument("--node-feat-dim", type=int, default=8)
     p.add_argument("--pos-emb-dim", type=int, default=8)
-    p.add_argument("--gnn-hidden-dim", type=int, default=128)
-    p.add_argument("--gnn-out-dim", type=int, default=128)
-    p.add_argument("--num-gnn-layers", type=int, default=2)
+    p.add_argument("--gnn-hidden-dim", type=int, default=256)
+    p.add_argument("--gnn-out-dim", type=int, default=512)
+    p.add_argument("--num-gnn-layers", type=int, default=4)
 
     # Training parameters
     p.add_argument("--epochs", type=int, default=3)
@@ -53,12 +53,28 @@ def build_args(*, multitask: bool = False):
     p.add_argument("--wandb", action="store_true", help="Use wandb logging")
     p.add_argument("--wandb-project", type=str, default="GraphQA-GLM")
     p.add_argument("--do-eval", action="store_true", help="Run evaluation after training")
-    return p.parse_args()
+
+    args = p.parse_args()
+    glm_args = {
+        "base_model": args.base_model,
+        "gnn_type": args.gnn_type,
+        "node_feat_dim": args.node_feat_dim,
+        "pos_emb_dim": args.pos_emb_dim,
+        "gnn_hidden_dim": args.gnn_hidden_dim,
+        "gnn_out_dim": args.gnn_out_dim,
+        "num_gnn_layers": args.num_gnn_layers,
+        "num_graph_tokens": args.num_graph_tokens,
+    }
+
+    for attr in glm_args.keys():
+        delattr(args, attr)
+
+    return args, glm_args
 
 
-def build_dataset(subset: str, do_eval: bool = False):
+def build_dataset(subset: str, node_feat_dim: int, do_eval: bool = False):
     def modify_dataset(example):
-        return add_graph_column(example, k=args.node_feat_dim)
+        return add_graph_column(example, k=node_feat_dim)
 
     cols = ["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"]
 
@@ -80,28 +96,21 @@ def build_dataset(subset: str, do_eval: bool = False):
     return train_ds, eval_ds, test_ds
 
 
-def train_glm(train_ds, eval_ds, output_dir, args):
+def train_glm(train_ds, eval_ds, output_dir, args, glm_args):
     glm_cfg = GraphTokenLMConfig(
-        llm_name=args.base_model,
-        gnn_type=args.gnn_type,
-        node_feat_dim=args.node_feat_dim,
-        node_pos_emb_dim=args.pos_emb_dim,
-        gnn_hidden=args.gnn_hidden_dim,
-        gnn_out=args.gnn_out_dim,
-        num_gnn_layers=args.num_gnn_layers,
-        num_graph_tokens=args.num_graph_tokens,
-        num_max_nodes=20 * args.per_device_train_batch_size,
+        num_max_nodes=args.per_device_train_batch_size,
+        **glm_args,
     )
     model = GraphTokenLM(glm_cfg)
 
-    tokenizer = AutoTokenizer.from_pretrained(glm_cfg.llm_name, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(glm_cfg.base_model, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     collator = GraphQACollator(
         tokenizer=tokenizer,
         max_length=512,
-        num_graph_tokens=args.num_graph_tokens,
+        num_graph_tokens=glm_cfg.num_graph_tokens,
     )
 
     world_size = int(os.environ.get("WORLD_SIZE"))
@@ -152,7 +161,7 @@ def train_glm(train_ds, eval_ds, output_dir, args):
 
 
 if __name__ == "__main__":
-    args = build_args()
+    args, glm_args = build_args()
     if is_main_process():
         print(f"Subset: {args.subset}")
 
@@ -164,8 +173,12 @@ if __name__ == "__main__":
         wandb.init(project=args.wandb_project, name=run_name)
 
     # Training
-    train_ds, eval_ds, test_ds = build_dataset(args.subset, do_eval=args.do_eval)
-    model = train_glm(train_ds, eval_ds, output_dir, args)
+    train_ds, eval_ds, test_ds = build_dataset(
+        args.subset,
+        glm_args["node_feat_dim"],
+        do_eval=args.do_eval,
+    )
+    model = train_glm(train_ds, eval_ds, output_dir, args, glm_args)
 
     # Evaluation
     if is_main_process() and args.do_eval:
