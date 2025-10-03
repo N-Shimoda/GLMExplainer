@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 from math import ceil
+from typing import Literal
 
 import torch
 from datasets import concatenate_datasets, load_dataset
@@ -24,11 +25,14 @@ def build_args(*, multitask: bool = False):
             choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
             default="edge_count",
         )
+    # Model selection
     p.add_argument("--model-path", type=str, required=True)
-    p.add_argument("--num-graph-tokens", type=int, default=4)
-    p.add_argument("--batch-size", type=int, default=64)
-    p.add_argument("--split", choices=["train", "validation", "test"], default="test")
+    p.add_argument("--model-version-index", type=int, default=-1)
+    # Evaluation settings
     p.add_argument("--num-trials", type=int, default=1)
+    p.add_argument("--split", choices=["train", "validation", "test"], default="test")
+    p.add_argument("--batch-size", type=int, default=64)
+
     return p.parse_args()
 
 
@@ -40,7 +44,23 @@ def _checkpoint_step(path: str) -> int:
         return -1
 
 
-def _resolve_checkpoint_path(model_path: str) -> tuple[str, str]:
+def _get_dir_type(path: str) -> Literal["task", "model", "checkpoint"]:
+    """Classify directory type."""
+    dir_name = os.path.basename(path.rstrip(os.sep))
+
+    if dir_name in ["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow", "multitask"]:
+        return "task"
+    elif any(
+        entry.startswith("checkpoint") and os.path.isdir(os.path.join(path, entry)) for entry in os.listdir(path)
+    ):
+        return "model"
+    elif dir_name.startswith("checkpoint-"):
+        return "checkpoint"
+    else:
+        raise ValueError(f"Directory '{path}' is neither a task, model, nor checkpoint directory.")
+
+
+def _resolve_ckpt_path(model_path: str, version_index: int = -1) -> tuple[str, str]:
     """
     Resolve the concrete checkpoint directory to load.
 
@@ -48,6 +68,11 @@ def _resolve_checkpoint_path(model_path: str) -> tuple[str, str]:
     ----------
     model_path : str
         Path to the task directory, model directory or a specific checkpoint.
+    version_index : int
+        If multiple checkpoints exist, select the one with this index (0-based).
+        -1 specifies the latest, 0 the earliest, etc.
+        - The index should be specified within the range of available checkpoints.
+        - This parameter is only used when `model_path` points to a task directory.
 
     Returns
     -------
@@ -56,42 +81,53 @@ def _resolve_checkpoint_path(model_path: str) -> tuple[str, str]:
     run_name : str
         Run directory name if applicable, else empty string.
     """
-    if os.path.isdir(model_path):
-        dir_name = os.path.basename(model_path.rstrip(os.sep))
-        if dir_name in ["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow", "multitask"]:
-            run_dirs = os.listdir(model_path)
+    # Explicit existence & directory checks (duplicated with _get_dir_type by intent)
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"Path '{model_path}' does not exist.")
+    if not os.path.isdir(model_path):
+        raise ValueError(f"'{model_path}' is not a directory.")
+
+    # Determine directory type (still uses helper for classification)
+    dir_type = _get_dir_type(model_path)
+    print("Directory type:", dir_type)
+
+    match dir_type:
+        case "task":
+            # Select the latest run directory by numeric tuple ordering (e.g. '0-0', '0-1', ...)
+            run_dirs = [d for d in os.listdir(model_path) if os.path.isdir(os.path.join(model_path, d))]
             if not run_dirs:
                 raise FileNotFoundError(f"No run directories found under '{model_path}'.")
-            run_dirs.sort(key=lambda p: (int(p.split("-")[0]), int(p.split("-")[1])))
 
-            latest_dir = os.path.join(model_path, run_dirs[-1])
-            return _resolve_checkpoint_path(latest_dir)
+            def _run_sort_key(name: str):
+                parts = name.split("-")
+                key = []
+                for p in parts:
+                    try:
+                        key.append(int(p))
+                    except ValueError:
+                        key.append(-1)  # Non-int parts go first
+                return key
 
-        config_path = os.path.join(model_path, "config.json")
-        if os.path.isfile(config_path):
+            run_dirs.sort(key=_run_sort_key)
+            latest_dir = os.path.join(model_path, run_dirs[version_index])
+            return _resolve_ckpt_path(latest_dir)
+        case "model":
+            # This directory already contains the model (config.json present)
+            run_name = os.path.basename(os.path.dirname(model_path.rstrip(os.sep)))
+            checkpoint_dirs = [
+                os.path.join(model_path, entry)
+                for entry in os.listdir(model_path)
+                if os.path.isdir(os.path.join(model_path, entry)) and entry.startswith("checkpoint")
+            ]
+            latest_ckpt = max(checkpoint_dirs, key=lambda p: (_checkpoint_step(p), p))
+            return latest_ckpt, run_name
+        case "checkpoint":
+            # Final checkpoint directory (may or may not contain a config.json depending on layout)
             run_name = os.path.basename(os.path.dirname(model_path.rstrip(os.sep)))
             return model_path, run_name
-
-        candidates = [
-            os.path.join(model_path, entry)
-            for entry in os.listdir(model_path)
-            if entry.startswith("checkpoint-") and os.path.isdir(os.path.join(model_path, entry))
-        ]
-        if not candidates:
-            raise FileNotFoundError(f"No checkpoint-* directories found under '{model_path}'.")
-
-        candidates.sort(key=lambda p: (_checkpoint_step(p), p))
-        best = candidates[-1]
-        if _checkpoint_step(best) < 0:
-            raise FileNotFoundError(
-                f"Could not infer the last checkpoint under '{model_path}'. Provide a direct checkpoint path."
-            )
-        return best, os.path.basename(model_path)
-
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(f"Checkpoint path '{model_path}' does not exist.")
-
-    return model_path, ""
+        case _:
+            # Fallback (should not reach here due to Literal constraint)
+            return model_path, ""
 
 
 def load_model_for_eval(model_path: str, *, load_llm_weights: bool = False) -> GraphTokenLM:
@@ -215,7 +251,7 @@ def collect_result(results: list[dict], res_file: str, subset: str):
     """
     # Compute accuracy
     acc, unknowns = comp_accuracy([r["preds"] for r in results], [r["answer"] for r in results], subset)
-    print(f"Accuracy: {acc * 100:.3f}%")
+    print(f"Accuracy: {acc * 100:.4f}%")
     if unknowns:
         print(f"[WARNING] {unknowns} unknown predictions found.")
 
@@ -232,7 +268,7 @@ if __name__ == "__main__":
     args = build_args()
 
     # Load pre-trained model
-    ckpt_path, run_name = _resolve_checkpoint_path(args.model_path)
+    ckpt_path, run_name = _resolve_ckpt_path(args.model_path, args.model_version_index)
     print(f"Checkpoint: {ckpt_path}")
     model = load_model_for_eval(ckpt_path, load_llm_weights=False)
 
@@ -249,4 +285,4 @@ if __name__ == "__main__":
             file_name = f"{run_name}_{args.split}.json" if run_name else f"results_{args.split}.json"
     res_file = os.path.join("results", args.subset, file_name)
     acc = collect_result(results, res_file, args.subset)
-    print(f"[SUMMARY] subset={args.subset} accuracy={acc:.3f}")
+    print(f"[SUMMARY] subset={args.subset} accuracy={acc}")

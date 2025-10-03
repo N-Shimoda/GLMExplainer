@@ -73,7 +73,8 @@ for subset in "${subsets[@]}"; do
     python eval.py --subset "${subset}"
     --model-path "outputs/${subset}"
     --split "${SPLIT}"
-    --num-trials 5
+    --num-trials 10
+    --model-version-index -1
   )
   log "[START] ${cmd[*]}"
   start_ts=$(date +%s)
@@ -95,7 +96,7 @@ for subset in "${subsets[@]}"; do
     if [[ -n "$summary_line" ]]; then
       acc_value="$(sed -n 's/.*accuracy=\([0-9.][0-9.]*\).*/\1/p' <<<"$summary_line")"
       if [[ -n "$acc_value" ]]; then
-        acc_percent="$(awk -v acc="$acc_value" 'BEGIN { printf "%.2f", acc * 100 }')"
+        acc_percent="$(awk -v acc="$acc_value" 'BEGIN { printf "%.3f", acc * 100 }')"
         acc_note=" accuracy=${acc_percent}% (raw=${acc_value})"
         log "[INFO] subset=${subset}${acc_note}"
       else
