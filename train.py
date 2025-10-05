@@ -5,12 +5,14 @@ from math import ceil
 
 import torch.distributed as dist
 from datasets import load_dataset
+from datasets.arrow_dataset import Dataset
 from transformers import AutoTokenizer
 from trl import SFTConfig, SFTTrainer
 
 import wandb
 from eval import collect_result, eval_model
 from src.collator import GraphQACollator
+from src.ds_stats import completion_length_report
 from src.glm import GraphTokenLM, GraphTokenLMConfig
 from src.preprocess import add_graph_column
 
@@ -22,6 +24,8 @@ def is_main_process() -> bool:
 
 def build_args(*, multitask: bool = False):
     p = argparse.ArgumentParser()
+
+    # General settings
     if not multitask:
         p.add_argument(
             "--subset",
@@ -29,6 +33,8 @@ def build_args(*, multitask: bool = False):
             choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
             default="edge_count",
         )
+    p.add_argument("--do-eval", action="store_true", help="Run evaluation after training")
+    p.add_argument("--use-custom-dataset", action="store_true", help="Use custom dataset with extended answer labels.")
 
     # Model architecture
     p.add_argument("--base-model", type=str, default="Qwen/Qwen3-4B-Instruct-2507")
@@ -54,7 +60,6 @@ def build_args(*, multitask: bool = False):
     # Logging
     p.add_argument("--wandb", action="store_true", help="Use wandb logging")
     p.add_argument("--wandb-project", type=str, default="GraphQA-GLM")
-    p.add_argument("--do-eval", action="store_true", help="Run evaluation after training")
 
     args = p.parse_args()
 
@@ -89,7 +94,28 @@ def build_args(*, multitask: bool = False):
     return glm_args, sft_args, args
 
 
-def build_dataset(subset: str, node_feat_dim: int, do_eval: bool = False):
+def build_dataset(subset: str, node_feat_dim: int, do_eval: bool = False) -> tuple[Dataset, Dataset, Dataset | None]:
+    """Build dataset for training and evaluation.
+
+    Parameters
+    ----------
+    subset : str
+        Subset of the GraphQA dataset to use.
+    node_feat_dim : int
+        Dimensionality of node features (k in Laplacian PE).
+    do_eval : bool, default=False
+        Whether to prepare the test dataset for evaluation.
+
+    Returns
+    -------
+    train_ds : Dataset
+        Training dataset with `prompt`, `completion`, and `graph` columns.
+    eval_ds : Dataset
+        Evaluation dataset with `prompt`, `completion`, and `graph` columns.
+    test_ds : Dataset or None
+        Test dataset if `do_eval` is True, otherwise None.
+    """
+
     def modify_dataset(example):
         return add_graph_column(example, k=node_feat_dim)
 
@@ -111,6 +137,108 @@ def build_dataset(subset: str, node_feat_dim: int, do_eval: bool = False):
         test_ds = None
 
     return train_ds, eval_ds, test_ds
+
+
+def build_custom_dataset(
+    subset: str, node_feat_dim: int, do_eval: bool = False
+) -> tuple[Dataset, Dataset, Dataset | None]:
+    """Build custom dataset for training and evaluation.
+
+    Parameters
+    ----------
+    subset : str
+        Subset of the GraphQA dataset to use.
+    node_feat_dim : int
+        Dimensionality of node features (k in Laplacian PE).
+    do_eval : bool, default=False
+        Whether to prepare the test dataset for evaluation.
+
+    Returns
+    -------
+    train_ds : Dataset
+        Training dataset with `prompt`, `completion`, and `graph` columns.
+    eval_ds : Dataset
+        Evaluation dataset with `prompt`, `completion`, and `graph` columns.
+    test_ds : Dataset or None
+        Test dataset if `do_eval` is True, otherwise None.
+    """
+    ds_dict = load_dataset(
+        "json",
+        data_dir=os.path.join("dataset", subset),
+        data_files=(
+            {"train": "train.jsonl", "validation": "eval.jsonl", "test": "test.jsonl"}
+            if do_eval
+            else {"train": "train.jsonl", "validation": "eval.jsonl"}
+        ),
+    )
+
+    match subset:
+        case "node_count":
+            ans_label = "{} Thus, the answer is {}."
+
+            def modify_dataset(example):
+                if example["nodes"]:
+                    node_str = (
+                        "Nodes in the graph are "
+                        + ", ".join(map(str, example["nodes"][:-1]))
+                        + " and "
+                        + str(example["nodes"][-1])
+                        + "."
+                    )
+                else:
+                    node_str = "There are no nodes in the graph."
+                ans_digit = example["answer"].strip().split(".")[0]
+                example["answer"] = ans_label.format(node_str, ans_digit)
+                return add_graph_column(example, k=node_feat_dim)
+
+        case "edge_count":
+            ans_label = "{} Thus, the answer is {}."
+
+            def modify_dataset(example):
+                if example["edges"]:
+                    edge_str = (
+                        "Edges in the graph are "
+                        + ", ".join(map(str, map(tuple, example["edges"][:-1])))
+                        + " and "
+                        + str(tuple(example["edges"][-1]))
+                        + "."
+                    )
+                else:
+                    edge_str = "There are no edges in the graph."
+                ans_digit = example["answer"].strip().split(".")[0]
+                example["answer"] = ans_label.format(edge_str, ans_digit)
+                return add_graph_column(example, k=node_feat_dim)
+
+        case "triangle_counting":
+            ans_label = "{} Thus, the answer is {}."
+
+            def modify_dataset(example):
+                if example["triangles"]:
+                    tri_str = (
+                        "Triangles in the graph are "
+                        + ", ".join(map(str, map(tuple, example["triangles"][:-1])))
+                        + " and "
+                        + str(tuple(example["triangles"][-1]))
+                        + "."
+                    )
+                else:
+                    tri_str = "There are no triangles in the graph."
+                ans_digit = example["answer"].strip().split(".")[0]
+                example["answer"] = ans_label.format(tri_str, ans_digit)
+                return add_graph_column(example, k=node_feat_dim)
+
+        case _:
+            raise NotImplementedError(f"Custom dataset for {subset} is not implemented.")
+
+    ds_dict = ds_dict.map(modify_dataset, remove_columns=ds_dict["train"].column_names, desc="Preprocessing")
+
+    # Aggregate completion lengths and delegate JSON and figure generation to the helper function
+    if is_main_process():
+        completion_length_report(ds_dict, subset, main_process=is_main_process())
+
+    print(train_ds[0:8])
+
+    return ds_dict["train"], ds_dict["validation"], ds_dict["test"] if do_eval else None
 
 
 def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
@@ -189,11 +317,20 @@ if __name__ == "__main__":
         wandb.init(project=args.wandb_project, name=run_name)
 
     # Training
-    train_ds, eval_ds, test_ds = build_dataset(
-        args.subset,
-        glm_args["node_feat_dim"],
-        do_eval=args.do_eval,
-    )
+    if args.use_custom_dataset:
+        if is_main_process():
+            print("[INFO] Using custom dataset.")
+        train_ds, eval_ds, test_ds = build_custom_dataset(
+            args.subset,
+            glm_args["node_feat_dim"],
+            do_eval=args.do_eval,
+        )
+    else:
+        train_ds, eval_ds, test_ds = build_dataset(
+            args.subset,
+            glm_args["node_feat_dim"],
+            do_eval=args.do_eval,
+        )
     model = train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args)
 
     # Quick evaluation with 1 trial
