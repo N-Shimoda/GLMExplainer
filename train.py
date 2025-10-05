@@ -33,6 +33,7 @@ def build_args(*, multitask: bool = False):
     # Model architecture
     p.add_argument("--base-model", type=str, default="Qwen/Qwen3-4B-Instruct-2507")
     p.add_argument("--gnn-type", type=str, default="GCN", choices=["GCN", "GAT", "GIN", "GraphSAGE"])
+    p.add_argument("--num-max-nodes", type=int, default=20)
     p.add_argument("--num-graph-tokens", type=int, default=4)
     p.add_argument("--node-feat-dim", type=int, default=8)
     p.add_argument("--pos-emb-dim", type=int, default=8)
@@ -68,6 +69,7 @@ def build_args(*, multitask: bool = False):
         "num_gnn_layers": args.num_gnn_layers,
         "num_graph_tokens": args.num_graph_tokens,
         "num_proj_layers": args.num_proj_layers,
+        "num_max_nodes": args.num_max_nodes,
     }
     sft_args = {
         "per_device_train_batch_size": args.per_device_train_batch_size,
@@ -112,10 +114,7 @@ def build_dataset(subset: str, node_feat_dim: int, do_eval: bool = False):
 
 
 def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
-    glm_cfg = GraphTokenLMConfig(
-        num_max_nodes=20 * sft_args["per_device_train_batch_size"],
-        **glm_args,
-    )
+    glm_cfg = GraphTokenLMConfig(**glm_args)
     model = GraphTokenLM(glm_cfg)
     if is_main_process():
         print(model)
