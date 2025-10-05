@@ -39,6 +39,7 @@ def build_args(*, multitask: bool = False):
     p.add_argument("--gnn-hidden-dim", type=int, default=256)
     p.add_argument("--gnn-out-dim", type=int, default=512)
     p.add_argument("--num-gnn-layers", type=int, default=4)
+    p.add_argument("--num-proj-layers", type=int, default=1)
 
     # Training parameters
     p.add_argument("--epochs", type=int, default=3)
@@ -66,6 +67,7 @@ def build_args(*, multitask: bool = False):
         "gnn_out_dim": args.gnn_out_dim,
         "num_gnn_layers": args.num_gnn_layers,
         "num_graph_tokens": args.num_graph_tokens,
+        "num_proj_layers": args.num_proj_layers,
     }
     sft_args = {
         "per_device_train_batch_size": args.per_device_train_batch_size,
@@ -115,6 +117,8 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
         **glm_args,
     )
     model = GraphTokenLM(glm_cfg)
+    if is_main_process():
+        print(model)
 
     tokenizer = AutoTokenizer.from_pretrained(glm_cfg.base_model, trust_remote_code=True)
     if tokenizer.pad_token is None:

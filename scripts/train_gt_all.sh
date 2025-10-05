@@ -34,7 +34,8 @@ for subset in "${subsets[@]}"; do
     --gnn-type "GCN"
     --num-graph-tokens 4 --node-feat-dim 8 --pos-emb-dim 8
     --gnn-hidden-dim 256 --gnn-out-dim 512 --num-gnn-layers 4
-    --epochs 3 --lr 0.01
+    --num-proj-layers 2
+    --epochs 12 --lr 0.01
     --do-eval --wandb
   )
   log "[START] ${cmd[*]}"

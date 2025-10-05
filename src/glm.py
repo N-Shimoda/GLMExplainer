@@ -26,6 +26,7 @@ class GraphTokenLMConfig(PretrainedConfig):
         gnn_hidden_dim=256,
         gnn_out_dim=512,
         num_gnn_layers=2,
+        num_proj_layers=1,
         num_graph_tokens=4,
         num_max_nodes=20,  # maximum number of nodes per batch
         freeze_llm=True,
@@ -61,6 +62,7 @@ class GraphTokenLMConfig(PretrainedConfig):
         self.gnn_out_dim = gnn_out_dim
         self.gnn_out = gnn_out_dim  # backward compatibility
         self.num_gnn_layers = num_gnn_layers
+        self.num_proj_layers = num_proj_layers
         self.num_graph_tokens = num_graph_tokens
         self.num_max_nodes = num_max_nodes
         self.freeze_llm = freeze_llm
@@ -140,12 +142,21 @@ class DomainProjector(nn.Module):
     - project: MLP/Linear で (batch, k, hidden) に射影
     """
 
-    def __init__(self, gnn_out_dim, llm_hidden_size, num_graph_tokens=4):
+    def __init__(self, gnn_out_dim, llm_hidden_size, num_graph_tokens=4, num_layers=1):
         super().__init__()
+        if num_layers < 1:
+            raise ValueError("DomainProjector requires at least one projection layer.")
+
         self.num_graph_tokens = num_graph_tokens
-        self.project = nn.Sequential(
-            nn.Linear(gnn_out_dim, llm_hidden_size * num_graph_tokens),
-        )
+        layers = []
+        in_dim = gnn_out_dim
+        for layer_idx in range(num_layers):
+            out_dim = llm_hidden_size * num_graph_tokens if layer_idx == num_layers - 1 else gnn_out_dim
+            layers.append(nn.Linear(in_dim, out_dim))
+            if layer_idx < num_layers - 1:
+                layers.append(nn.GELU())
+            in_dim = out_dim
+        self.project = nn.Sequential(*layers)
         # （任意）トークン位置用の学習可能埋め込み
         self.graph_pos = nn.Embedding(num_graph_tokens, llm_hidden_size)
 
@@ -207,6 +218,7 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
             gnn_out_dim=config.gnn_out_dim,
             llm_hidden_size=self.llm.config.hidden_size,
             num_graph_tokens=config.num_graph_tokens,
+            num_layers=config.num_proj_layers,
         )
 
         if config.freeze_llm:
