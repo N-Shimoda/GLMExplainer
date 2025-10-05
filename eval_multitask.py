@@ -3,7 +3,7 @@ import os
 from datasets import concatenate_datasets
 
 from eval import (
-    _resolve_checkpoint_path,
+    _resolve_ckpt_path,
     build_args,
     build_dataset,
     collect_result,
@@ -13,7 +13,7 @@ from eval import (
 
 if __name__ == "__main__":
     args = build_args(multitask=True)
-    model_path, run_name = _resolve_checkpoint_path(args.model_path)
+    model_path, run_name = _resolve_ckpt_path(args.model_path)
     print(f"Checkpoint: {model_path}")
     print(f"Number of trials: {args.num_trials}")
 
