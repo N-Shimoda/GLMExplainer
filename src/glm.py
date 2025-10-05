@@ -67,7 +67,7 @@ class GraphTokenLMConfig(PretrainedConfig):
         self.num_max_nodes = num_max_nodes
         self.freeze_llm = freeze_llm
 
-        # generate 互換のためにフィールドを用意（後でモデル側で上書き）
+        # Keep generation-related fields for compatibility (updated later).
         self.vocab_size = kwargs.get("vocab_size", None)
         self.pad_token_id = kwargs.get("pad_token_id", None)
         self.bos_token_id = kwargs.get("bos_token_id", None)
@@ -75,13 +75,33 @@ class GraphTokenLMConfig(PretrainedConfig):
 
         super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)
 
-    # transformers の generate/GenerationConfig 互換
+    # Maintain compatibility with transformers.GenerationConfig.
     def get_text_config(self, decoder: bool | None = None, **kwargs):
         return self
 
 
 class GNNEncoder(nn.Module):
-    """GNN Encoder to generate a graph embedding for a given graph."""
+    """Encode graph node features with a configurable GNN stack.
+
+    Parameters
+    ----------
+    in_dim : int
+        Dimensionality of the input node features.
+    hid_dim : int
+        Hidden dimensionality used for intermediate layers.
+    out_dim : int
+        Dimensionality of the output node representations.
+    max_nodes : int
+        Maximum number of nodes per graph in a batch.
+    num_layers : int, default=2
+        Number of graph convolution layers.
+    node_pos_emb_dim : int, default=8
+        Dimensionality of the optional learned positional embeddings.
+    dropout : float, default=0.1
+        Dropout probability applied between hidden layers.
+    gnn_type : {"GCN", "GAT", "GIN", "GraphSAGE"}, default="GCN"
+        Type of graph convolution layer to build.
+    """
 
     def __init__(
         self,
@@ -122,7 +142,7 @@ class GNNEncoder(nn.Module):
 
     def forward(self, x, edge_index, batch):
         if self.pos_emb is not None:
-            # バッチ内でグラフごとに 0 から始まる位置インデックスを割り当てる
+            # Assign positional indices per graph starting from zero within the batch.
             _, mask = to_dense_batch(x, batch, max_num_nodes=self.max_nodes)
             pos_idx = torch.arange(self.max_nodes, device=x.device).unsqueeze(0).expand(mask.size(0), -1)
             pos_idx = pos_idx[mask]
@@ -136,10 +156,22 @@ class GNNEncoder(nn.Module):
 
 
 class DomainProjector(nn.Module):
-    """
-    Graph → k 個のグラフトークン（LLM埋め込み次元）へ。
-    - pool: global_mean_pool（ノード）＋任意で追加プール（例：学習可能トークン数 k を project で生成）
-    - project: MLP/Linear で (batch, k, hidden) に射影
+    """Project graph-level representations into graph tokens.
+
+    The projector first pools node embeddings into a graph representation and
+    then maps it into ``k`` graph tokens that match the language model's hidden
+    dimension.
+
+    Parameters
+    ----------
+    gnn_out_dim : int
+        Dimensionality of the encoder output to project from.
+    llm_hidden_size : int
+        Target dimensionality matching the language model embeddings.
+    num_graph_tokens : int, default=4
+        Number of graph tokens to produce.
+    num_layers : int, default=1
+        Number of linear/GELU projection layers.
     """
 
     def __init__(self, gnn_out_dim, llm_hidden_size, num_graph_tokens=4, num_layers=1):
@@ -157,30 +189,50 @@ class DomainProjector(nn.Module):
                 layers.append(nn.GELU())
             in_dim = out_dim
         self.project = nn.Sequential(*layers)
-        # （任意）トークン位置用の学習可能埋め込み
+        # Optional learned positional embeddings for graph tokens.
         self.graph_pos = nn.Embedding(num_graph_tokens, llm_hidden_size)
 
     def forward(self, node_repr, batch_index):
+        """Aggregate node embeddings into graph tokens.
+
+        Parameters
+        ----------
+        node_repr : torch.Tensor
+            Node representations of shape ``(num_nodes_total, gnn_out_dim)``.
+        batch_index : torch.Tensor
+            Batch indices identifying the graph for each node. Shape
+            ``(num_nodes_total,)``.
+
+        Returns
+        -------
+        torch.Tensor
+            Graph token tensor of shape ``(batch_size, num_graph_tokens, hidden)``.
         """
-        node_repr: [N_nodes_total, gnn_out_dim]
-        batch_index: [N_nodes_total]  各ノードがどのグラフに属するか
-        """
-        # グローバルプール（各グラフごとに 1 ベクトル）
+        # Global pooling yields a single vector per graph.
         pooled = global_mean_pool(node_repr, batch_index)  # [B, gnn_out_dim]
         B = pooled.size(0)
-        # k 個のトークンへ線形展開
+        # Expand into k tokens via the projection stack.
         tokens = self.project(pooled)  # [B, k*H]
         Hk = tokens.view(B, self.num_graph_tokens, -1)  # [B, k, hidden]
-        # 位置埋め込みを付与
+        # Add learned positional embeddings.
         pos = self.graph_pos.weight.unsqueeze(0).expand(B, -1, -1)  # [B, k, hidden]
         Hk = Hk + pos
         return Hk  # [B, k, hidden]
 
 
 class GraphTokenLM(PreTrainedModel, GenerationMixin):
-    """
-    GNN + (pool → project) で得た graph tokens を
-    LLM の入力埋め込み（inputs_embeds）の先頭に連結して学習するモデル。
+    """Language model that prepends graph tokens to textual inputs.
+
+    A graph neural network encodes node features, pools them, and projects the
+    result into learned graph tokens that are concatenated with language model
+    embeddings before decoding.
+
+    Parameters
+    ----------
+    config : GraphTokenLMConfig
+        Model configuration describing the graph encoder and base LLM.
+    load_llm_weights : bool, default=True
+        Whether to load pretrained weights for the base language model.
     """
 
     _tied_weights_keys = ["llm.lm_head.weight"]
@@ -246,19 +298,35 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         inputs_embeds=None,
         graph=None,
     ):
+        """Prepend graph tokens to language model embeddings.
+
+        Parameters
+        ----------
+        input_ids : torch.Tensor, optional
+            Token IDs used to derive embeddings if ``inputs_embeds`` is not provided.
+        attention_mask : torch.Tensor, optional
+            Attention mask aligned with ``input_ids``.
+        labels : torch.Tensor, optional
+            Label tensor passed through unchanged.
+        inputs_embeds : torch.Tensor, optional
+            Precomputed language model embeddings.
+        graph : Mapping[str, torch.Tensor], optional
+            Graph structure containing ``x``, ``edge_index``, and ``batch`` as
+            produced by the collator.
+
+        Returns
+        -------
+        tuple of torch.Tensor
+            Tuple ``(inputs_embeds, attention_mask, labels)`` with graph tokens
+            concatenated at the front of the sequence.
         """
-        graph: dict-like（collator が作る想定）
-            - x: [N_nodes, node_feat_dim]
-            - edge_index: [2, N_edges]
-            - batch: [N_nodes]  各ノードのグラフID
-        """
-        # LLM の埋め込みを取得
+        # Obtain embeddings from the base language model if necessary.
         if inputs_embeds is None:
             inputs_embeds = self.llm.get_input_embeddings()(input_ids)
 
         B, T, H = inputs_embeds.size()
 
-        # ---- Graph → tokens ----
+        # ---- Graph to tokens ----
         graph_device = next(self.gnn.parameters()).device
         if hasattr(graph, "to"):
             graph = graph.to(graph_device)
@@ -271,10 +339,10 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         if inputs_embeds is not None:
             graph_tokens = graph_tokens.to(inputs_embeds.device)
 
-        # ---- 連結（先頭に GraphToken を挿入）----
+        # ---- Concatenate by prepending graph tokens ----
         new_inputs = torch.cat([graph_tokens, inputs_embeds], dim=1)  # [B, k+T, H]
 
-        # attention_mask を k 個の 1 で前置
+        # Prepend ones to the attention mask for the graph tokens.
         if attention_mask is None:
             attention_mask = input_ids.ne(self.llm.config.pad_token_id).long()
         new_attention = torch.cat(
@@ -305,7 +373,7 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
                 graph=graph,
             )
         else:
-            # 生成時など、すでに graph tokens を結合済みの inputs_embeds が渡るケース
+            # For generation, inputs may already include concatenated graph tokens.
             if inputs_embeds is None:
                 inputs_embeds = self.llm.get_input_embeddings()(input_ids)
             if attention_mask is None:
@@ -313,11 +381,11 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
                     raise ValueError("When attention_mask is not provided, input_ids must also be provided")
                 attention_mask = input_ids.ne(self.llm.config.pad_token_id).long()
 
-        # Qwen3 の損失に影響しうるキーは除外（安全側）
+        # Exclude auxiliary keys that may interfere with Qwen3 loss computation.
         blocked = {
             "num_items_in_batch",
-            "label_smoothing",  # TRL/transformers が付けることがある
-            "labels_shifted",  # 同上
+            "label_smoothing",  # Added by TRL/transformers in some setups.
+            "labels_shifted",  # Same as above.
         }
         passdown = {
             k: v

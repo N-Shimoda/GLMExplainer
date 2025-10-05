@@ -14,7 +14,20 @@ from transformers import PreTrainedTokenizerBase
 
 
 def _to_tensor(x, dtype=None) -> Tensor:
-    """安全に torch.Tensor 化。dtype が渡されれば強制変換。"""
+    """Convert an object to a tensor with optional casting.
+
+    Parameters
+    ----------
+    x : Any
+        Object to convert into a tensor.
+    dtype : torch.dtype, optional
+        Target data type. When provided, the tensor is cast to this dtype.
+
+    Returns
+    -------
+    torch.Tensor
+        Tensor representation of the input.
+    """
     if isinstance(x, torch.Tensor):
         return x.to(dtype=dtype) if dtype is not None else x
     t = torch.tensor(x)
@@ -65,13 +78,31 @@ def pyg_from_dict(g: Dict[str, Any]) -> PygData:
 
 @dataclass
 class GraphQACollator:
-    """
-    GraphQA 用のコラトラ。
-    - 各サンプルに 'graph'（dict）と 'prompt'/'completion' テキストがある前提。
-    - tokenizer があればここでトークナイズ、無ければ既に tokenized と見做してテンソル化のみ。
-    - 返り値には 'graph'（PyG Batch）を入れる（モデルの forward が graph を受ける想定）。
-    - SFTTrainer / Transformers の損失と整合させるため、labels と attention_mask を
-      GraphToken の個数 k だけ先頭拡張して (k+T) に揃える。
+    """Collate GraphQA samples into model-ready tensors.
+
+    The collator converts graph dictionaries into ``torch_geometric`` batches
+    and processes textual prompt/completion pairs so that graph tokens can be
+    prepended to the language model input.
+
+    Parameters
+    ----------
+    tokenizer : PreTrainedTokenizerBase, optional
+        Tokenizer used to encode prompts and completions. When ``None``, the
+        input is assumed to already contain tokenized tensors.
+    prompt_field : str, default="prompt"
+        Key containing the prompt text in each feature dictionary.
+    completion_field : str, default="completion"
+        Key containing the completion text in each feature dictionary.
+    max_length : int, default=512
+        Maximum sequence length applied after concatenating prompt and
+        completion tokens.
+    pad_to_multiple_of : int, optional
+        When provided, padded sequence lengths are rounded up to this value.
+    num_graph_tokens : int, default=4
+        Number of graph tokens the downstream model expects.
+    add_eos_token : bool, default=True
+        Whether to append an EOS token to each completion when the tokenizer
+        defines one.
     """
 
     tokenizer: Optional[PreTrainedTokenizerBase] = None
@@ -79,10 +110,10 @@ class GraphQACollator:
     completion_field: str = "completion"
     max_length: int = 512
     pad_to_multiple_of: Optional[int] = None
-    num_graph_tokens: int = 4  # ← モデルの k と一致させること
+    num_graph_tokens: int = 4  # Must match the model's graph token count.
     add_eos_token: bool = True
 
-    # ---- 内部ユーティリティ ----
+    # ---- Internal utilities ----
     def _encode(self, text: str) -> List[int]:
         assert self.tokenizer is not None, "tokenizer is required to tokenize texts"
         return self.tokenizer.encode(text, add_special_tokens=False)
@@ -115,7 +146,7 @@ class GraphQACollator:
             if self.max_length and self.max_length > 0 and len(combined) > self.max_length:
                 overflow = len(combined) - self.max_length
 
-                # プロンプト側から優先的に切り詰める
+                # Prefer trimming from the prompt segment first.
                 if overflow >= prompt_len:
                     overflow -= prompt_len
                     prompt_ids = []
@@ -172,11 +203,22 @@ class GraphQACollator:
         attention_mask: Tensor,
         orig_len: int,
     ) -> Dict[str, Tensor]:
-        """
-        labels と attention_mask を GraphToken (k) ぶんだけ「先頭に」前置する。
-        - labels: 先頭に -100 を k 個
-        - attention_mask: 先頭に 1 を k 個
-        すでに (k+T) 長に拡張済みなら二重前置はしない。
+        """Prepend ignore labels and attention for graph tokens.
+
+        Parameters
+        ----------
+        labels : torch.Tensor
+            Label tensor of shape ``(batch, T)`` or ``(batch, T + k)``.
+        attention_mask : torch.Tensor
+            Attention mask of shape ``(batch, T)`` or ``(batch, T + k)``.
+        orig_len : int
+            Original text sequence length ``T`` before graph tokens.
+
+        Returns
+        -------
+        dict of str to torch.Tensor
+            Updated ``labels`` and ``attention_mask`` tensors with ``k`` graph
+            tokens prepended when required.
         """
         k = int(self.num_graph_tokens)
         if k <= 0:
@@ -185,17 +227,17 @@ class GraphQACollator:
         B = labels.size(0)
         # --- labels ---
         if labels.size(1) == orig_len + k:
-            new_labels = labels  # すでに拡張済み
+            new_labels = labels  # Already includes graph tokens.
         elif labels.size(1) == orig_len:
             ignore = torch.full((B, k), -100, dtype=labels.dtype)
             new_labels = torch.cat([ignore, labels], dim=1)
         else:
-            # 想定外の長さ（例：テンプレ変更）でも強行はせず明示的に失敗させる
+            # Fail fast if the sequence length is unexpected.
             raise ValueError(f"[collator] labels length {labels.size(1)} not in {{T={orig_len}, T+k={orig_len + k}}}")
 
         # --- attention_mask ---
         if attention_mask.size(1) == orig_len + k:
-            new_attn = attention_mask  # すでに拡張済み
+            new_attn = attention_mask  # Already includes graph tokens.
         elif attention_mask.size(1) == orig_len:
             ones = torch.ones((B, k), dtype=attention_mask.dtype)
             new_attn = torch.cat([ones, attention_mask], dim=1)
@@ -207,15 +249,15 @@ class GraphQACollator:
 
         return {"labels": new_labels, "attention_mask": new_attn}
 
-    # ---- メイン ----
+    # ---- Main entry point ----
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
-        # 1) グラフのバッチ化（CPU のまま返す）
+        # 1) Batch graph objects (returned on CPU).
         pyg_list = [pyg_from_dict(f["graph"]) for f in features]
         graph_batch = PygBatch.from_data_list(pyg_list)
 
         batch: Dict[str, Any] = {"graph": graph_batch}
 
-        # 2) テキスト（tokenize or stack）
+        # 2) Process text either by tokenizing or stacking tensors.
         if self.tokenizer is not None:
             if self.prompt_field not in features[0]:
                 raise KeyError(f"'{self.prompt_field}' not found in dataset features")
@@ -226,7 +268,7 @@ class GraphQACollator:
             completions = [f[self.completion_field] for f in features]
             toks = self._build_prompt_completion(prompts, completions)
 
-            # ★ labels / attention_mask を (k+T) に拡張（先頭前置）
+            # Expand labels and attention masks to accommodate the graph tokens.
             T = toks["input_ids"].size(1)
             padded = self._prepend_ignore_to_toks(
                 labels=toks["labels"],
@@ -238,7 +280,7 @@ class GraphQACollator:
 
             batch.update(toks)
         else:
-            # 既に tokenized 済み（input_ids/attention_mask/labels が入っている想定）
+            # Assume inputs are already tokenized and stored as tensors.
             def _stack(name: str, dtype=None):
                 vals = [f[name] for f in features if name in f]
                 if not vals:
@@ -258,18 +300,18 @@ class GraphQACollator:
             attention_mask = _stack("attention_mask", dtype=torch.long)
             labels = _stack("labels", dtype=torch.long)
 
-            # labels が無い場合は input_ids から生成（pad=0 を -100 に）
+            # Derive labels from input IDs when they are missing (pads become -100).
             if labels is None and input_ids is not None:
                 labels = input_ids.clone()
                 labels[labels == 0] = -100
                 batch["labels"] = labels
 
-            # attention_mask が無い場合も input_ids から生成（pad=0 を 0, それ以外 1）
+            # Derive attention masks from input IDs when they are missing (pads become 0).
             if attention_mask is None and input_ids is not None:
                 attention_mask = (input_ids != 0).long()
                 batch["attention_mask"] = attention_mask
 
-            # ★ ここでも (k+T) に拡張（先頭前置）
+            # Ensure label and attention lengths include the graph tokens.
             if ("labels" in batch) and ("attention_mask" in batch):
                 T = input_ids.size(1)
                 padded = self._prepend_ignore_to_toks(
