@@ -20,10 +20,20 @@ import numpy as np
 #     "GCN (LPE + IDX)": {"node_count": 97.32, "edge_count": 5.00, "cycle_check": 90.32, "triangle_counting": 18.4},
 # }
 d = {
-    "Normal (LPE only)": {"node_count": 8.2, "edge_count": 8.4, "cycle_check": 90.2, "triangle_counting": 21.4},
-    "Multitask (LPE only)": {"node_count": 8.8, "edge_count": 4.92, "cycle_check": 92.72, "triangle_counting": 20.72},
-    "Normal (LPE + IDX)": {"node_count": 97.32, "edge_count": 5.0, "cycle_check": 90.32, "triangle_counting": 18.4},
-    "Multitask (LPE + IDX)": {"node_count": 8.18, "edge_count": 4.58, "cycle_check": 72.66, "triangle_counting": 9.32},
+    "Normal (LPE only)": {"node_count": 25.06, "edge_count": 6.54, "cycle_check": 72.04, "triangle_counting": 19.96},
+    "Normal (LPE + IDX)": {"node_count": 92.2, "edge_count": 14.82, "cycle_check": 95.2, "triangle_counting": 21.56},
+    "Multitask (LPE only)": {
+        "node_count": 14.58,
+        "edge_count": 6.16,
+        "cycle_check": 89.92,
+        "triangle_counting": 17.64,
+    },
+    "Multitask (LPE + IDX)": {
+        "node_count": 86.02,
+        "edge_count": 21.78,
+        "cycle_check": 95.96,
+        "triangle_counting": 25.52,
+    },
 }
 
 # Order datasets and methods
@@ -45,8 +55,8 @@ method_colors = {
     "GCN (LPE + IDX)": "royalblue",
     "GCN (LPE only)": "lightblue",
     "Normal (LPE only)": "royalblue",
-    "Multitask (LPE only)": "lightblue",
-    "Normal (LPE + IDX)": "orange",
+    "Normal (LPE + IDX)": "lightblue",
+    "Multitask (LPE only)": "orange",
     "Multitask (LPE + IDX)": "gold",
 }
 
