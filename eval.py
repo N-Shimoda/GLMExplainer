@@ -146,16 +146,6 @@ def load_model_for_eval(model_path: str, *, load_llm_weights: bool = False) -> G
     return GraphTokenLM.from_pretrained(model_path, load_llm_weights=load_llm_weights)
 
 
-def build_dataset(subset: str, split: str, node_feat_dim: int):
-    test_raw = load_dataset("baharef/GraphQA", subset, split=f"zero_shot_{split}")
-    test_ds = test_raw.map(
-        lambda x: add_graph_column(x, k=node_feat_dim),
-        desc="add_graph_column(test)",
-        remove_columns=["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"],
-    )
-    return test_ds
-
-
 def _unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
     return model.module if hasattr(model, "module") else model
 
@@ -199,15 +189,27 @@ def create_pyg_batch(graph_dicts: list[dict[str, list]], device: torch.device | 
     return batch
 
 
+def build_dataset(subset: str, split: str, node_feat_dim: int):
+    test_raw = load_dataset("baharef/GraphQA", subset, split=f"zero_shot_{split}")
+    test_ds = test_raw.map(
+        lambda x: add_graph_column(x, k=node_feat_dim),
+        desc="add_graph_column(test)",
+        remove_columns=["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"],
+    )
+    return test_ds
+
+
 @torch.no_grad()
 def eval_model(model: GraphTokenLM, test_ds, batch_size: int, subset: str) -> list[dict]:
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(model.config.base_model)
 
-    max_new_token_dict = {"node_count": 3, "edge_count": 3, "cycle_check": 8}
+    max_new_token_dict = {"node_count": 64, "edge_count": 256, "cycle_check": 8, "triangle_counting": 512}
     gen_cfg = GenerationConfig(
         max_new_tokens=max_new_token_dict.get(subset, 6),
         do_sample=True,
+        eos_token_id=tokenizer.eos_token_id,
+        pad_token_id=tokenizer.eos_token_id,
     )
 
     results = []
