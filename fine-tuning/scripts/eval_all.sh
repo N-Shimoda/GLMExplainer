@@ -12,7 +12,7 @@ for arg in "$@"; do
 done
 
 for subset in node_count edge_count cycle_check triangle_counting; do
-  cmd=(python eval.py --subset "$subset")
+  cmd=(python eval.py --subset "$subset" --num-trials 10)
   if [ "$USE_LOCAL" = true ]; then
     # Get the latest model directory
     MODEL_DIR=$(ls -d ./models/$subset/*/ 2>/dev/null | sort | tail -n 1)

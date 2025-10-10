@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import re
+import sys
 import time
 from typing import List, Literal
 
@@ -9,6 +10,11 @@ import torch
 from datasets import arrow_dataset, concatenate_datasets, load_dataset
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
+
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+from eval import _resolve_ckpt_path  # noqa: E402
 
 
 def build_args():
@@ -22,19 +28,19 @@ def build_args():
     """
     p = argparse.ArgumentParser()
     p.add_argument(
-        "--subset",
-        choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
-        type=str,
-        required=True,
-        help="Specifies GraphQA subset (https://huggingface.co/datasets/baharef/GraphQA)",
+        "--subset", choices=["node_count", "edge_count", "cycle_check", "triangle_counting"], type=str, required=True
     )
-    p.add_argument("--model-path", type=str, default=None, help="Checkpoint path of the fine-tuned model.")
+    p.add_argument("--model-path", type=str, help="Checkpoint path of the fine-tuned model.")
+    p.add_argument("--use-pretrained", action="store_true", help="Use the pre-trained model without fine-tuning.")
     p.add_argument(
         "--base-model",
         type=str,
         default="Qwen/Qwen3-4B-Base",
-        help="Base model identifier to use when loading the tokenizer or running without a fine-tuned checkpoint.",
+        help="Base model identifier to use when loading the tokenizer or running a pre-trained model.",
     )
+    p.add_argument("--batch-size", type=int, default=32, help="Batch size for evaluation.")
+
+    # Evaluation settings
     p.add_argument("--num-trials", type=int, default=1, help="Number of trials to run for evaluation.")
     p.add_argument("--quick", action="store_true", help="Run evaluation on a smaller subset for quick testing.")
 
@@ -90,17 +96,39 @@ def comp_accuracy(
     return acc, num_unknown
 
 
-def eval_model(model_path, eval_raw: arrow_dataset.Dataset, subset: str, base_model: str):
+def eval_model(model_path, eval_raw: arrow_dataset.Dataset, subset: str, base_model: str, batch_size: int):
+    """Evaluate the model on the given dataset.
+
+    Parameters
+    ----------
+    model_path : str
+        Path to the fine-tuned model
+    eval_raw : arrow_dataset.Dataset
+        The evaluation dataset
+    subset : str
+        The subset of the GraphQA dataset
+    base_model : str
+        The base model identifier for loading the tokenizer
+    batch_size : int
+        Batch size for evaluation
+
+    Returns
+    -------
+    acc : float
+        The accuracy of the model's predictions.
+    unknowns : int
+        The number of unknown predictions.
+    """
     model = AutoModelForCausalLM.from_pretrained(model_path, device_map="auto", trust_remote_code=True)
     tokenizer = AutoTokenizer.from_pretrained(base_model, padding_side="left", use_fast=False, trust_remote_code=True)
     gen_cfg = GenerationConfig(
-        max_new_tokens=32,
-        do_sample=False,
+        max_new_tokens=16,
+        do_sample=True,
         eos_token_id=tokenizer.eos_token_id,
+        pad_token_id=tokenizer.eos_token_id,
     )
 
     inputs, preds, refs = [], [], []
-    batch_size = 16
     for batch_start in tqdm(range(0, len(eval_raw), batch_size), "Evaluating"):
         batch = eval_raw[batch_start : batch_start + batch_size]
         user_msgs = [f"{q.strip()}" for q in batch["question"]]
@@ -122,7 +150,7 @@ def eval_model(model_path, eval_raw: arrow_dataset.Dataset, subset: str, base_mo
         with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             out = model.generate(**input_ids, generation_config=gen_cfg)
 
-        gens = tokenizer.batch_decode(out, skip_special_tokens=True)
+        gens = [gen.split("\nA: ")[-1] for gen in tokenizer.batch_decode(out, skip_special_tokens=True)]
         inputs.extend(batch["question"])
         preds.extend(gens)
         refs.extend(batch["answer"])
@@ -159,16 +187,19 @@ if __name__ == "__main__":
         test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
         test_ds = concatenate_datasets([test_ds] * args.num_trials)
         print(f"Subset: {args.subset}")
+        print(f"Number of trials: {args.num_trials}")
 
     # Load the model
-    if args.model_path:
-        model_path = args.model_path
-        print(f"Model: {model_path} (fine-tuned)")
+    if args.use_pretrained:
+        ckpt_path = args.base_model
+        print(f"Model: {ckpt_path} (pre-trained)")
+    elif args.model_path is not None:
+        ckpt_path, run_name = _resolve_ckpt_path(args.model_path)
+        print(f"Model: {ckpt_path} (fine-tuned)")
     else:
-        model_path = args.base_model
-        print(f"Model: {model_path} (pre-trained)")
+        raise ValueError("Either --use-pretrained or --model-path must be specified.")
 
     # Evaluate the model
     start_time = time.time()
-    eval_model(model_path, test_ds, args.subset, args.base_model)
+    eval_model(ckpt_path, test_ds, args.subset, args.base_model, args.batch_size)
     print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
