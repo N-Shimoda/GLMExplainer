@@ -236,8 +236,6 @@ def build_custom_dataset(
     if is_main_process():
         completion_length_report(ds_dict, subset, main_process=is_main_process())
 
-    print(train_ds[0:8])
-
     return ds_dict["train"], ds_dict["validation"], ds_dict["test"] if do_eval else None
 
 
@@ -260,26 +258,23 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     micro_batches_per_epoch = ceil(len(train_ds) / (sft_args["per_device_train_batch_size"] * world_size))
     steps_per_epoch = ceil(micro_batches_per_epoch / sft_args["gradient_accumulation_steps"])
-    if is_main_process():
-        print(f"[INFO] Steps per epoch: {steps_per_epoch}")
+
+    save_intermediate_models = sft_args.pop("save_intermediate_models")
+    save_epoch_interval = sft_args.pop("save_epoch_interval")
 
     sft_config = SFTConfig(
         output_dir=output_dir,
         lr_scheduler_type="linear",
         logging_steps=10,
-        save_strategy="steps" if sft_args["save_intermediate_models"] else "no",
-        save_steps=steps_per_epoch * sft_args["save_epoch_interval"],
+        save_strategy="steps" if save_intermediate_models else "no",
+        save_steps=steps_per_epoch * save_epoch_interval,
         bf16=True,
         optim="lion_32bit",
         report_to="wandb" if args.wandb else "none",
         completion_only_loss=True,
         remove_unused_columns=False,
         ddp_backend="nccl",  # DDP
-        **{
-            key: value
-            for key, value in sft_args.items()
-            if key not in {"save_intermediate_models", "save_epoch_interval"}
-        },
+        **sft_args,
     )
 
     trainer = SFTTrainer(
@@ -294,14 +289,14 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
     if is_main_process():
         print("***** Training *****")
     trainer.train()
+    final_step = trainer.state.global_step
+    final_ckpt_dir = os.path.join(output_dir, f"checkpoint-{final_step}")
     if is_main_process():
-        final_step = trainer.state.global_step
-        final_ckpt_dir = os.path.join(output_dir, f"checkpoint-{final_step}")
         trainer.save_model(final_ckpt_dir)
         trainer.save_state()
         print("***** Done *****")
 
-    return model
+    return final_ckpt_dir
 
 
 if __name__ == "__main__":
@@ -331,11 +326,12 @@ if __name__ == "__main__":
             glm_args["node_feat_dim"],
             do_eval=args.do_eval,
         )
-    model = train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args)
+    ckpt_path = train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args)
 
     # Quick evaluation with 1 trial
     if is_main_process() and args.do_eval:
         print("***** Evaluation *****")
+        model = GraphTokenLM.from_pretrained(ckpt_path)
         results = eval_model(model, test_ds, batch_size=8, subset=args.subset)
         res_file = os.path.join("results", args.subset, f"{date_str}.json")
         acc = collect_result(results, res_file, args.subset)

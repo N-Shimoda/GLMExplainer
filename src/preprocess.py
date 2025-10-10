@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Tuple
 import torch
 
 
-def add_graph_column(example, k: int = 4):
+def add_graph_column(example, k: int = 4) -> Dict[str, Any]:
     """Enrich an example with graph metadata parsed from the question.
 
     Parameters
@@ -27,7 +27,7 @@ def add_graph_column(example, k: int = 4):
     edges = extract_edges_from_text(text)
 
     example["prompt"] = example["task_description"]
-    example["completion"] = example["answer"].strip() + " "
+    example["completion"] = example["answer"].strip()
     example["graph"] = create_pyg_dict(nodes, edges, k=k)  # k: dimension of LPE
     return example
 

@@ -33,6 +33,14 @@ def _percentile(values: List[int], q: float) -> float:
     return float(d0 + d1)
 
 
+def _word_count(text) -> int:
+    """Return number of whitespace-delimited words for ``text``."""
+    if not isinstance(text, str):
+        text = "" if text is None else str(text)
+    stripped = text.strip()
+    return len(stripped.split()) if stripped else 0
+
+
 def completion_length_report(ds_dict, subset: str, *, main_process: bool = True) -> Dict[str, dict]:
     """Compute and persist statistics and plots for completion lengths across splits.
 
@@ -50,13 +58,13 @@ def completion_length_report(ds_dict, subset: str, *, main_process: bool = True)
     Dict[str, dict]
         Mapping of split name to statistics dictionary.
     """
-    # 1) Aggregation: completion lengths per split
+    # 1) Aggregation: completion lengths per split (measured in words)
     lengths_by_split: Dict[str, List[int]] = {}
     for split in ds_dict.keys():
         ds = ds_dict[split]
         if "completion" not in ds.column_names:
             continue
-        lengths = [len(text) for text in ds["completion"]]
+        lengths = [_word_count(text) for text in ds["completion"]]
         if lengths:
             lengths_by_split[split] = lengths
 
@@ -82,7 +90,7 @@ def completion_length_report(ds_dict, subset: str, *, main_process: bool = True)
     plot_dir = os.path.join("fig", "completion_length", subset)
     os.makedirs(plot_dir, exist_ok=True)
 
-    stats_out = os.path.join(plot_dir, "completion_length_stats.json")
+    stats_out = os.path.join(plot_dir, "stats.json")
     with open(stats_out, "w", encoding="utf-8") as f:
         json.dump({"subset": subset, "splits": stats_payload}, f, indent=2, ensure_ascii=False)
 
@@ -102,10 +110,10 @@ def completion_length_report(ds_dict, subset: str, *, main_process: bool = True)
         plt.figure(figsize=(8, 5))
         plt.hist(lengths, bins=40, color="#4C72B0", edgecolor="black", alpha=0.8)
         plt.title(f"{subset} - {split} completion length distribution (n={len(lengths)})")
-        plt.xlabel("Length of completion (characters)")
+        plt.xlabel("Length of completion (words)")
         plt.ylabel("Count")
         plt.grid(True, linestyle="--", linewidth=0.5, alpha=0.5)
-        out_path = os.path.join(plot_dir, f"{split}_completion_length.png")
+        out_path = os.path.join(plot_dir, f"{split}_length.png")
         plt.tight_layout()
         plt.savefig(out_path, dpi=150)
         plt.close()
@@ -130,9 +138,9 @@ def completion_length_report(ds_dict, subset: str, *, main_process: bool = True)
         for mean in bp["means"]:
             mean.set(color="#2CA02C", linewidth=2)
         plt.title(f"{subset} - completion length by split")
-        plt.ylabel("Length of completion (characters)")
+        plt.ylabel("Length of completion (words)")
         plt.grid(True, linestyle="--", linewidth=0.5, alpha=0.5, axis="y")
-        out_box = os.path.join(plot_dir, "completion_length_boxplot.png")
+        out_box = os.path.join(plot_dir, "boxplot.png")
         plt.tight_layout()
         plt.savefig(out_box, dpi=150)
         plt.close()
