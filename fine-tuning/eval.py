@@ -8,8 +8,10 @@ from typing import List, Literal
 
 import torch
 from datasets import arrow_dataset, concatenate_datasets, load_dataset
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
+from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT_DIR not in sys.path:
@@ -38,7 +40,8 @@ def build_args():
         default="Qwen/Qwen3-4B-Base",
         help="Base model identifier to use when loading the tokenizer or running a pre-trained model.",
     )
-    p.add_argument("--batch-size", type=int, default=32, help="Batch size for evaluation.")
+    p.add_argument("--batch-size", type=int, default=64, help="Batch size for evaluation.")
+    p.add_argument("--loader-workers", type=int, default=0, help="Number of DataLoader worker processes.")
 
     # Evaluation settings
     p.add_argument("--num-trials", type=int, default=1, help="Number of trials to run for evaluation.")
@@ -96,64 +99,74 @@ def comp_accuracy(
     return acc, num_unknown
 
 
-def eval_model(model_path, eval_raw: arrow_dataset.Dataset, subset: str, base_model: str, batch_size: int):
-    """Evaluate the model on the given dataset.
+def _with_prompts(dataset: arrow_dataset.Dataset, tokenizer: PreTrainedTokenizerBase) -> arrow_dataset.Dataset:
+    def _build_prompts(batch: dict[str, list[str]]) -> dict[str, list[str]]:
+        prompts = [
+            tokenizer.apply_chat_template(
+                [
+                    {"role": "user", "content": question.strip()},
+                ],
+                tokenize=False,
+                add_special_tokens=False,
+                continue_final_message=True,
+            )
+            for question in batch["question"]
+        ]
+        return {"prompt": prompts}
 
-    Parameters
-    ----------
-    model_path : str
-        Path to the fine-tuned model
-    eval_raw : arrow_dataset.Dataset
-        The evaluation dataset
-    subset : str
-        The subset of the GraphQA dataset
-    base_model : str
-        The base model identifier for loading the tokenizer
-    batch_size : int
-        Batch size for evaluation
+    dataset = dataset.map(_build_prompts, batched=True, desc="Preparing prompts")
+    return dataset.select_columns([col for col in dataset.column_names if col in {"prompt", "question", "answer"}])
 
-    Returns
-    -------
-    acc : float
-        The accuracy of the model's predictions.
-    unknowns : int
-        The number of unknown predictions.
-    """
-    model = AutoModelForCausalLM.from_pretrained(model_path, device_map="auto", trust_remote_code=True)
-    tokenizer = AutoTokenizer.from_pretrained(base_model, padding_side="left", use_fast=False, trust_remote_code=True)
+
+def _collate_eval_batch(batch: list[dict[str, str]]) -> dict[str, list[str]]:
+    return {
+        "prompt": [row["prompt"] for row in batch],
+        "question": [row["question"] for row in batch],
+        "answer": [row["answer"] for row in batch],
+    }
+
+
+def eval_model(
+    model_path: str,
+    eval_raw: arrow_dataset.Dataset,
+    subset: str,
+    *,
+    tokenizer: PreTrainedTokenizerBase,
+    batch_size: int,
+    num_workers: int,
+):
+    torch_dtype = torch.bfloat16 if torch.cuda.is_available() else None
+    model_kwargs = dict(device_map="auto", trust_remote_code=True)
+    if torch_dtype is not None:
+        model_kwargs["torch_dtype"] = torch_dtype
+    model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
+    model.eval()
     gen_cfg = GenerationConfig(
-        max_new_tokens=16,
+        max_new_tokens=8,
         do_sample=True,
         eos_token_id=tokenizer.eos_token_id,
         pad_token_id=tokenizer.eos_token_id,
     )
 
     inputs, preds, refs = [], [], []
-    for batch_start in tqdm(range(0, len(eval_raw), batch_size), "Evaluating"):
-        batch = eval_raw[batch_start : batch_start + batch_size]
-        user_msgs = [f"{q.strip()}" for q in batch["question"]]
-        prompt_strs = [
-            tokenizer.apply_chat_template(
-                [
-                    # {"role": "system", "content": "You are a careful graph reasoner."},
-                    {"role": "user", "content": user_msg},
-                ],
-                tokenize=False,
-                add_special_tokens=False,
-                continue_final_message=True,
-            )
-            for user_msg in user_msgs
-        ]
-        input_ids = tokenizer(prompt_strs, return_tensors="pt", padding=True, truncation=True).to(model.device)
-        # input_ids = tokenizer(user_msgs, return_tensors="pt", padding=True, truncation=True).to(model.device)
+    loader = DataLoader(
+        eval_raw,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=max(0, num_workers),
+        pin_memory=torch.cuda.is_available(),
+        collate_fn=_collate_eval_batch,
+    )
 
-        with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-            out = model.generate(**input_ids, generation_config=gen_cfg)
+    with torch.inference_mode():
+        for batch in tqdm(loader, desc="Evaluating"):
+            tokenized = tokenizer(batch["prompt"], return_tensors="pt", padding=True, truncation=True).to(model.device)
+            out = model.generate(**tokenized, generation_config=gen_cfg)
 
-        gens = [gen.split("\nA: ")[-1] for gen in tokenizer.batch_decode(out, skip_special_tokens=True)]
-        inputs.extend(batch["question"])
-        preds.extend(gens)
-        refs.extend(batch["answer"])
+            gens = [gen.split("\nA: ")[-1] for gen in tokenizer.batch_decode(out, skip_special_tokens=True)]
+            inputs.extend(batch["question"])
+            preds.extend(gens)
+            refs.extend(batch["answer"])
 
     acc, unknowns = comp_accuracy(preds, refs, subset)
     print(f"[RESULT] Accuracy (n={len(eval_raw)}): {acc:.3f}")
@@ -175,16 +188,25 @@ if __name__ == "__main__":
     args = build_args()
     print("-" * 12)
 
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.base_model,
+        padding_side="left",
+        use_fast=False,
+        trust_remote_code=True,
+    )
+
     # Dataset
     if args.quick:
         if args.num_trials > 1:
             print("[WARNING] --quick is enabled; num_trials will be set to 1.")
         N = 96
-        test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
-        test_ds = test_ds.select(range(N))  # for quick testing
+        test_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
+        test_raw = test_raw.select(range(N))  # for quick testing
+        test_ds = _with_prompts(test_raw, tokenizer)
         print(f"Subset: {args.subset} (top {N} samples)")
     else:
-        test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
+        test_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
+        test_ds = _with_prompts(test_raw, tokenizer)
         test_ds = concatenate_datasets([test_ds] * args.num_trials)
         print(f"Subset: {args.subset}")
         print(f"Number of trials: {args.num_trials}")
@@ -201,5 +223,12 @@ if __name__ == "__main__":
 
     # Evaluate the model
     start_time = time.time()
-    eval_model(ckpt_path, test_ds, args.subset, args.base_model, args.batch_size)
+    eval_model(
+        ckpt_path,
+        test_ds,
+        args.subset,
+        tokenizer=tokenizer,
+        batch_size=args.batch_size,
+        num_workers=args.loader_workers,
+    )
     print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")

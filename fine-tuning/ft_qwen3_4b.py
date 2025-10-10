@@ -136,8 +136,7 @@ def train_model(train_raw, eval_raw, run_name: str, output_dir: str, base_model:
         weight_decay=args.weight_decay,
         logging_steps=10,
         eval_steps=25,
-        save_steps=25,
-        save_total_limit=2,
+        save_strategy="no",
         packing=True,
         bf16=True,
         optim="adamw_8bit",
@@ -160,8 +159,10 @@ def train_model(train_raw, eval_raw, run_name: str, output_dir: str, base_model:
     if args.wandb:
         wandb.init(project="GraphQA-ft", name=run_name)
     trainer.train()
-    trainer.save_model(os.path.join(output_dir, "checkpoint-final"))
-    tokenizer.save_pretrained(output_dir)
+
+    # Save final model
+    final_step = trainer.state.global_step
+    trainer.save_model(os.path.join(output_dir, f"checkpoint-{final_step}"))
 
 
 if __name__ == "__main__":
