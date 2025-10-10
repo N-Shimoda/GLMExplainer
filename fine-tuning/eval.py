@@ -6,10 +6,9 @@ import time
 from typing import List, Literal
 
 import torch
+from datasets import arrow_dataset, concatenate_datasets, load_dataset
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
-
-from datasets import arrow_dataset, load_dataset
 
 
 def build_args():
@@ -27,9 +26,16 @@ def build_args():
         choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
         type=str,
         required=True,
-        help="Specifies GraphQA subset（https://huggingface.co/datasets/baharef/GraphQA）",
+        help="Specifies GraphQA subset (https://huggingface.co/datasets/baharef/GraphQA)",
     )
     p.add_argument("--model-path", type=str, default=None, help="Checkpoint path of the fine-tuned model.")
+    p.add_argument(
+        "--base-model",
+        type=str,
+        default="Qwen/Qwen3-4B-Base",
+        help="Base model identifier to use when loading the tokenizer or running without a fine-tuned checkpoint.",
+    )
+    p.add_argument("--num-trials", type=int, default=1, help="Number of trials to run for evaluation.")
     p.add_argument("--quick", action="store_true", help="Run evaluation on a smaller subset for quick testing.")
 
     return p.parse_args()
@@ -84,9 +90,9 @@ def comp_accuracy(
     return acc, num_unknown
 
 
-def eval_model(model_path, eval_raw: arrow_dataset.Dataset, subset: str):
-    model = AutoModelForCausalLM.from_pretrained(model_path, device_map="auto")
-    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507", padding_side="left", use_fast=False)
+def eval_model(model_path, eval_raw: arrow_dataset.Dataset, subset: str, base_model: str):
+    model = AutoModelForCausalLM.from_pretrained(model_path, device_map="auto", trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(base_model, padding_side="left", use_fast=False, trust_remote_code=True)
     gen_cfg = GenerationConfig(
         max_new_tokens=32,
         do_sample=False,
@@ -138,19 +144,20 @@ def eval_model(model_path, eval_raw: arrow_dataset.Dataset, subset: str):
 
 
 if __name__ == "__main__":
-
-    MODEL_NAME = "Qwen/Qwen3-4B-Instruct-2507"
     args = build_args()
     print("-" * 12)
 
     # Dataset
     if args.quick:
+        if args.num_trials > 1:
+            print("[WARNING] --quick is enabled; num_trials will be set to 1.")
         N = 96
         test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
         test_ds = test_ds.select(range(N))  # for quick testing
         print(f"Subset: {args.subset} (top {N} samples)")
     else:
         test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
+        test_ds = concatenate_datasets([test_ds] * args.num_trials)
         print(f"Subset: {args.subset}")
 
     # Load the model
@@ -158,10 +165,10 @@ if __name__ == "__main__":
         model_path = args.model_path
         print(f"Model: {model_path} (fine-tuned)")
     else:
-        model_path = MODEL_NAME
+        model_path = args.base_model
         print(f"Model: {model_path} (pre-trained)")
 
     # Evaluate the model
     start_time = time.time()
-    eval_model(model_path, test_ds, args.subset)
+    eval_model(model_path, test_ds, args.subset, args.base_model)
     print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")

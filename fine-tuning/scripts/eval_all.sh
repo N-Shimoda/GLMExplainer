@@ -11,8 +11,8 @@ for arg in "$@"; do
   fi
 done
 
-for subset in node_count edge_count cycle_check triangle_counting maximum_flow; do
-  CMD=(python eval.py --subset "$subset")
+for subset in node_count edge_count cycle_check triangle_counting; do
+  cmd=(python eval.py --subset "$subset")
   if [ "$USE_LOCAL" = true ]; then
     # Get the latest model directory
     MODEL_DIR=$(ls -d ./models/$subset/*/ 2>/dev/null | sort | tail -n 1)
@@ -20,12 +20,12 @@ for subset in node_count edge_count cycle_check triangle_counting maximum_flow; 
       echo "[WARN] Model directory not found: ./models/$subset/"
       continue
     fi
-    CMD+=(--model-path "${MODEL_DIR}checkpoint-final")
+    cmd+=(--model-path "${MODEL_DIR}checkpoint-final")
   fi
   if [ "$USE_QUICK" = true ]; then
-    CMD+=(--quick)
+    cmd+=(--quick)
   fi
   # Execute the command
-  eval "${CMD[@]}"
+  eval "${cmd[@]}"
   echo
 done

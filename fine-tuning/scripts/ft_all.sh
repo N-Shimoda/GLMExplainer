@@ -3,10 +3,11 @@
 mkdir -p ../logs
 > ../logs/ft_all.log
 
-for subset in node_count edge_count cycle_check triangle_counting maximum_flow; do
+for subset in node_count edge_count cycle_check triangle_counting; do
   echo
   start_time=$(date +%s)
   python ft_qwen3_4b.py \
+    --base-model "Qwen/Qwen3-4B-Base" \
     --subset "$subset" \
     --epochs 3 \
     --wandb --do-eval

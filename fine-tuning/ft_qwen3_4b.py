@@ -1,8 +1,8 @@
 """
-Qwen/Qwen3-4B-Instruct-2507 を GraphQA で QLoRA (4bit) 微調整
-- データ: baharef/GraphQA から subset/split を指定
-- 方式: TRL SFTTrainer + PEFT(LoRA) + bitsandbytes 4bit (QLoRA)
-- 評価: 簡易 Exact Match（空白/改行/末尾ピリオド無視）
+Fine-tune Qwen/Qwen3-4B-Instruct-2507 on GraphQA with QLoRA (4bit).
+- Dataset: pick the desired subset/split from baharef/GraphQA.
+- Method: TRL SFTTrainer + PEFT (LoRA) + bitsandbytes 4-bit (QLoRA).
+- Evaluation: simple exact match (ignores whitespace, newlines, trailing period).
 """
 
 import argparse
@@ -39,7 +39,7 @@ def build_args():
         choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
         type=str,
         default=DEFAULT_SUBSET,
-        help="GraphQA subset（see https://huggingface.co/datasets/baharef/GraphQA）",
+        help="GraphQA subset (see https://huggingface.co/datasets/baharef/GraphQA)",
     )
     p.add_argument("--output-dir", type=str, default=f"qwen3-4b-{DEFAULT_SUBSET}")
     p.add_argument("--wandb", action="store_true", help="Use Weights & Biases for logging")
@@ -47,13 +47,19 @@ def build_args():
 
     # flow
     p.add_argument("--do-eval", action="store_true", help="Whether to run evaluation after fine-tuning")
+    p.add_argument(
+        "--base-model",
+        type=str,
+        default="Qwen/Qwen3-4B-Base",
+        help="Base model identifier to load before fine-tuning.",
+    )
 
     # Hyperparameters (general)
     p.add_argument("--epochs", type=float, default=3)
     p.add_argument("--per-device-train-batch-size", type=int, default=2)
     p.add_argument("--per-device-eval-batch-size", type=int, default=2)
     p.add_argument("--grad-accum-steps", type=int, default=8)
-    p.add_argument("--lr", type=float, default=1e-4)  # LoRA なので大きめ
+    p.add_argument("--lr", type=float, default=1e-4)  # Higher LR is typical for LoRA fine-tuning
     p.add_argument("--warmup-ratio", type=float, default=0.03)
     p.add_argument("--weight-decay", type=float, default=0.1)
 
@@ -66,10 +72,10 @@ def build_args():
 
 def to_conv_prompt_completion(example: Dict) -> Dict:
     """
-    TRL SFTTrainer が理解する「会話型 prompt-completion」形式に変換
+    Convert into the conversation-style prompt-completion format expected by TRL SFTTrainer:
       {
-        "prompt":    [{"role": "user", "content": "<指示>"}],
-        "completion":[{"role": "assistant", "content": "<解答>"}]
+        "prompt":    [{"role": "user", "content": "<instruction>"}],
+        "completion":[{"role": "assistant", "content": "<answer>"}]
       }
     """
     # return {
@@ -82,15 +88,15 @@ def to_conv_prompt_completion(example: Dict) -> Dict:
     return {"prompt": example["question"], "completion": example["answer"].strip()}
 
 
-def train_model(train_raw, eval_raw, run_name: str, output_dir: str):
-    # TRL 用に会話型 prompt-completion へ変換
+def train_model(train_raw, eval_raw, run_name: str, output_dir: str, base_model: str):
+    # Convert to conversation prompt-completion format for TRL
     cols = train_raw.column_names
     train_ds = train_raw.map(to_conv_prompt_completion, remove_columns=cols)
     eval_ds = eval_raw.map(to_conv_prompt_completion, remove_columns=cols)
 
     print("First example for training", train_ds[0])
 
-    # 4bit 量子化（QLoRA）
+    # 4-bit quantization (QLoRA)
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
@@ -99,16 +105,16 @@ def train_model(train_raw, eval_raw, run_name: str, output_dir: str):
     )
 
     model = AutoModelForCausalLM.from_pretrained(
-        "Qwen/Qwen3-4B-Instruct-2507",
+        base_model,
         quantization_config=bnb_config,
         device_map="auto",
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
         attn_implementation="flash_attention_2",
     )
-    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507", use_fast=False)
+    tokenizer = AutoTokenizer.from_pretrained(base_model, use_fast=False, trust_remote_code=True)
 
-    # LoRA 設定（Qwen 系の典型的な投影名）
+    # LoRA configuration (typical projection names for Qwen models)
     peft_cfg = LoraConfig(
         r=args.lora_r,
         lora_alpha=args.lora_alpha,
@@ -118,7 +124,7 @@ def train_model(train_raw, eval_raw, run_name: str, output_dir: str):
         task_type="CAUSAL_LM",
     )
 
-    # SFT 設定
+    # SFT configuration
     sft_cfg = SFTConfig(
         output_dir=output_dir,
         num_train_epochs=args.epochs,
@@ -136,10 +142,10 @@ def train_model(train_raw, eval_raw, run_name: str, output_dir: str):
         bf16=True,
         optim="adamw_8bit",
         report_to="wandb" if args.wandb else "none",
-        completion_only_loss=True,  # prompt は損失から除外（prompt-completion）
+        completion_only_loss=True,  # Exclude prompt tokens from loss (prompt-completion)
         eos_token=tokenizer.eos_token,
-        # Qwen3 は tokenizer に chat template が入っているので自動適用される
-        # （必要に応じて eos_token を指定可：SFTConfig(eos_token=tokenizer.eos_token)）
+        # Qwen3 ships with a chat template in the tokenizer so it is applied automatically
+        # (Optionally set eos_token explicitly: SFTConfig(eos_token=tokenizer.eos_token))
     )
 
     trainer = SFTTrainer(
@@ -150,7 +156,7 @@ def train_model(train_raw, eval_raw, run_name: str, output_dir: str):
         eval_dataset=eval_ds,
     )
 
-    # 学習
+    # Training loop
     if args.wandb:
         wandb.init(project="GraphQA-ft", name=run_name)
     trainer.train()
@@ -185,7 +191,7 @@ if __name__ == "__main__":
 
     # Fine-tune the model using QLoRA
     print("[INFO] Start training")
-    train_model(train_raw, eval_raw, RUN_NAME, OUTPUT_DIR)
+    train_model(train_raw, eval_raw, RUN_NAME, OUTPUT_DIR, args.base_model)
 
     # Evaluate the trained model
     if args.do_eval:
@@ -193,7 +199,7 @@ if __name__ == "__main__":
         model_path = os.path.join(OUTPUT_DIR, "checkpoint-final")
         test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
         start_time = time.time()
-        acc, unknowns = eval_model(model_path, test_ds, args.subset)
+        acc, unknowns = eval_model(model_path, test_ds, args.subset, args.base_model)
         if args.wandb:
             wandb.log({"test_accuracy": acc, "test_unknown": unknowns})
         print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
