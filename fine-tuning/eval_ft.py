@@ -21,6 +21,11 @@ if ROOT_DIR not in sys.path:
 from src.ckpt import _resolve_ckpt_path  # noqa: E402
 
 
+def is_main_process() -> bool:
+    # RANK = 0 is the main process
+    return int(os.environ.get("RANK", "0")) == 0
+
+
 def build_args():
     """
     Parses and returns command-line arguments for fine-tuning a Qwen3-4B model on the GraphQA dataset.
@@ -42,8 +47,9 @@ def build_args():
         default="Qwen/Qwen3-4B-Base",
         help="Base model identifier to use when loading the tokenizer or running a pre-trained model.",
     )
-    p.add_argument("--batch-size", type=int, default=64, help="Batch size for evaluation.")
+    p.add_argument("--batch-size", type=int, default=32, help="Batch size for evaluation.")
     p.add_argument("--loader-workers", type=int, default=0, help="Number of DataLoader worker processes.")
+    p.add_argument("--local_rank", type=int, default=None, help=argparse.SUPPRESS)
 
     # Evaluation settings
     p.add_argument("--num-trials", type=int, default=1, help="Number of trials to run for evaluation.")
@@ -134,6 +140,21 @@ def _distributed_context() -> tuple[int, int, bool]:
     return 0, 1, False
 
 
+def _maybe_init_distributed(local_rank: int | None) -> int:
+    if local_rank is None:
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    if dist.is_available() and world_size > 1 and not dist.is_initialized():
+        backend = "nccl" if torch.cuda.is_available() else "gloo"
+        dist.init_process_group(backend=backend)
+
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
+
+    return local_rank
+
+
 class _ShardedSequentialSampler(Sampler[int]):
     """Evenly shard indices across distributed ranks without duplication."""
 
@@ -167,10 +188,14 @@ def eval_model(
     tokenizer: PreTrainedTokenizerBase,
     batch_size: int = 64,
     num_workers: int = 0,
+    device: torch.device | None = None,
 ):
     rank, world_size, dist_enabled = _distributed_context()
     torch_dtype = torch.bfloat16 if torch.cuda.is_available() else None
-    device = torch.device("cuda", torch.cuda.current_device()) if torch.cuda.is_available() else torch.device("cpu")
+    if device is None:
+        device = (
+            torch.device("cuda", torch.cuda.current_device()) if torch.cuda.is_available() else torch.device("cpu")
+        )
     model_kwargs = dict(trust_remote_code=True)
     if torch_dtype is not None:
         model_kwargs["torch_dtype"] = torch_dtype
@@ -229,8 +254,7 @@ def eval_model(
         filename = os.path.join(save_dir, f"{subset}.json")
         os.makedirs(save_dir, exist_ok=True)
         examples = [
-            {"question": q, "prediction": p, "ground_truth": r}
-            for q, p, r in list(zip(inputs, preds, refs))[:10]
+            {"question": q, "prediction": p, "ground_truth": r} for q, p, r in list(zip(inputs, preds, refs))[:10]
         ]
         with open(filename, "w", encoding="utf-8") as f:
             json.dump(examples, f, ensure_ascii=False, indent=2)
@@ -246,7 +270,11 @@ def eval_model(
 
 if __name__ == "__main__":
     args = build_args()
-    print("-" * 12)
+
+    if is_main_process():
+        print("-" * 16)
+
+    local_rank = _maybe_init_distributed(args.local_rank)
 
     tokenizer = AutoTokenizer.from_pretrained(
         args.base_model,
@@ -268,18 +296,21 @@ if __name__ == "__main__":
         test_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
         test_ds = _with_prompts(test_raw, tokenizer)
         test_ds = concatenate_datasets([test_ds] * args.num_trials)
-        print(f"Subset: {args.subset}")
-        print(f"Number of trials: {args.num_trials}")
+        if is_main_process():
+            print(f"[INFO] Subset: {args.subset}")
+            print(f"[INFO] Number of trials: {args.num_trials}")
 
     # Load the model
     if args.use_pretrained:
         ckpt_path = args.base_model
-        print(f"Model: {ckpt_path} (pre-trained)")
+        model_type = "pre-trained"
     elif args.model_path is not None:
         ckpt_path, run_name = _resolve_ckpt_path(args.model_path)
-        print(f"Model: {ckpt_path} (fine-tuned)")
+        model_type = "fine-tuned"
     else:
         raise ValueError("Either --use-pretrained or --model-path must be specified.")
+    if is_main_process():
+        print(f"[INFO] Model: {ckpt_path} ({model_type})")
 
     # Evaluate the model
     start_time = time.time()
@@ -290,5 +321,9 @@ if __name__ == "__main__":
         tokenizer=tokenizer,
         batch_size=args.batch_size,
         num_workers=args.loader_workers,
+        device=torch.device("cuda", local_rank) if torch.cuda.is_available() else torch.device("cpu"),
     )
     print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
+
+    if dist.is_available() and dist.is_initialized():
+        dist.destroy_process_group()
