@@ -20,10 +20,11 @@ if [ ! -f "$ACCELERATE_CONFIG" ]; then
 fi
 
 BASE_ARGS=(
-	--base-model "Qwen/Qwen3-4B-Instruct-2507"
-	--epochs 3
-	--do-eval
-	--wandb
+	--base-model "Qwen/Qwen3-4B-Base"
+	--epochs 9
+	--save-intermediate-models
+	--save-epoch-interval 3
+	--do-eval --wandb
 )
 
 for subset in node_count edge_count cycle_check triangle_counting; do
