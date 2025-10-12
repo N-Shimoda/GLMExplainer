@@ -3,13 +3,13 @@ import os
 from datasets import concatenate_datasets
 
 from eval import (
-    _resolve_ckpt_path,
     build_args,
     build_dataset,
     collect_result,
     eval_model,
     load_model_for_eval,
 )
+from src.ckpt import _resolve_ckpt_path
 
 if __name__ == "__main__":
     args = build_args(multitask=True)
