@@ -4,11 +4,12 @@ import os
 import re
 import sys
 import time
-from typing import List, Literal
+from typing import List, Literal, Sequence
 
 import torch
+import torch.distributed as dist
 from datasets import arrow_dataset, concatenate_datasets, load_dataset
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Sampler
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
@@ -127,6 +128,38 @@ def _collate_eval_batch(batch: list[dict[str, str]]) -> dict[str, list[str]]:
     }
 
 
+def _distributed_context() -> tuple[int, int, bool]:
+    if dist.is_available() and dist.is_initialized():
+        return dist.get_rank(), dist.get_world_size(), True
+    return 0, 1, False
+
+
+class _ShardedSequentialSampler(Sampler[int]):
+    """Evenly shard indices across distributed ranks without duplication."""
+
+    def __init__(self, dataset_size: int, num_replicas: int, rank: int) -> None:
+        self.dataset_size = dataset_size
+        self.num_replicas = num_replicas
+        self.rank = rank
+        self.indices = list(range(rank, dataset_size, num_replicas))
+
+    def __iter__(self):
+        return iter(self.indices)
+
+    def __len__(self) -> int:
+        return len(self.indices)
+
+
+def _gather_lists(payload: Sequence[list[str]]) -> list[Sequence[list[str]]]:
+    rank, world_size, dist_enabled = _distributed_context()
+    if not dist_enabled or world_size == 1:
+        return [payload]
+
+    gather_list: list[Sequence[list[str]]] = [None for _ in range(world_size)]  # type: ignore[assignment]
+    dist.all_gather_object(gather_list, payload)
+    return gather_list
+
+
 def eval_model(
     model_path: str,
     test_ds: arrow_dataset.Dataset,
@@ -135,11 +168,14 @@ def eval_model(
     batch_size: int = 64,
     num_workers: int = 0,
 ):
+    rank, world_size, dist_enabled = _distributed_context()
     torch_dtype = torch.bfloat16 if torch.cuda.is_available() else None
-    model_kwargs = dict(device_map="auto", trust_remote_code=True)
+    device = torch.device("cuda", torch.cuda.current_device()) if torch.cuda.is_available() else torch.device("cpu")
+    model_kwargs = dict(trust_remote_code=True)
     if torch_dtype is not None:
         model_kwargs["torch_dtype"] = torch_dtype
     model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
+    model.to(device)
     model.eval()
     gen_cfg = GenerationConfig(
         max_new_tokens=8,
@@ -148,40 +184,64 @@ def eval_model(
         pad_token_id=tokenizer.eos_token_id,
     )
 
-    inputs, preds, refs = [], [], []
+    sampler = None
+    if world_size > 1:
+        sampler = _ShardedSequentialSampler(len(test_ds), world_size, rank)
+
     loader = DataLoader(
         test_ds,
         batch_size=batch_size,
-        shuffle=False,
+        shuffle=False if sampler is None else False,
+        sampler=sampler,
         num_workers=max(0, num_workers),
         pin_memory=torch.cuda.is_available(),
         collate_fn=_collate_eval_batch,
     )
 
+    inputs_local, preds_local, refs_local = [], [], []
+    progress = tqdm(loader, desc="Evaluating", disable=(rank != 0))
+
     with torch.inference_mode():
-        for batch in tqdm(loader, desc="Evaluating"):
-            tokenized = tokenizer(batch["prompt"], return_tensors="pt", padding=True, truncation=True).to(model.device)
+        for batch in progress:
+            tokenized = tokenizer(batch["prompt"], return_tensors="pt", padding=True, truncation=True).to(device)
             out = model.generate(**tokenized, generation_config=gen_cfg)
 
             gens = [gen.split("\nA: ")[-1] for gen in tokenizer.batch_decode(out, skip_special_tokens=True)]
-            inputs.extend(batch["question"])
-            preds.extend(gens)
-            refs.extend(batch["answer"])
+            inputs_local.extend(batch["question"])
+            preds_local.extend(gens)
+            refs_local.extend(batch["answer"])
 
-    acc, unknowns = comp_accuracy(preds, refs, subset)
-    print(f"[RESULT] Accuracy (n={len(test_ds)}): {acc:.3f}")
-    if unknowns > 0:
-        print(f"[RESULT] Unknown Predictions (n={len(test_ds)}): {unknowns}")
+    gathered = _gather_lists((inputs_local, preds_local, refs_local))
 
-    # Save 10 examples to JSON
-    save_dir = "results"
-    filename = os.path.join(save_dir, f"{subset}.json")
-    os.makedirs(save_dir, exist_ok=True)
-    examples = [{"question": q, "prediction": p, "ground_truth": r} for q, p, r in list(zip(inputs, preds, refs))[:10]]
-    with open(filename, "w", encoding="utf-8") as f:
-        json.dump(examples, f, ensure_ascii=False, indent=2)
+    if rank == 0:
+        inputs, preds, refs = [], [], []
+        for chunk_inputs, chunk_preds, chunk_refs in gathered:
+            inputs.extend(chunk_inputs)
+            preds.extend(chunk_preds)
+            refs.extend(chunk_refs)
 
-    return acc, unknowns
+        acc, unknowns = comp_accuracy(preds, refs, subset)
+        print(f"[RESULT] Accuracy (n={len(test_ds)}): {acc:.3f}")
+        if unknowns > 0:
+            print(f"[RESULT] Unknown Predictions (n={len(test_ds)}): {unknowns}")
+
+        save_dir = "results"
+        filename = os.path.join(save_dir, f"{subset}.json")
+        os.makedirs(save_dir, exist_ok=True)
+        examples = [
+            {"question": q, "prediction": p, "ground_truth": r}
+            for q, p, r in list(zip(inputs, preds, refs))[:10]
+        ]
+        with open(filename, "w", encoding="utf-8") as f:
+            json.dump(examples, f, ensure_ascii=False, indent=2)
+
+        if dist_enabled:
+            dist.barrier()
+        return acc, unknowns
+
+    if dist_enabled:
+        dist.barrier()
+    return None, None
 
 
 if __name__ == "__main__":
