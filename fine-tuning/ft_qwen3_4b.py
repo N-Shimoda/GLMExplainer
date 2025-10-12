@@ -95,7 +95,8 @@ def build_dataset(subset: str, do_eval: bool):
 
     if do_eval:
         test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
-        test_ds = test_ds.map(to_conv_prompt_completion, remove_columns=test_ds.column_names)
+        rm_cols = test_ds.column_names.remove("question")
+        test_ds = test_ds.map(to_conv_prompt_completion, remove_columns=rm_cols)
     else:
         test_ds = None
 
@@ -105,7 +106,7 @@ def build_dataset(subset: str, do_eval: bool):
     return train_ds, eval_ds, test_ds
 
 
-def train_model(train_ds, eval_ds, run_name: str, output_dir: str, base_model: str):
+def train_model(train_ds, eval_ds, output_dir: str, base_model: str):
     # 4-bit quantization (QLoRA)
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -205,7 +206,7 @@ if __name__ == "__main__":
     # Fine-tune the model using QLoRA
     if is_main_process():
         print("[INFO] Start training")
-    train_model(train_ds, eval_ds, RUN_NAME, OUTPUT_DIR, args.base_model)
+    train_model(train_ds, eval_ds, OUTPUT_DIR, args.base_model)
 
     # Evaluate the trained model
     if args.do_eval and is_main_process():
