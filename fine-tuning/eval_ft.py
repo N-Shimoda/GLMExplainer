@@ -1,4 +1,5 @@
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -16,7 +17,24 @@ from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
-from eval import _resolve_ckpt_path  # noqa: E402
+
+_EVAL_MODULE_NAME = "graph_token_repo_eval"
+_EVAL_MODULE_PATH = os.path.join(ROOT_DIR, "eval_ft.py")
+
+if _EVAL_MODULE_NAME in sys.modules:
+    _eval_module = sys.modules[_EVAL_MODULE_NAME]
+else:
+    spec = importlib.util.spec_from_file_location(_EVAL_MODULE_NAME, _EVAL_MODULE_PATH)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load spec for eval module at '{_EVAL_MODULE_PATH}'.")
+    _eval_module = importlib.util.module_from_spec(spec)
+    sys.modules[_EVAL_MODULE_NAME] = _eval_module
+    spec.loader.exec_module(_eval_module)
+
+if not hasattr(_eval_module, "_resolve_ckpt_path"):
+    raise ImportError(f"Module loaded from '{_EVAL_MODULE_PATH}' missing '_resolve_ckpt_path'.")
+
+_resolve_ckpt_path = _eval_module._resolve_ckpt_path
 
 
 def build_args():

@@ -18,7 +18,11 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
 
 import wandb
-from eval import eval_model
+from eval_ft import eval_model
+
+
+def is_main_process() -> bool:
+    return int(os.environ.get("LOCAL_RANK", "0")) == 0
 
 
 def build_args():
@@ -94,7 +98,8 @@ def train_model(train_raw, eval_raw, run_name: str, output_dir: str, base_model:
     train_ds = train_raw.map(to_conv_prompt_completion, remove_columns=cols)
     eval_ds = eval_raw.map(to_conv_prompt_completion, remove_columns=cols)
 
-    print("First example for training", train_ds[0])
+    if is_main_process():
+        print("First example for training", train_ds[0])
 
     # 4-bit quantization (QLoRA)
     bnb_config = BitsAndBytesConfig(
@@ -104,10 +109,16 @@ def train_model(train_raw, eval_raw, run_name: str, output_dir: str, base_model:
         bnb_4bit_compute_dtype=torch.bfloat16,
     )
 
+    # Let Accelerate/DPP run one full model replica per process instead of sharding across GPUs.
+    device_map = None
+    if torch.cuda.is_available():
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        device_map = {"": local_rank}
+
     model = AutoModelForCausalLM.from_pretrained(
         base_model,
         quantization_config=bnb_config,
-        device_map="auto",
+        device_map=device_map,
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
         attn_implementation="flash_attention_2",
@@ -167,6 +178,8 @@ def train_model(train_raw, eval_raw, run_name: str, output_dir: str, base_model:
 
 if __name__ == "__main__":
     args = build_args()
+    if torch.cuda.is_available() and "LOCAL_RANK" in os.environ:
+        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
     set_seed(args.seed)
 
     time_stamp = time.strftime("%m%d_%H%M")
@@ -182,7 +195,8 @@ if __name__ == "__main__":
     OUTPUT_DIR = os.path.join("models", args.subset, time_stamp)
 
     # Load GraphQA dataset
-    print(f"[INFO] Load GraphQA: subset={args.subset}")
+    if is_main_process():
+        print(f"[INFO] Load GraphQA: subset={args.subset}")
     train_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_train")
     eval_raw = load_dataset(
         "baharef/GraphQA",
@@ -191,16 +205,17 @@ if __name__ == "__main__":
     )
 
     # Fine-tune the model using QLoRA
-    print("[INFO] Start training")
+    if is_main_process():
+        print("[INFO] Start training")
     train_model(train_raw, eval_raw, RUN_NAME, OUTPUT_DIR, args.base_model)
 
     # Evaluate the trained model
-    if args.do_eval:
+    if args.do_eval and is_main_process():
         print("[INFO] Start evaluation")
         model_path = os.path.join(OUTPUT_DIR, "checkpoint-final")
         test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
         start_time = time.time()
         acc, unknowns = eval_model(model_path, test_ds, args.subset, args.base_model)
-        if args.wandb:
+        if args.wandb and is_main_process():
             wandb.log({"test_accuracy": acc, "test_unknown": unknowns})
         print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
