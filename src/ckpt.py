@@ -55,7 +55,6 @@ def _resolve_ckpt_path(model_path: str, version_index: int = -1) -> tuple[str, s
 
     # Determine directory type (still uses helper for classification)
     dir_type = _get_dir_type(model_path)
-    print("Directory type:", dir_type)
 
     match dir_type:
         case "task":
