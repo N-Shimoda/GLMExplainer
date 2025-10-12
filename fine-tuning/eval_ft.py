@@ -1,5 +1,4 @@
 import argparse
-import importlib.util
 import json
 import os
 import re
@@ -18,23 +17,7 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-_EVAL_MODULE_NAME = "graph_token_repo_eval"
-_EVAL_MODULE_PATH = os.path.join(ROOT_DIR, "eval_ft.py")
-
-if _EVAL_MODULE_NAME in sys.modules:
-    _eval_module = sys.modules[_EVAL_MODULE_NAME]
-else:
-    spec = importlib.util.spec_from_file_location(_EVAL_MODULE_NAME, _EVAL_MODULE_PATH)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Unable to load spec for eval module at '{_EVAL_MODULE_PATH}'.")
-    _eval_module = importlib.util.module_from_spec(spec)
-    sys.modules[_EVAL_MODULE_NAME] = _eval_module
-    spec.loader.exec_module(_eval_module)
-
-if not hasattr(_eval_module, "_resolve_ckpt_path"):
-    raise ImportError(f"Module loaded from '{_EVAL_MODULE_PATH}' missing '_resolve_ckpt_path'.")
-
-_resolve_ckpt_path = _eval_module._resolve_ckpt_path
+from src.ckpt import _resolve_ckpt_path  # noqa: E402
 
 
 def build_args():
@@ -146,12 +129,11 @@ def _collate_eval_batch(batch: list[dict[str, str]]) -> dict[str, list[str]]:
 
 def eval_model(
     model_path: str,
-    eval_raw: arrow_dataset.Dataset,
+    test_ds: arrow_dataset.Dataset,
     subset: str,
-    *,
     tokenizer: PreTrainedTokenizerBase,
-    batch_size: int,
-    num_workers: int,
+    batch_size: int = 64,
+    num_workers: int = 0,
 ):
     torch_dtype = torch.bfloat16 if torch.cuda.is_available() else None
     model_kwargs = dict(device_map="auto", trust_remote_code=True)
@@ -168,7 +150,7 @@ def eval_model(
 
     inputs, preds, refs = [], [], []
     loader = DataLoader(
-        eval_raw,
+        test_ds,
         batch_size=batch_size,
         shuffle=False,
         num_workers=max(0, num_workers),
@@ -187,9 +169,9 @@ def eval_model(
             refs.extend(batch["answer"])
 
     acc, unknowns = comp_accuracy(preds, refs, subset)
-    print(f"[RESULT] Accuracy (n={len(eval_raw)}): {acc:.3f}")
+    print(f"[RESULT] Accuracy (n={len(test_ds)}): {acc:.3f}")
     if unknowns > 0:
-        print(f"[RESULT] Unknown Predictions (n={len(eval_raw)}): {unknowns}")
+        print(f"[RESULT] Unknown Predictions (n={len(test_ds)}): {unknowns}")
 
     # Save 10 examples to JSON
     save_dir = "results"

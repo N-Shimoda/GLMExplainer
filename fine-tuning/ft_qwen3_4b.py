@@ -13,12 +13,13 @@ from typing import Dict
 import torch
 from accelerate.utils import set_seed
 from datasets import load_dataset
+from eval_ft import eval_model
 from peft import LoraConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
 
 import wandb
-from eval_ft import eval_model
+from src.ckpt import _resolve_ckpt_path  # noqa: E402
 
 
 def is_main_process() -> bool:
@@ -34,31 +35,25 @@ def build_args():
     argparse.Namespace
         An object containing all the parsed command-line arguments.
     """
-    DEFAULT_SUBSET = "cycle_check"
-
     # Create parser
     p = argparse.ArgumentParser()
     p.add_argument(
         "--subset",
-        choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
+        choices=["node_count", "edge_count", "cycle_check", "triangle_counting"],
         type=str,
-        default=DEFAULT_SUBSET,
         help="GraphQA subset (see https://huggingface.co/datasets/baharef/GraphQA)",
     )
-    p.add_argument("--output-dir", type=str, default=f"qwen3-4b-{DEFAULT_SUBSET}")
-    p.add_argument("--wandb", action="store_true", help="Use Weights & Biases for logging")
-    p.add_argument("--seed", type=int, default=42)
-
-    # flow
-    p.add_argument("--do-eval", action="store_true", help="Whether to run evaluation after fine-tuning")
     p.add_argument(
         "--base-model",
         type=str,
         default="Qwen/Qwen3-4B-Base",
         help="Base model identifier to load before fine-tuning.",
     )
+    p.add_argument("--do-eval", action="store_true", help="Whether to run evaluation after fine-tuning")
+    p.add_argument("--wandb", action="store_true", help="Use Weights & Biases for logging")
+    p.add_argument("--seed", type=int, default=42)
 
-    # Hyperparameters (general)
+    # SFT parameters
     p.add_argument("--epochs", type=float, default=3)
     p.add_argument("--per-device-train-batch-size", type=int, default=2)
     p.add_argument("--per-device-eval-batch-size", type=int, default=2)
@@ -92,15 +87,25 @@ def to_conv_prompt_completion(example: Dict) -> Dict:
     return {"prompt": example["question"], "completion": example["answer"].strip()}
 
 
-def train_model(train_raw, eval_raw, run_name: str, output_dir: str, base_model: str):
-    # Convert to conversation prompt-completion format for TRL
-    cols = train_raw.column_names
-    train_ds = train_raw.map(to_conv_prompt_completion, remove_columns=cols)
-    eval_ds = eval_raw.map(to_conv_prompt_completion, remove_columns=cols)
+def build_dataset(subset: str, do_eval: bool):
+    train_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_train")
+    eval_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_validation")
+    train_ds = train_raw.map(to_conv_prompt_completion, remove_columns=train_raw.column_names)
+    eval_ds = eval_raw.map(to_conv_prompt_completion, remove_columns=eval_raw.column_names)
+
+    if do_eval:
+        test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
+        test_ds = test_ds.map(to_conv_prompt_completion, remove_columns=test_ds.column_names)
+    else:
+        test_ds = None
 
     if is_main_process():
-        print("First example for training", train_ds[0])
+        print(f"First example for training on {subset}:", train_ds[0])
 
+    return train_ds, eval_ds, test_ds
+
+
+def train_model(train_ds, eval_ds, run_name: str, output_dir: str, base_model: str):
     # 4-bit quantization (QLoRA)
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -167,8 +172,6 @@ def train_model(train_raw, eval_raw, run_name: str, output_dir: str, base_model:
     )
 
     # Training loop
-    if args.wandb:
-        wandb.init(project="GraphQA-ft", name=run_name)
     trainer.train()
 
     # Save final model
@@ -188,34 +191,33 @@ if __name__ == "__main__":
         "edge_count": "ec",
         "cycle_check": "cc",
         "triangle_counting": "tc",
-        "maximum_flow": "mf",
     }
     subset_abr = subset_map.get(args.subset, "OTHER")
     RUN_NAME = f"{subset_abr}-{time_stamp}"
-    OUTPUT_DIR = os.path.join("models", args.subset, time_stamp)
+    OUTPUT_DIR = os.path.join("outputs", args.subset, time_stamp)
+
+    if args.wandb and is_main_process():
+        wandb.init(project="GraphQA-ft", name=RUN_NAME)
 
     # Load GraphQA dataset
-    if is_main_process():
-        print(f"[INFO] Load GraphQA: subset={args.subset}")
-    train_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_train")
-    eval_raw = load_dataset(
-        "baharef/GraphQA",
-        args.subset,
-        split="zero_shot_validation" if args.subset != "maximum_flow" else "zero_shot_test",
-    )
+    train_ds, eval_ds, test_ds = build_dataset(args.subset, args.do_eval)
 
     # Fine-tune the model using QLoRA
     if is_main_process():
         print("[INFO] Start training")
-    train_model(train_raw, eval_raw, RUN_NAME, OUTPUT_DIR, args.base_model)
+    train_model(train_ds, eval_ds, RUN_NAME, OUTPUT_DIR, args.base_model)
 
     # Evaluate the trained model
     if args.do_eval and is_main_process():
+        ckpt_path, _ = _resolve_ckpt_path(OUTPUT_DIR)
+        tok = AutoTokenizer.from_pretrained(
+            args.base_model, use_fast=False, trust_remote_code=True, padding_side="left"
+        )
+
+        # Run evaluation
         print("[INFO] Start evaluation")
-        model_path = os.path.join(OUTPUT_DIR, "checkpoint-final")
-        test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
         start_time = time.time()
-        acc, unknowns = eval_model(model_path, test_ds, args.subset, args.base_model)
+        acc, unknowns = eval_model(ckpt_path, test_ds, args.subset, tok, batch_size=32)
         if args.wandb and is_main_process():
             wandb.log({"test_accuracy": acc, "test_unknown": unknowns})
         print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
