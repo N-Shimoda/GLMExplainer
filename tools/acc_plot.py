@@ -10,21 +10,21 @@ import numpy as np
 
 def build_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp", type=str, choices=["gnn", "node-feat", "multitask"], default="gnn")
+    parser.add_argument("--data", type=str, choices=["gnn", "node-feat", "multitask"], default="gnn")
     parser.add_argument("--show-title", action="store_true", help="Whether to show the title on the plot")
     return parser.parse_args()
 
 
 args = build_args()
-match args.exp:
+match args.data:
     case "gnn":
         d = {
             "GCN": {"node_count": 97.32, "edge_count": 5.00, "cycle_check": 90.32, "triangle_counting": 18.4},
             "GAT": {"node_count": 20.6, "edge_count": 6.0, "cycle_check": 92.2, "triangle_counting": 17.0},
             "GIN": {"node_count": 6.0, "edge_count": 6.2, "cycle_check": 71.6, "triangle_counting": 10.8},
             "GraphSAGE": {"node_count": 21.4, "edge_count": 5.4, "cycle_check": 72.4, "triangle_counting": 10.6},
-            "Zero-Shot": {"node_count": 96.4, "edge_count": 37.0, "cycle_check": 87.8, "triangle_counting": 43.6},
-            "QLoRA": {"node_count": 100, "edge_count": 56.2, "cycle_check": 97.2, "triangle_counting": 35.8},
+            "Zero-Shot": {"node_count": 63.3, "edge_count": 18.6, "cycle_check": 65.9, "triangle_counting": 7.7},
+            "QLoRA": {"node_count": 99.5, "edge_count": 45.7, "cycle_check": 25.7, "triangle_counting": 19.4},
         }
     case "node-feat":
         d = {
@@ -64,7 +64,7 @@ match args.exp:
             },
         }
     case _:
-        raise ValueError(f"Unknown experiment type: {args.exp}")
+        raise ValueError(f"Unknown experiment type: {args.data}")
 
 # Order datasets and methods
 dataset_keys = ["node_count", "edge_count", "cycle_check", "triangle_counting"]
@@ -134,6 +134,6 @@ plt.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.6)
 plt.tight_layout()
 
 # Save and show
-output_path = f"fig/acc_{args.exp}.pdf"
+output_path = f"fig/acc_{args.data}.pdf"
 os.makedirs("fig", exist_ok=True)
 plt.savefig(output_path, bbox_inches="tight", dpi=480)
