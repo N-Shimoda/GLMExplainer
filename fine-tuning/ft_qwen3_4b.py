@@ -8,6 +8,8 @@ Fine-tune Qwen/Qwen3-4B-Instruct-2507 on GraphQA with QLoRA (4bit).
 import argparse
 import os
 import time
+from math import ceil
+from pprint import pprint
 from typing import Dict
 
 import torch
@@ -19,7 +21,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
 
 import wandb
-from src.ckpt import _resolve_ckpt_path  # noqa: E402
+from src.ckpt import _resolve_ckpt_path
 
 
 def is_main_process() -> bool:
@@ -27,14 +29,7 @@ def is_main_process() -> bool:
 
 
 def build_args():
-    """
-    Parses and returns command-line arguments for fine-tuning a Qwen3-4B model on the GraphQA dataset.
-
-    Returns
-    -------
-    argparse.Namespace
-        An object containing all the parsed command-line arguments.
-    """
+    """Parse CLI flags and split them into config dictionaries for SFT and LoRA."""
     # Create parser
     p = argparse.ArgumentParser()
     p.add_argument(
@@ -61,12 +56,39 @@ def build_args():
     p.add_argument("--lr", type=float, default=1e-4)  # Higher LR is typical for LoRA fine-tuning
     p.add_argument("--warmup-ratio", type=float, default=0.03)
     p.add_argument("--weight-decay", type=float, default=0.1)
+    p.add_argument("--save-intermediate-models", action="store_true", help="Save intermediate checkpoints")
+    p.add_argument("--save-epoch-interval", type=int, default=1, help="Save intermediate checkpoints every N epochs")
 
     # LoRA
     p.add_argument("--lora-r", type=int, default=16)
     p.add_argument("--lora-alpha", type=int, default=16)
     p.add_argument("--lora-dropout", type=float, default=0.05)
-    return p.parse_args()
+
+    parsed_args = p.parse_args()
+
+    sft_args = {
+        "num_train_epochs": parsed_args.epochs,
+        "per_device_train_batch_size": parsed_args.per_device_train_batch_size,
+        "per_device_eval_batch_size": parsed_args.per_device_eval_batch_size,
+        "gradient_accumulation_steps": parsed_args.grad_accum_steps,
+        "learning_rate": parsed_args.lr,
+        "warmup_ratio": parsed_args.warmup_ratio,
+        "weight_decay": parsed_args.weight_decay,
+        "save_intermediate_models": parsed_args.save_intermediate_models,
+        "save_epoch_interval": parsed_args.save_epoch_interval,
+    }
+    lora_args = {
+        "r": parsed_args.lora_r,
+        "lora_alpha": parsed_args.lora_alpha,
+        "lora_dropout": parsed_args.lora_dropout,
+    }
+
+    added_attrs = sft_args.keys() | lora_args.keys() | set(["epochs", "grad_accum_steps", "lr", "lora_r"])
+    for attr in added_attrs:
+        if hasattr(parsed_args, attr):
+            delattr(parsed_args, attr)
+
+    return sft_args, lora_args, parsed_args
 
 
 def to_conv_prompt_completion(example: Dict) -> Dict:
@@ -88,25 +110,26 @@ def to_conv_prompt_completion(example: Dict) -> Dict:
 
 
 def build_dataset(subset: str, do_eval: bool):
-    train_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_train")
-    eval_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_validation")
+    train_raw = load_dataset("baharef/GraphQA", subset, split="zero_shot_train")
+    eval_raw = load_dataset("baharef/GraphQA", subset, split="zero_shot_validation")
     train_ds = train_raw.map(to_conv_prompt_completion, remove_columns=train_raw.column_names)
     eval_ds = eval_raw.map(to_conv_prompt_completion, remove_columns=eval_raw.column_names)
 
     if do_eval:
-        test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
+        test_ds = load_dataset("baharef/GraphQA", subset, split="zero_shot_test")
         rm_cols = test_ds.column_names.remove("question")
         test_ds = test_ds.map(to_conv_prompt_completion, remove_columns=rm_cols)
     else:
         test_ds = None
 
     if is_main_process():
-        print(f"First example for training on {subset}:", train_ds[0])
+        print(f"First training example for {subset}:")
+        pprint(train_ds[0])
 
     return train_ds, eval_ds, test_ds
 
 
-def train_model(train_ds, eval_ds, output_dir: str, base_model: str):
+def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: dict, args):
     # 4-bit quantization (QLoRA)
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -122,44 +145,49 @@ def train_model(train_ds, eval_ds, output_dir: str, base_model: str):
         device_map = {"": local_rank}
 
     model = AutoModelForCausalLM.from_pretrained(
-        base_model,
+        args.base_model,
         quantization_config=bnb_config,
         device_map=device_map,
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
         attn_implementation="flash_attention_2",
     )
-    tokenizer = AutoTokenizer.from_pretrained(base_model, use_fast=False, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(args.base_model, use_fast=False, trust_remote_code=True)
 
     # LoRA configuration (typical projection names for Qwen models)
     peft_cfg = LoraConfig(
-        r=args.lora_r,
-        lora_alpha=args.lora_alpha,
-        lora_dropout=args.lora_dropout,
+        **lora_args,
         bias="none",
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         task_type="CAUSAL_LM",
     )
 
+    sft_config_kwargs = sft_args.copy()
+    save_intermediate_models = sft_config_kwargs.pop("save_intermediate_models")
+    save_epoch_interval = sft_config_kwargs.pop("save_epoch_interval")
+
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    per_device_batch = sft_config_kwargs["per_device_train_batch_size"]
+    grad_accum_steps = sft_config_kwargs["gradient_accumulation_steps"]
+    micro_batches_per_epoch = ceil(len(train_ds) / max(1, per_device_batch * world_size))
+    steps_per_epoch = ceil(micro_batches_per_epoch / max(1, grad_accum_steps))
+    save_kwargs = {"save_strategy": "steps" if save_intermediate_models else "no"}
+    if save_intermediate_models:
+        save_kwargs["save_steps"] = max(1, steps_per_epoch * save_epoch_interval)
+
     # SFT configuration
     sft_cfg = SFTConfig(
         output_dir=output_dir,
-        num_train_epochs=args.epochs,
-        per_device_train_batch_size=args.per_device_train_batch_size,
-        per_device_eval_batch_size=args.per_device_eval_batch_size,
-        gradient_accumulation_steps=args.grad_accum_steps,
-        learning_rate=args.lr,
-        warmup_ratio=args.warmup_ratio,
-        weight_decay=args.weight_decay,
         logging_steps=10,
         eval_steps=25,
-        save_strategy="no",
         packing=True,
         bf16=True,
         optim="adamw_8bit",
         report_to="wandb" if args.wandb else "none",
         completion_only_loss=True,  # Exclude prompt tokens from loss (prompt-completion)
         eos_token=tokenizer.eos_token,
+        **sft_config_kwargs,
+        **save_kwargs,
         # Qwen3 ships with a chat template in the tokenizer so it is applied automatically
         # (Optionally set eos_token explicitly: SFTConfig(eos_token=tokenizer.eos_token))
     )
@@ -181,7 +209,7 @@ def train_model(train_ds, eval_ds, output_dir: str, base_model: str):
 
 
 if __name__ == "__main__":
-    args = build_args()
+    sft_args, lora_args, args = build_args()
     if torch.cuda.is_available() and "LOCAL_RANK" in os.environ:
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
     set_seed(args.seed)
@@ -206,19 +234,20 @@ if __name__ == "__main__":
     # Fine-tune the model using QLoRA
     if is_main_process():
         print("[INFO] Start training")
-    train_model(train_ds, eval_ds, OUTPUT_DIR, args.base_model)
+    train_model(train_ds, eval_ds, OUTPUT_DIR, sft_args, lora_args, args)
 
     # Evaluate the trained model
-    if args.do_eval and is_main_process():
+    if args.do_eval:
         ckpt_path, _ = _resolve_ckpt_path(OUTPUT_DIR)
         tok = AutoTokenizer.from_pretrained(
             args.base_model, use_fast=False, trust_remote_code=True, padding_side="left"
         )
 
-        # Run evaluation
-        print("[INFO] Start evaluation")
+        if is_main_process():
+            print("[INFO] Start evaluation")
         start_time = time.time()
         acc, unknowns = eval_model(ckpt_path, test_ds, args.subset, tok, batch_size=32)
-        if args.wandb and is_main_process():
-            wandb.log({"test_accuracy": acc, "test_unknown": unknowns})
-        print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
+        if is_main_process() and acc is not None:
+            if args.wandb:
+                wandb.log({"test_accuracy": acc, "test_unknown": unknowns})
+            print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
