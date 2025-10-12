@@ -10,11 +10,11 @@ import os
 import time
 from math import ceil
 from pprint import pprint
-from typing import Dict
+from typing import Dict, Tuple
 
 import torch
 from accelerate.utils import set_seed
-from datasets import load_dataset
+from datasets import Dataset, load_dataset
 from eval_ft import eval_model
 from peft import LoraConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
@@ -25,11 +25,23 @@ from src.ckpt import _resolve_ckpt_path
 
 
 def is_main_process() -> bool:
+    """Check if the current process is the main one (LOCAL_RANK=0)."""
     return int(os.environ.get("LOCAL_RANK", "0")) == 0
 
 
 def build_args():
-    """Parse CLI flags and split them into config dictionaries for SFT and LoRA."""
+    """
+    Parse CLI flags and split them into config dictionaries for SFT and LoRA.
+
+    Returns
+    -------
+    sft_args : dict
+        Configuration dictionary for SFTTrainer.
+    lora_args : dict
+        Configuration dictionary for LoRA.
+    args : Namespace
+        Remaining parsed CLI arguments.
+    """
     # Create parser
     p = argparse.ArgumentParser()
     p.add_argument(
@@ -46,7 +58,6 @@ def build_args():
     )
     p.add_argument("--do-eval", action="store_true", help="Whether to run evaluation after fine-tuning")
     p.add_argument("--wandb", action="store_true", help="Use Weights & Biases for logging")
-    p.add_argument("--seed", type=int, default=42)
 
     # SFT parameters
     p.add_argument("--epochs", type=float, default=3)
@@ -109,7 +120,26 @@ def to_conv_prompt_completion(example: Dict) -> Dict:
     return {"prompt": example["question"], "completion": example["answer"].strip()}
 
 
-def build_dataset(subset: str, do_eval: bool):
+def build_dataset(subset: str, do_eval: bool) -> Tuple[Dataset, Dataset, Dataset | None]:
+    """
+    Load and preprocess the specified GraphQA subset.
+
+    Parameters
+    ----------
+    subset : str
+        One of "node_count", "edge_count", "cycle_check", "triangle_counting".
+    do_eval : bool
+        Whether to load the test split for evaluation.
+
+    Returns
+    -------
+    train_ds : Dataset
+        Training dataset.
+    eval_ds : Dataset
+        Evaluation dataset.
+    test_ds : Dataset | None
+        Test dataset if do_eval is True, otherwise None.
+    """
     train_raw = load_dataset("baharef/GraphQA", subset, split="zero_shot_train")
     eval_raw = load_dataset("baharef/GraphQA", subset, split="zero_shot_validation")
     train_ds = train_raw.map(to_conv_prompt_completion, remove_columns=train_raw.column_names)
@@ -123,13 +153,33 @@ def build_dataset(subset: str, do_eval: bool):
         test_ds = None
 
     if is_main_process():
-        print(f"First training example for {subset}:")
+        print(f"[INFO] First training example for {subset}:")
         pprint(train_ds[0])
+
+    print(type(train_ds), type(eval_ds), type(test_ds))  # debug
 
     return train_ds, eval_ds, test_ds
 
 
 def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: dict, args):
+    """
+    Fine-tune the model using QLoRA (4-bit quantization + LoRA).
+
+    Parameters
+    ----------
+    train_ds : Dataset
+        Training dataset.
+    eval_ds : Dataset
+        Evaluation dataset.
+    output_dir : str
+        Directory to save the fine-tuned model and checkpoints.
+    sft_args : dict
+        Configuration dictionary for SFTTrainer.
+    lora_args : dict
+        Configuration dictionary for LoRA.
+    args : Namespace
+        Parsed CLI arguments.
+    """
     # 4-bit quantization (QLoRA)
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -156,10 +206,10 @@ def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: d
 
     # LoRA configuration (typical projection names for Qwen models)
     peft_cfg = LoraConfig(
-        **lora_args,
         bias="none",
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         task_type="CAUSAL_LM",
+        **lora_args,
     )
 
     sft_config_kwargs = sft_args.copy()
@@ -212,7 +262,7 @@ if __name__ == "__main__":
     sft_args, lora_args, args = build_args()
     if torch.cuda.is_available() and "LOCAL_RANK" in os.environ:
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
-    set_seed(args.seed)
+    set_seed(42)
 
     time_stamp = time.strftime("%m%d_%H%M")
     subset_map = {
@@ -247,7 +297,7 @@ if __name__ == "__main__":
             print("[INFO] Start evaluation")
         start_time = time.time()
         acc, unknowns = eval_model(ckpt_path, test_ds, args.subset, tok, batch_size=32)
-        if is_main_process() and acc is not None:
+        if is_main_process():
             if args.wandb:
                 wandb.log({"test_accuracy": acc, "test_unknown": unknowns})
             print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
