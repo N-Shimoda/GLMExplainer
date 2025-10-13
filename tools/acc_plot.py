@@ -44,17 +44,17 @@ match args.data:
                 "cycle_check": 72.04,
                 "triangle_counting": 19.96,
             },
-            "Normal (LPE + IDX)": {
-                "node_count": 92.2,
-                "edge_count": 14.82,
-                "cycle_check": 95.2,
-                "triangle_counting": 21.56,
-            },
             "Multitask (LPE only)": {
                 "node_count": 14.58,
                 "edge_count": 6.16,
                 "cycle_check": 89.92,
                 "triangle_counting": 17.64,
+            },
+            "Normal (LPE + IDX)": {
+                "node_count": 92.2,
+                "edge_count": 14.82,
+                "cycle_check": 95.2,
+                "triangle_counting": 21.56,
             },
             "Multitask (LPE + IDX)": {
                 "node_count": 86.02,
@@ -82,8 +82,8 @@ method_colors = {
     "GCN (LPE + IDX)": "royalblue",
     "GCN (LPE only)": "lightblue",
     "Normal (LPE only)": "royalblue",
-    "Normal (LPE + IDX)": "lightblue",
-    "Multitask (LPE only)": "orange",
+    "Multitask (LPE only)": "lightblue",
+    "Normal (LPE + IDX)": "orange",
     "Multitask (LPE + IDX)": "gold",
 }
 method_hatches = {
@@ -127,6 +127,7 @@ if args.show_title:
     plt.title("Accuracy per Subset", fontsize=15)
 plt.xticks(x, dataset_labels, fontsize=15)
 plt.ylabel("Accuracy (%)", fontsize=15)
+plt.yticks(np.arange(0, 110, 20), fontsize=12)
 plt.ylim(0, 105)
 plt.legend(frameon=False, fontsize=12)
 plt.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.6)
@@ -137,3 +138,4 @@ plt.tight_layout()
 output_path = f"fig/acc_{args.data}.pdf"
 os.makedirs("fig", exist_ok=True)
 plt.savefig(output_path, bbox_inches="tight", dpi=480)
+print(f"Saved grouped bar chart to {output_path}")
