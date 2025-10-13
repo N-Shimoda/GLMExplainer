@@ -323,7 +323,8 @@ if __name__ == "__main__":
         num_workers=args.loader_workers,
         device=torch.device("cuda", local_rank) if torch.cuda.is_available() else torch.device("cpu"),
     )
-    print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
+    if is_main_process():
+        print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
 
     if dist.is_available() and dist.is_initialized():
         dist.destroy_process_group()
