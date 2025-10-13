@@ -102,6 +102,21 @@ def build_args():
     return sft_args, lora_args, parsed_args
 
 
+def build_run_context(subset: str) -> tuple[str, str]:
+    time_stamp = time.strftime("%m%d_%H%M")
+    subset_map = {
+        "node_count": "nc",
+        "edge_count": "ec",
+        "cycle_check": "cc",
+        "triangle_counting": "tc",
+    }
+    subset_abr = subset_map.get(subset, "OTHER")
+    run_name = f"{subset_abr}-{time_stamp}"
+    output_dir = os.path.join("outputs", subset, time_stamp)
+    os.makedirs(output_dir, exist_ok=True)
+    return run_name, output_dir
+
+
 def to_conv_prompt_completion(example: Dict) -> Dict:
     """
     Convert into the conversation-style prompt-completion format expected by TRL SFTTrainer:
@@ -155,8 +170,6 @@ def build_dataset(subset: str, do_eval: bool) -> Tuple[Dataset, Dataset, Dataset
     if is_main_process():
         print(f"[INFO] First training example for {subset}:")
         pprint(train_ds[0])
-
-    print(type(train_ds), type(eval_ds), type(test_ds))  # debug
 
     return train_ds, eval_ds, test_ds
 
@@ -212,32 +225,37 @@ def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: d
         **lora_args,
     )
 
-    sft_config_kwargs = sft_args.copy()
-    save_intermediate_models = sft_config_kwargs.pop("save_intermediate_models")
-    save_epoch_interval = sft_config_kwargs.pop("save_epoch_interval")
+    # Compute save interval steps
+    save_intermediate_models = sft_args.pop("save_intermediate_models")
+    save_epoch_interval = sft_args.pop("save_epoch_interval")
 
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
-    per_device_batch = sft_config_kwargs["per_device_train_batch_size"]
-    grad_accum_steps = sft_config_kwargs["gradient_accumulation_steps"]
-    micro_batches_per_epoch = ceil(len(train_ds) / max(1, per_device_batch * world_size))
-    steps_per_epoch = ceil(micro_batches_per_epoch / max(1, grad_accum_steps))
-    save_kwargs = {"save_strategy": "steps" if save_intermediate_models else "no"}
-    if save_intermediate_models:
-        save_kwargs["save_steps"] = max(1, steps_per_epoch * save_epoch_interval)
+    micro_batches_per_epoch = ceil(len(train_ds) / sft_args["per_device_train_batch_size"] * world_size)
+    steps_per_epoch = ceil(micro_batches_per_epoch / sft_args["gradient_accumulation_steps"])
+    if is_main_process():
+        pprint(
+            {
+                "world_size": world_size,
+                "len(train_ds)": len(train_ds),
+                "micro_batches_per_epoch": micro_batches_per_epoch,
+                "steps_per_epoch": steps_per_epoch,
+            }
+        )
 
     # SFT configuration
     sft_cfg = SFTConfig(
-        output_dir=output_dir,
-        logging_steps=10,
-        eval_steps=25,
+        completion_only_loss=True,  # Exclude prompt tokens from loss (prompt-completion)
+        eos_token=tokenizer.eos_token,
         packing=True,
         bf16=True,
         optim="adamw_8bit",
+        output_dir=output_dir,
+        logging_steps=10,
+        eval_steps=25,
         report_to="wandb" if args.wandb else "none",
-        completion_only_loss=True,  # Exclude prompt tokens from loss (prompt-completion)
-        eos_token=tokenizer.eos_token,
-        **sft_config_kwargs,
-        **save_kwargs,
+        save_strategy="steps" if save_intermediate_models else "no",
+        save_steps=steps_per_epoch * save_epoch_interval,
+        **sft_args,
         # Qwen3 ships with a chat template in the tokenizer so it is applied automatically
         # (Optionally set eos_token explicitly: SFTConfig(eos_token=tokenizer.eos_token))
     )
@@ -260,23 +278,14 @@ def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: d
 
 if __name__ == "__main__":
     sft_args, lora_args, args = build_args()
-    if torch.cuda.is_available() and "LOCAL_RANK" in os.environ:
-        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
-    set_seed(42)
-
-    time_stamp = time.strftime("%m%d_%H%M")
-    subset_map = {
-        "node_count": "nc",
-        "edge_count": "ec",
-        "cycle_check": "cc",
-        "triangle_counting": "tc",
-    }
-    subset_abr = subset_map.get(args.subset, "OTHER")
-    RUN_NAME = f"{subset_abr}-{time_stamp}"
-    OUTPUT_DIR = os.path.join("outputs", args.subset, time_stamp)
+    RUN_NAME, OUTPUT_DIR = build_run_context(args.subset)
 
     if args.wandb and is_main_process():
         wandb.init(project="GraphQA-ft", name=RUN_NAME)
+
+    set_seed(42)
+    if torch.cuda.is_available() and "LOCAL_RANK" in os.environ:
+        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
 
     # Load GraphQA dataset
     train_ds, eval_ds, test_ds = build_dataset(args.subset, args.do_eval)
@@ -297,7 +306,8 @@ if __name__ == "__main__":
             print("[INFO] Start evaluation")
         start_time = time.time()
         acc, unknowns = eval_model(ckpt_path, test_ds, args.subset, tok, batch_size=32)
+
         if is_main_process():
-            if args.wandb:
-                wandb.log({"test_accuracy": acc, "test_unknown": unknowns})
             print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
+        if args.wandb and is_main_process():
+            wandb.log({"test_accuracy": acc, "test_unknown": unknowns})
