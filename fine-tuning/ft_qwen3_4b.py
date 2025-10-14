@@ -163,7 +163,7 @@ def build_dataset(subset: str, do_eval: bool) -> Tuple[Dataset, Dataset, Dataset
 
     if do_eval:
         test_ds = load_dataset("baharef/GraphQA", subset, split="zero_shot_test")
-        rm_cols = test_ds.column_names.remove("question")
+        rm_cols = [col for col in test_ds.column_names if col != "question"]
         test_ds = test_ds.map(to_conv_prompt_completion, remove_columns=rm_cols)
     else:
         test_ds = None
