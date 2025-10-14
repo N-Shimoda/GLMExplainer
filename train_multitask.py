@@ -9,22 +9,23 @@ from eval import collect_result, eval_model
 from src.preprocess import add_graph_column
 from train import build_args, train_glm
 
-# 複数サブセットをまとめて学習するための対象一覧
+# List of subsets targeted for joint training
 subsets = ["node_count", "edge_count", "cycle_check", "triangle_counting"]
 
 
 def is_main_process() -> bool:
-    # torchrun / accelerate で RANK=0 がメイン
+    # RANK=0 is the main process under torchrun/accelerate
     return int(os.environ.get("RANK", "0")) == 0
 
 
 def build_dataset(node_feat_dim: int, do_eval: bool = False):
     """
-    subsets で定義された 5 つのサブセットから train_raw / eval_raw (/ test_raw) を読み込み、
-    それぞれ連結した上で 1 つの train_ds / eval_ds (/ test_ds) を返す。
+    Load train_raw / eval_raw (/ test_raw) from the subsets defined in `subsets`,
+    concatenate them, and return unified train_ds / eval_ds (/ test_ds).
 
-    既存の引数 subset は互換性のために残しているが、この関数内では subsets の内容を使用する。
-    maximum_flow には validation split がないため、eval には test split を使用する。
+    The legacy argument `subset` is kept for backward compatibility, but this function
+    uses the contents of `subsets`. Since maximum_flow lacks a validation split, use
+    the test split for eval.
     """
 
     def modify_dataset(example):
@@ -32,7 +33,7 @@ def build_dataset(node_feat_dim: int, do_eval: bool = False):
 
     cols = ["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"]
 
-    # 各サブセットの split を読み込み
+    # Load each split for every subset
     train_parts = []
     eval_parts = []
     test_parts = []
@@ -41,19 +42,19 @@ def build_dataset(node_feat_dim: int, do_eval: bool = False):
         # train
         train_parts.append(load_dataset("baharef/GraphQA", s, split="zero_shot_train"))
 
-        # eval: maximum_flow は validation が存在しないため test を eval として使用
+        # eval: maximum_flow has no validation split, so use the test split for eval
         eval_split = "zero_shot_validation" if s != "maximum_flow" else "zero_shot_test"
         eval_parts.append(load_dataset("baharef/GraphQA", s, split=eval_split))
 
-        # test は常に test split
+        # test always uses the test split
         if do_eval:
             test_parts.append(load_dataset("baharef/GraphQA", s, split="zero_shot_test"))
 
-    # 連結
+    # Concatenate splits
     train_raw = concatenate_datasets(train_parts).shuffle(seed=42)
     eval_raw = concatenate_datasets(eval_parts).shuffle(seed=42)
 
-    # 前処理（グラフ列の追加など）
+    # Preprocess data (add graph columns, etc.)
     train_ds = train_raw.map(modify_dataset, remove_columns=cols, desc="Preprocessing train (combined)")
     eval_ds = eval_raw.map(modify_dataset, remove_columns=cols, desc="Preprocessing eval (combined)")
     test_ds_list = (

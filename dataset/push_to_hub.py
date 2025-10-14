@@ -5,7 +5,7 @@ node = load_dataset(
     "json",
     data_files={
         "train": "dataset/node_count/train.jsonl",
-        "validation": "dataset/node_count/eval.jsonl",  # eval → validation として登録
+        "validation": "dataset/node_count/eval.jsonl",  # Register the eval split as validation
         "test": "dataset/node_count/test.jsonl",
     },
 )
