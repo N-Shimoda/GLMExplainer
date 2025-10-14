@@ -3,10 +3,11 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-FT_DIR=$(dirname "$SCRIPT_DIR")
+ROOT_DIR=$(dirname "$SCRIPT_DIR")
+FT_DIR="$ROOT_DIR/fine-tuning"
 cd "$FT_DIR"
 
-LOG_DIR="../logs"
+LOG_DIR="$ROOT_DIR/logs"
 LOG_FILE="$LOG_DIR/ft_all.log"
 mkdir -p "$LOG_DIR"
 >"$LOG_FILE"
@@ -19,15 +20,23 @@ if [ ! -f "$ACCELERATE_CONFIG" ]; then
 	exit 1
 fi
 
-BASE_ARGS=(
-	--base-model "Qwen/Qwen3-4B-Base"
-	--epochs 3 --lr 0.005
-	--save-intermediate-models
-	--save-epoch-interval 3
-	--do-eval --wandb
+subsets=(
+	node_count
+	# edge_count
+	# cycle_check
+	# triangle_counting
 )
 
-for subset in node_count edge_count cycle_check triangle_counting; do
+BASE_ARGS=(
+	--base-model "Qwen/Qwen3-4B-Base"
+	--epochs 1 --lr 0.005
+	--save-intermediate-models
+	--save-epoch-interval 3
+	--do-eval
+	# --wandb
+)
+
+for subset in "${subsets[@]}"; do
 	echo
 	start_time=$(date +%s)
 	if "$ACCELERATE_BIN" launch --config_file "$ACCELERATE_CONFIG" ft_qwen3_4b.py "${BASE_ARGS[@]}" --subset "$subset"; then
