@@ -151,6 +151,7 @@ def _with_prompts(dataset: arrow_dataset.Dataset, tokenizer: PreTrainedTokenizer
         Dataset restricted to ``prompt``, ``question``, and ``answer`` columns
         ready for generation.
     """
+
     def _build_prompts(batch: dict[str, list[str]]) -> dict[str, list[str]]:
         """Render prompts for a batch of questions.
 
@@ -298,10 +299,11 @@ def _gather_lists(payload: Sequence[list[str]]) -> list[Sequence[list[str]]]:
 
 def eval_model(
     model_path: str,
-    test_ds: arrow_dataset.Dataset,
+    test_raw: arrow_dataset.Dataset,
     subset: str,
     tokenizer: PreTrainedTokenizerBase,
     batch_size: int = 64,
+    num_trials: int = 1,
     num_workers: int = 0,
     device: torch.device | None = None,
 ):
@@ -311,7 +313,7 @@ def eval_model(
     ----------
     model_path : str
         Hugging Face hub identifier or filesystem path to the model weights.
-    test_ds : datasets.arrow_dataset.Dataset
+    test_raw : datasets.arrow_dataset.Dataset
         Prepared evaluation dataset containing prompts, questions, and answers.
     subset : str
         GraphQA subset name used to compute accuracy.
@@ -319,6 +321,8 @@ def eval_model(
         Tokenizer used for prompt construction and decoding.
     batch_size : int, default=64
         Number of samples per evaluation batch.
+    num_trials : int, default=1
+        Number of times to repeat the evaluation dataset.
     num_workers : int, default=0
         Number of DataLoader worker processes.
     device : torch.device, optional
@@ -329,6 +333,11 @@ def eval_model(
     tuple of (float | None, int | None)
         Accuracy and unknown-count on rank 0. Non-zero ranks return ``(None, None)``.
     """
+    # build dataset with prompts
+    test_ds = _with_prompts(test_raw, tokenizer)
+    if num_trials > 1:
+        test_ds = concatenate_datasets([test_ds] * num_trials)
+
     rank, world_size, dist_enabled = _distributed_context()
     torch_dtype = torch.bfloat16 if torch.cuda.is_available() else None
     if device is None:
@@ -427,14 +436,13 @@ if __name__ == "__main__":
         if args.num_trials > 1:
             print("[WARNING] --quick is enabled; num_trials will be set to 1.")
         N = 96
-        test_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
-        test_raw = test_raw.select(range(N))  # for quick testing
-        test_ds = _with_prompts(test_raw, tokenizer)
-        print(f"Subset: {args.subset} (top {N} samples)")
+        test_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test").select(
+            range(N)
+        )  # for quick testing
+        if is_main_process():
+            print(f"Subset: {args.subset} (top {N} samples)")
     else:
         test_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
-        test_ds = _with_prompts(test_raw, tokenizer)
-        test_ds = concatenate_datasets([test_ds] * args.num_trials)
         if is_main_process():
             print(f"[INFO] Subset: {args.subset}")
             print(f"[INFO] Number of trials: {args.num_trials}")
@@ -455,10 +463,11 @@ if __name__ == "__main__":
     start_time = time.time()
     eval_model(
         ckpt_path,
-        test_ds,
+        test_raw,
         args.subset,
         tokenizer=tokenizer,
         batch_size=args.batch_size,
+        num_trials=args.num_trials,
         num_workers=args.loader_workers,
         device=torch.device("cuda", local_rank) if torch.cuda.is_available() else torch.device("cpu"),
     )
