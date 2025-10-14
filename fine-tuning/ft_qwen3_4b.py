@@ -23,6 +23,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
 
 from src.ckpt import _resolve_ckpt_path
+from src.sft_callback import PerplexityCallback
 
 
 def is_main_process() -> bool:
@@ -237,11 +238,15 @@ def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: d
         packing=True,
         bf16=True,
         optim="adamw_8bit",
+        # Logging and saving
         output_dir=output_dir,
-        logging_steps=10,
-        eval_steps=25,
-        report_to="wandb" if args.wandb else "none",
+        logging_steps=5,
+        eval_strategy="steps",
         save_strategy="steps" if save_intermediate_models else "no",
+        load_best_model_at_end=True,
+        metric_for_best_model="eval_ppl",
+        greater_is_better=False,
+        report_to="wandb" if args.wandb else "none",
         **sft_args,
         # Qwen3 ships with a chat template in the tokenizer so it is applied automatically
         # (Optionally set eos_token explicitly: SFTConfig(eos_token=tokenizer.eos_token))
@@ -254,6 +259,7 @@ def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: d
         train_dataset=train_ds,
         eval_dataset=eval_ds,
     )
+    trainer.add_callback(PerplexityCallback)
 
     train_dataloader = trainer.get_train_dataloader()
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
@@ -262,6 +268,7 @@ def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: d
 
     if save_intermediate_models:
         trainer.args.save_steps = steps_per_epoch * save_interval_epochs
+        trainer.args.eval_steps = trainer.args.save_steps
 
     if is_main_process():
         print(
@@ -315,4 +322,5 @@ if __name__ == "__main__":
         if is_main_process():
             print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
         if args.wandb and is_main_process():
+            wandb.log({"test_accuracy": acc, "test_unknown": unknowns})
             wandb.log({"test_accuracy": acc, "test_unknown": unknowns})
