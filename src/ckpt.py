@@ -94,4 +94,3 @@ def _resolve_ckpt_path(model_path: str, version_index: int = -1) -> tuple[str, s
             # Fallback (should not reach here due to Literal constraint)
             return model_path, ""
             # Fallback (should not reach here due to Literal constraint)
-            return model_path, ""
