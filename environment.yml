@@ -3,11 +3,12 @@ channels:
   - defaults
   - conda-forge
 dependencies:
+- python
   - transformers
+  - pytorch
+  - pytorch_geometric
+  - trl
   - datasets
   - wandb
-  - pytorch
-  - trl
-  - python
-  - pytorch_geometric
+  - openai
 prefix: /opt/homebrew/anaconda3/envs/graphtoken

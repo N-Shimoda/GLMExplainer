@@ -1,49 +1,69 @@
-# GraphToken
+# Fine-tuning Qwen3-4B on GraphQA
 
-## Usage
+This directory contains the standalone scripts for LoRA fine-tuning and evaluation of Qwen/Qwen3-4B on the GraphQA tasks.
 
-### Fine-tuning
+## 1. Multi-GPU setup with Accelerate
 
-You can fine-tune all subsets at once and log results using the provided script:
+1. Install the dependencies defined at the repository root (`environment.yml`), including `accelerate`.
+2. Review `accelerate_config.yaml` (two GPUs, bf16, NCCL). Adjust `gpu_ids`, `num_processes`, or other fields if your hardware differs.
+   - Older Accelerate releases accept only the keys already present in this file; if you regenerate the config with a newer CLI, remove any unsupported keys before launching.
+   - Alternatively, regenerate it with `accelerate config --config_file fine-tuning/accelerate_config.yaml`.
 
-```shell
-bash scripts/ft_all.sh
-```
+## 2. Fine-tuning
 
-This will run `ft_qwen3_4b.py` for each subset (node_count, edge_count, cycle_check, triangle_counting, maximum_flow) and log the results to `../logs/ft_all.log`.
+- **Single subset**
 
-To run fine-tuning for a single subset manually:
+  ```bash
+  cd fine-tuning
+  accelerate launch --config_file accelerate_config.yaml \
+    ft_qwen3_4b.py \
+    --subset cycle_check \
+    --epochs 3 \
+    --do-eval \
+    --wandb
+  ```
 
-```shell
-python ft_qwen3_4b.py \
-  --subset [subset] \
-  --epochs [epochs] \
-  --wandb
-```
+  Key arguments:
 
-### Evaluation
+  - `--subset`: one of `node_count`, `edge_count`, `cycle_check`, `triangle_counting`, `maximum_flow`
+  - `--per-device-train-batch-size`, `--grad-accum-steps`, etc. to control the global batch (`world_size × per-device × grad-accum`)
+  - `--base-model`: defaults to `Qwen/Qwen3-4B-Base`, but the script accepts any compatible checkpoint
 
-You can evaluate all subsets at once using the provided script:
+- **All subsets (batch run)**
 
-```shell
-bash scripts/eval_all.sh [--local] [--quick]
+  ```bash
+  cd fine-tuning
+  bash scripts/ft_all.sh
+  ```
 
-TQDM_DISABLE=1 bash ./scripts/eval_all.sh > ../logs/eval_all.log 2>&1 &. # Execute in background
-```
+  The script launches `accelerate` for each subset listed in the loop (`node_count`, `edge_count`, `cycle_check`, `triangle_counting` by default), logs progress to `../logs/ft_all.log`, and reuses the same arguments as above.  
+  Override the Accelerate binary or config with environment variables:
 
-- `--local`: Evaluate the latest fine-tuned model for each subset. The script automatically detects the latest checkpoint directory (e.g., `./models/[subset]/[date]/checkpoint-final`).
-- `--quick`: Passes the `--quick` flag to `eval.py` for faster evaluation (if supported).
+  ```bash
+  ACCELERATE_BIN=/path/to/accelerate \
+  ACCELERATE_CONFIG=custom_config.yaml \
+    bash scripts/ft_all.sh
+  ```
 
-If `--local` is not specified, the script evaluates the pre-trained model.
+## 3. Evaluation
 
-To evaluate a single subset manually:
+- **Single subset**
 
-```shell
-# Pre-trained model
-python eval.py --subset [subset]
+  ```bash
+  cd fine-tuning
+  python eval_ft.py \
+    --subset cycle_check \
+    --model_path "./models/cycle_check/<run_timestamp>/checkpoint-final" \
+    --batch-size 8
+  ```
 
-# Fine-tuned model (replace [date] with the actual directory name, e.g., 0901_2115)
-python eval.py \
-  --subset [subset] \
-  --model_path "./models/[subset]/[date]/checkpoint-final"
-```
+- **Evaluate all fine-tuned GraphToken models**
+
+  Use the repository-level helper to iterate over saved checkpoints:
+
+  ```bash
+  cd ..
+  bash scripts/eval_gt_all.sh --split test
+  ```
+
+  Logs are written to `logs/eval_gt_all.log` and include per-subset summaries.

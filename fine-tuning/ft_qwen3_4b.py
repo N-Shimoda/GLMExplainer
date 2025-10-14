@@ -1,75 +1,129 @@
 """
-Qwen/Qwen3-4B-Instruct-2507 を GraphQA で QLoRA (4bit) 微調整
-- データ: baharef/GraphQA から subset/split を指定
-- 方式: TRL SFTTrainer + PEFT(LoRA) + bitsandbytes 4bit (QLoRA)
-- 評価: 簡易 Exact Match（空白/改行/末尾ピリオド無視）
+Fine-tune Qwen/Qwen3-4B-Instruct-2507 on GraphQA with QLoRA (4bit).
+- Dataset: pick the desired subset/split from baharef/GraphQA.
+- Method: TRL SFTTrainer + PEFT (LoRA) + bitsandbytes 4-bit (QLoRA).
+- Evaluation: simple exact match (ignores whitespace, newlines, trailing period).
 """
 
 import argparse
+import json
 import os
 import time
-from typing import Dict
+from math import ceil
+from pprint import pprint
+from typing import Dict, Tuple
 
 import torch
 from accelerate.utils import set_seed
-from datasets import load_dataset
+from datasets import Dataset, load_dataset
+from eval_ft import eval_model
 from peft import LoraConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
 
 import wandb
-from eval import eval_model
+from src.ckpt import _resolve_ckpt_path
+
+
+def is_main_process() -> bool:
+    """Check if the current process is the main one (LOCAL_RANK=0)."""
+    return int(os.environ.get("LOCAL_RANK", "0")) == 0
 
 
 def build_args():
     """
-    Parses and returns command-line arguments for fine-tuning a Qwen3-4B model on the GraphQA dataset.
+    Parse CLI flags and split them into config dictionaries for SFT and LoRA.
 
     Returns
     -------
-    argparse.Namespace
-        An object containing all the parsed command-line arguments.
+    sft_args : dict
+        Configuration dictionary for SFTTrainer.
+    lora_args : dict
+        Configuration dictionary for LoRA.
+    args : Namespace
+        Remaining parsed CLI arguments.
     """
-    DEFAULT_SUBSET = "cycle_check"
-
     # Create parser
     p = argparse.ArgumentParser()
     p.add_argument(
         "--subset",
-        choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
+        choices=["node_count", "edge_count", "cycle_check", "triangle_counting"],
         type=str,
-        default=DEFAULT_SUBSET,
-        help="GraphQA subset（see https://huggingface.co/datasets/baharef/GraphQA）",
+        help="GraphQA subset (see https://huggingface.co/datasets/baharef/GraphQA)",
     )
-    p.add_argument("--output_dir", type=str, default=f"qwen3-4b-{DEFAULT_SUBSET}")
+    p.add_argument(
+        "--base-model",
+        type=str,
+        default="Qwen/Qwen3-4B-Base",
+        help="Base model identifier to load before fine-tuning.",
+    )
+    p.add_argument("--do-eval", action="store_true", help="Whether to run evaluation after fine-tuning")
     p.add_argument("--wandb", action="store_true", help="Use Weights & Biases for logging")
-    p.add_argument("--seed", type=int, default=42)
 
-    # flow
-    p.add_argument("--do_eval", action="store_true", help="Whether to run evaluation after fine-tuning")
-
-    # Hyperparameters (general)
+    # SFT parameters
     p.add_argument("--epochs", type=float, default=3)
-    p.add_argument("--per_device_train_batch_size", type=int, default=2)
-    p.add_argument("--per_device_eval_batch_size", type=int, default=2)
-    p.add_argument("--grad_accum_steps", type=int, default=8)
-    p.add_argument("--lr", type=float, default=1e-4)  # LoRA なので大きめ
-    p.add_argument("--warmup_ratio", type=float, default=0.03)
-    p.add_argument("--weight_decay", type=float, default=0.1)
+    p.add_argument("--per-device-train-batch-size", type=int, default=2)
+    p.add_argument("--per-device-eval-batch-size", type=int, default=2)
+    p.add_argument("--grad-accum-steps", type=int, default=8)
+    p.add_argument("--lr", type=float, default=1e-4)  # Higher LR is typical for LoRA fine-tuning
+    p.add_argument("--warmup-ratio", type=float, default=0.03)
+    p.add_argument("--weight-decay", type=float, default=0.1)
+    p.add_argument("--save-intermediate-models", action="store_true", help="Save intermediate checkpoints")
+    p.add_argument("--save-epoch-interval", type=int, default=1, help="Save intermediate checkpoints every N epochs")
 
     # LoRA
-    p.add_argument("--lora_r", type=int, default=16)
-    p.add_argument("--lora_alpha", type=int, default=16)
-    p.add_argument("--lora_dropout", type=float, default=0.05)
-    return p.parse_args()
+    p.add_argument("--lora-r", type=int, default=16)
+    p.add_argument("--lora-alpha", type=int, default=16)
+    p.add_argument("--lora-dropout", type=float, default=0.05)
+
+    parsed_args = p.parse_args()
+
+    sft_args = {
+        "num_train_epochs": parsed_args.epochs,
+        "per_device_train_batch_size": parsed_args.per_device_train_batch_size,
+        "per_device_eval_batch_size": parsed_args.per_device_eval_batch_size,
+        "gradient_accumulation_steps": parsed_args.grad_accum_steps,
+        "learning_rate": parsed_args.lr,
+        "warmup_ratio": parsed_args.warmup_ratio,
+        "weight_decay": parsed_args.weight_decay,
+        "save_intermediate_models": parsed_args.save_intermediate_models,
+        "save_epoch_interval": parsed_args.save_epoch_interval,
+    }
+    lora_args = {
+        "r": parsed_args.lora_r,
+        "lora_alpha": parsed_args.lora_alpha,
+        "lora_dropout": parsed_args.lora_dropout,
+    }
+
+    added_attrs = sft_args.keys() | lora_args.keys() | set(["epochs", "grad_accum_steps", "lr", "lora_r"])
+    for attr in added_attrs:
+        if hasattr(parsed_args, attr):
+            delattr(parsed_args, attr)
+
+    return sft_args, lora_args, parsed_args
+
+
+def build_run_context(subset: str) -> tuple[str, str]:
+    time_stamp = time.strftime("%m%d_%H%M")
+    subset_map = {
+        "node_count": "nc",
+        "edge_count": "ec",
+        "cycle_check": "cc",
+        "triangle_counting": "tc",
+    }
+    subset_abr = subset_map.get(subset, "OTHER")
+    run_name = f"{subset_abr}-{time_stamp}"
+    output_dir = os.path.join("outputs", subset, time_stamp)
+    os.makedirs(output_dir, exist_ok=True)
+    return run_name, output_dir
 
 
 def to_conv_prompt_completion(example: Dict) -> Dict:
     """
-    TRL SFTTrainer が理解する「会話型 prompt-completion」形式に変換
+    Convert into the conversation-style prompt-completion format expected by TRL SFTTrainer:
       {
-        "prompt":    [{"role": "user", "content": "<指示>"}],
-        "completion":[{"role": "assistant", "content": "<解答>"}]
+        "prompt":    [{"role": "user", "content": "<instruction>"}],
+        "completion":[{"role": "assistant", "content": "<answer>"}]
       }
     """
     # return {
@@ -82,15 +136,65 @@ def to_conv_prompt_completion(example: Dict) -> Dict:
     return {"prompt": example["question"], "completion": example["answer"].strip()}
 
 
-def train_model(train_raw, eval_raw, run_name: str, output_dir: str):
-    # TRL 用に会話型 prompt-completion へ変換
-    cols = train_raw.column_names
-    train_ds = train_raw.map(to_conv_prompt_completion, remove_columns=cols)
-    eval_ds = eval_raw.map(to_conv_prompt_completion, remove_columns=cols)
+def build_dataset(subset: str, do_eval: bool) -> Tuple[Dataset, Dataset, Dataset | None]:
+    """
+    Load and preprocess the specified GraphQA subset.
 
-    print("First example for training", train_ds[0])
+    Parameters
+    ----------
+    subset : str
+        One of "node_count", "edge_count", "cycle_check", "triangle_counting".
+    do_eval : bool
+        Whether to load the test split for evaluation.
 
-    # 4bit 量子化（QLoRA）
+    Returns
+    -------
+    train_ds : Dataset
+        Training dataset.
+    eval_ds : Dataset
+        Evaluation dataset.
+    test_ds : Dataset | None
+        Test dataset if do_eval is True, otherwise None.
+    """
+    train_raw = load_dataset("baharef/GraphQA", subset, split="zero_shot_train")
+    eval_raw = load_dataset("baharef/GraphQA", subset, split="zero_shot_validation")
+    train_ds = train_raw.map(to_conv_prompt_completion, remove_columns=train_raw.column_names)
+    eval_ds = eval_raw.map(to_conv_prompt_completion, remove_columns=eval_raw.column_names)
+
+    if do_eval:
+        test_ds = load_dataset("baharef/GraphQA", subset, split="zero_shot_test")
+        rm_cols = [col for col in test_ds.column_names if col != "question"]
+        test_ds = test_ds.map(to_conv_prompt_completion, remove_columns=rm_cols)
+    else:
+        test_ds = None
+
+    if is_main_process():
+        print(f"[INFO] First training example for {subset}:")
+        pprint(train_ds[0])
+
+    return train_ds, eval_ds, test_ds
+
+
+def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: dict, args):
+    """
+    Fine-tune the model using QLoRA (4-bit quantization + LoRA).
+
+    Parameters
+    ----------
+    train_ds : Dataset
+        Training dataset.
+    eval_ds : Dataset
+        Evaluation dataset.
+    output_dir : str
+        Directory to save the fine-tuned model and checkpoints.
+    sft_args : dict
+        Configuration dictionary for SFTTrainer.
+    lora_args : dict
+        Configuration dictionary for LoRA.
+    args : Namespace
+        Parsed CLI arguments.
+    """
+    # 4-bit quantization (QLoRA)
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
@@ -98,48 +202,50 @@ def train_model(train_raw, eval_raw, run_name: str, output_dir: str):
         bnb_4bit_compute_dtype=torch.bfloat16,
     )
 
+    # Let Accelerate/DPP run one full model replica per process instead of sharding across GPUs.
+    device_map = None
+    if torch.cuda.is_available():
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        device_map = {"": local_rank}
+
     model = AutoModelForCausalLM.from_pretrained(
-        "Qwen/Qwen3-4B-Instruct-2507",
+        args.base_model,
         quantization_config=bnb_config,
-        device_map="auto",
+        device_map=device_map,
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
         attn_implementation="flash_attention_2",
     )
-    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507", use_fast=False)
+    tokenizer = AutoTokenizer.from_pretrained(args.base_model, use_fast=False, trust_remote_code=True)
 
-    # LoRA 設定（Qwen 系の典型的な投影名）
+    # LoRA configuration (typical projection names for Qwen models)
     peft_cfg = LoraConfig(
-        r=args.lora_r,
-        lora_alpha=args.lora_alpha,
-        lora_dropout=args.lora_dropout,
         bias="none",
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         task_type="CAUSAL_LM",
+        **lora_args,
     )
 
-    # SFT 設定
+    # Compute save interval steps
+    save_intermediate_models = sft_args.pop("save_intermediate_models")
+    save_epoch_interval = sft_args.pop("save_epoch_interval")
+
+    # SFT configuration
     sft_cfg = SFTConfig(
-        output_dir=output_dir,
-        num_train_epochs=args.epochs,
-        per_device_train_batch_size=args.per_device_train_batch_size,
-        per_device_eval_batch_size=args.per_device_eval_batch_size,
-        gradient_accumulation_steps=args.grad_accum_steps,
-        learning_rate=args.lr,
-        warmup_ratio=args.warmup_ratio,
-        weight_decay=args.weight_decay,
-        logging_steps=10,
-        eval_steps=25,
-        save_steps=25,
-        save_total_limit=2,
+        completion_only_loss=True,  # Exclude prompt tokens from loss (prompt-completion)
+        eos_token=tokenizer.eos_token,
         packing=True,
         bf16=True,
         optim="adamw_8bit",
+        output_dir=output_dir,
+        logging_steps=10,
+        eval_steps=25,
         report_to="wandb" if args.wandb else "none",
-        completion_only_loss=True,  # prompt は損失から除外（prompt-completion）
-        eos_token=tokenizer.eos_token,
-        # Qwen3 は tokenizer に chat template が入っているので自動適用される
-        # （必要に応じて eos_token を指定可：SFTConfig(eos_token=tokenizer.eos_token)）
+        save_strategy="steps" if save_intermediate_models else "no",
+        save_steps=1,
+        **sft_args,
+        # Qwen3 ships with a chat template in the tokenizer so it is applied automatically
+        # (Optionally set eos_token explicitly: SFTConfig(eos_token=tokenizer.eos_token))
     )
 
     trainer = SFTTrainer(
@@ -150,50 +256,63 @@ def train_model(train_raw, eval_raw, run_name: str, output_dir: str):
         eval_dataset=eval_ds,
     )
 
-    # 学習
-    if args.wandb:
-        wandb.init(project="GraphQA-ft", name=run_name)
+    train_dataloader = trainer.get_train_dataloader()
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    micro_batches_per_epoch = len(train_dataloader)
+    steps_per_epoch = ceil(micro_batches_per_epoch / trainer.args.gradient_accumulation_steps)
+
+    if save_intermediate_models:
+        trainer.args.save_steps = steps_per_epoch * save_epoch_interval
+
+    if is_main_process():
+        print(
+            json.dumps(
+                {
+                    "world_size": world_size,
+                    "len(train_ds)": len(train_ds),
+                    "micro_batches_per_epoch": micro_batches_per_epoch,
+                    "steps_per_epoch": steps_per_epoch,
+                },
+                indent=4,
+            )
+        )
+
+    # Training loop
     trainer.train()
-    trainer.save_model(os.path.join(output_dir, "checkpoint-final"))
-    tokenizer.save_pretrained(output_dir)
 
 
 if __name__ == "__main__":
-    args = build_args()
-    set_seed(args.seed)
+    sft_args, lora_args, args = build_args()
+    RUN_NAME, OUTPUT_DIR = build_run_context(args.subset)
 
-    time_stamp = time.strftime("%m%d_%H%M")
-    subset_map = {
-        "node_count": "nc",
-        "edge_count": "ec",
-        "cycle_check": "cc",
-        "triangle_counting": "tc",
-        "maximum_flow": "mf",
-    }
-    subset_abr = subset_map.get(args.subset, "OTHER")
-    RUN_NAME = f"{subset_abr}-{time_stamp}"
-    OUTPUT_DIR = os.path.join("models", args.subset, time_stamp)
+    if args.wandb and is_main_process():
+        wandb.init(project="GraphQA-ft", name=RUN_NAME)
+
+    set_seed(42)
+    if torch.cuda.is_available() and "LOCAL_RANK" in os.environ:
+        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
 
     # Load GraphQA dataset
-    print(f"[INFO] Load GraphQA: subset={args.subset}")
-    train_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_train")
-    eval_raw = load_dataset(
-        "baharef/GraphQA",
-        args.subset,
-        split="zero_shot_validation" if args.subset != "maximum_flow" else "zero_shot_test",
-    )
+    train_ds, eval_ds, test_ds = build_dataset(args.subset, args.do_eval)
 
     # Fine-tune the model using QLoRA
-    print("[INFO] Start training")
-    train_model(train_raw, eval_raw, RUN_NAME, OUTPUT_DIR)
+    if is_main_process():
+        print("[INFO] Start training")
+    train_model(train_ds, eval_ds, OUTPUT_DIR, sft_args, lora_args, args)
 
     # Evaluate the trained model
     if args.do_eval:
-        print("[INFO] Start evaluation")
-        model_path = os.path.join(OUTPUT_DIR, "checkpoint-final")
-        test_ds = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
+        ckpt_path, _ = _resolve_ckpt_path(OUTPUT_DIR)
+        tok = AutoTokenizer.from_pretrained(
+            args.base_model, use_fast=False, trust_remote_code=True, padding_side="left"
+        )
+
+        if is_main_process():
+            print("[INFO] Start evaluation")
         start_time = time.time()
-        acc, unknowns = eval_model(model_path, test_ds, args.subset)
-        if args.wandb:
+        acc, unknowns = eval_model(ckpt_path, test_ds, args.subset, tok, batch_size=32)
+
+        if is_main_process():
+            print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
+        if args.wandb and is_main_process():
             wandb.log({"test_accuracy": acc, "test_unknown": unknowns})
-        print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")

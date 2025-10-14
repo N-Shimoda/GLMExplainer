@@ -1,1 +1,0 @@
-python eval_combined.py --model_path outputs/combined --num_trials 10

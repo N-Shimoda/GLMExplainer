@@ -4,93 +4,36 @@ import os
 from math import ceil
 
 import torch
+from datasets import concatenate_datasets, load_dataset
 from torch_geometric.data import Batch as PygBatch
 from torch_geometric.data import Data as PygData
 from tqdm import tqdm
 from transformers import AutoTokenizer, GenerationConfig
 
-from datasets import concatenate_datasets, load_dataset
+from src.ckpt import _resolve_ckpt_path
 from src.glm import GraphTokenLM
 from src.metrics import comp_accuracy
 from src.preprocess import add_graph_column
 
 
-def build_args():
+def build_args(*, multitask: bool = False):
     p = argparse.ArgumentParser()
-    p.add_argument(
-        "--subset",
-        type=str,
-        choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
-        default="edge_count",
-    )
-    p.add_argument("--model_path", type=str, required=True)
-    p.add_argument("--num_graph_tokens", type=int, default=4)
-    p.add_argument("--batch_size", type=int, default=64)
+    if not multitask:
+        p.add_argument(
+            "--subset",
+            type=str,
+            choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
+            default="edge_count",
+        )
+    # Model selection
+    p.add_argument("--model-path", type=str, required=True)
+    p.add_argument("--model-version-index", type=int, default=-1)
+    # Evaluation settings
+    p.add_argument("--num-trials", type=int, default=1)
     p.add_argument("--split", choices=["train", "validation", "test"], default="test")
-    p.add_argument("--num_trials", type=int, default=1)
+    p.add_argument("--batch-size", type=int, default=64)
+
     return p.parse_args()
-
-
-def _checkpoint_step(path: str) -> int:
-    name = os.path.basename(path.rstrip(os.sep))
-    try:
-        return int(name.split("-")[-1])
-    except (ValueError, IndexError):
-        return -1
-
-
-def _resolve_checkpoint_path(model_path: str) -> tuple[str, str]:
-    """
-    Resolve the concrete checkpoint directory to load.
-
-    Parameters
-    ----------
-    model_path : str
-        Path to the task directory, model directory or a specific checkpoint.
-
-    Returns
-    -------
-    ckpt_path : str
-        Resolved checkpoint path.
-    run_name : str
-        Run directory name if applicable, else empty string.
-    """
-    if os.path.isdir(model_path):
-        dir_name = os.path.basename(model_path.rstrip(os.sep))
-        if dir_name in ["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow", "combined"]:
-            run_dirs = os.listdir(model_path)
-            if not run_dirs:
-                raise FileNotFoundError(f"No run directories found under '{model_path}'.")
-            run_dirs.sort(key=lambda p: (int(p.split("-")[0]), int(p.split("-")[1])))
-
-            latest_dir = os.path.join(model_path, run_dirs[-1])
-            return _resolve_checkpoint_path(latest_dir)
-
-        config_path = os.path.join(model_path, "config.json")
-        if os.path.isfile(config_path):
-            run_name = os.path.basename(os.path.dirname(model_path.rstrip(os.sep)))
-            return model_path, run_name
-
-        candidates = [
-            os.path.join(model_path, entry)
-            for entry in os.listdir(model_path)
-            if entry.startswith("checkpoint-") and os.path.isdir(os.path.join(model_path, entry))
-        ]
-        if not candidates:
-            raise FileNotFoundError(f"No checkpoint-* directories found under '{model_path}'.")
-
-        candidates.sort(key=lambda p: (_checkpoint_step(p), p))
-        best = candidates[-1]
-        if _checkpoint_step(best) < 0:
-            raise FileNotFoundError(
-                f"Could not infer the last checkpoint under '{model_path}'. Provide a direct checkpoint path."
-            )
-        return best, os.path.basename(model_path)
-
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(f"Checkpoint path '{model_path}' does not exist.")
-
-    return model_path, ""
 
 
 def load_model_for_eval(model_path: str, *, load_llm_weights: bool = False) -> GraphTokenLM:
@@ -107,16 +50,6 @@ def load_model_for_eval(model_path: str, *, load_llm_weights: bool = False) -> G
             load_llm_weights=load_llm_weights,
         ).to("cuda")
     return GraphTokenLM.from_pretrained(model_path, load_llm_weights=load_llm_weights)
-
-
-def build_dataset(subset: str, split: str, node_feat_dim: int):
-    test_raw = load_dataset("baharef/GraphQA", subset, split=f"zero_shot_{split}")
-    test_ds = test_raw.map(
-        lambda x: add_graph_column(x, k=node_feat_dim),
-        desc="add_graph_column(test)",
-        remove_columns=["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"],
-    )
-    return test_ds
 
 
 def _unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
@@ -162,15 +95,27 @@ def create_pyg_batch(graph_dicts: list[dict[str, list]], device: torch.device | 
     return batch
 
 
+def build_dataset(subset: str, split: str, node_feat_dim: int):
+    test_raw = load_dataset("baharef/GraphQA", subset, split=f"zero_shot_{split}")
+    test_ds = test_raw.map(
+        lambda x: add_graph_column(x, k=node_feat_dim),
+        desc="add_graph_column(test)",
+        remove_columns=["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"],
+    )
+    return test_ds
+
+
 @torch.no_grad()
 def eval_model(model: GraphTokenLM, test_ds, batch_size: int, subset: str) -> list[dict]:
     model.eval()
-    tokenizer = AutoTokenizer.from_pretrained(model.config.llm_name)
+    tokenizer = AutoTokenizer.from_pretrained(model.config.base_model)
 
-    max_new_token_dict = {"node_count": 3, "cycle_check": 8}
+    max_new_token_dict = {"node_count": 64, "edge_count": 256, "cycle_check": 8, "triangle_counting": 512}
     gen_cfg = GenerationConfig(
         max_new_tokens=max_new_token_dict.get(subset, 6),
         do_sample=True,
+        eos_token_id=tokenizer.eos_token_id,
+        pad_token_id=tokenizer.eos_token_id,
     )
 
     results = []
@@ -214,7 +159,7 @@ def collect_result(results: list[dict], res_file: str, subset: str):
     """
     # Compute accuracy
     acc, unknowns = comp_accuracy([r["preds"] for r in results], [r["answer"] for r in results], subset)
-    print(f"Accuracy: {acc * 100:.3f}%")
+    print(f"Accuracy: {acc * 100:.4f}%")
     if unknowns:
         print(f"[WARNING] {unknowns} unknown predictions found.")
 
@@ -231,7 +176,7 @@ if __name__ == "__main__":
     args = build_args()
 
     # Load pre-trained model
-    ckpt_path, run_name = _resolve_checkpoint_path(args.model_path)
+    ckpt_path, run_name = _resolve_ckpt_path(args.model_path, args.model_version_index)
     print(f"Checkpoint: {ckpt_path}")
     model = load_model_for_eval(ckpt_path, load_llm_weights=False)
 
@@ -248,4 +193,4 @@ if __name__ == "__main__":
             file_name = f"{run_name}_{args.split}.json" if run_name else f"results_{args.split}.json"
     res_file = os.path.join("results", args.subset, file_name)
     acc = collect_result(results, res_file, args.subset)
-    print(f"[SUMMARY] subset={args.subset} accuracy={acc:.3f}")
+    print(f"[SUMMARY] subset={args.subset} accuracy={acc}")

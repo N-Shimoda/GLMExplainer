@@ -5,21 +5,46 @@ from typing import Any, Dict, List, Tuple
 import torch
 
 
-def add_graph_column(example, k: int = 4):
-    """question テキストからノード/エッジを抽出し、LPE 次元 k で PyG 辞書を付与する。"""
+def add_graph_column(example, k: int = 4) -> Dict[str, Any]:
+    """Enrich an example with graph metadata parsed from the question.
+
+    Parameters
+    ----------
+    example : Mapping[str, Any]
+        Input example containing at least ``question``, ``task_description``,
+        and ``answer`` fields.
+    k : int, default=4
+        Number of Laplacian positional embedding dimensions to include in the
+        generated graph features.
+
+    Returns
+    -------
+    dict
+        Updated example with ``prompt``, ``completion``, and ``graph`` keys.
+    """
     text = example["question"]
     nodes = extract_nodes_from_text(text)
     edges = extract_edges_from_text(text)
 
     example["prompt"] = example["task_description"]
-    example["completion"] = example["answer"].strip() + " "
+    example["completion"] = example["answer"].strip()
     example["graph"] = create_pyg_dict(nodes, edges, k=k)  # k: dimension of LPE
     return example
 
 
 def extract_nodes_from_text(text: str) -> List[int]:
-    """
-    Extracts a list of graph nodes from the given text.
+    """Parse node identifiers from a GraphQA-style question.
+
+    Parameters
+    ----------
+    text : str
+        Question text containing a clause that enumerates nodes.
+
+    Returns
+    -------
+    list of int
+        Ordered list of node IDs. Returns an empty list when no nodes are
+        found.
     """
     match = re.search(r"among nodes (.*?)\.", text, re.DOTALL)
     if match:
@@ -30,8 +55,18 @@ def extract_nodes_from_text(text: str) -> List[int]:
 
 
 def extract_edges_from_text(text: str) -> List[Tuple[int, int]]:
-    """
-    Extracts a list of graph edges from the given text.
+    """Parse edge pairs from a GraphQA-style question.
+
+    Parameters
+    ----------
+    text : str
+        Question text containing an edge enumeration clause.
+
+    Returns
+    -------
+    list of tuple of int
+        List of undirected edge pairs. Returns an empty list when no edges are
+        found.
     """
     # [Note] Added \s* between . and Q: to handle newlines and spaces
     match = re.search(r"The edges in G are: (.*?)\.\s*Q:", text, re.DOTALL)
@@ -72,10 +107,10 @@ def create_pyg_dict(nodes: List[int], edges: List[Tuple[int, int]], k: int) -> D
     """
     num_nodes = len(nodes)
 
-    # ノード ID -> 連番インデックス
+    # Map node IDs to consecutive indices.
     node_to_idx = {nid: i for i, nid in enumerate(nodes)}
 
-    # 隣接行列（無向）
+    # Build an undirected adjacency matrix.
     A = torch.zeros((num_nodes, num_nodes), dtype=torch.float)
     for u, v in edges:
         if u in node_to_idx and v in node_to_idx:
@@ -85,7 +120,7 @@ def create_pyg_dict(nodes: List[int], edges: List[Tuple[int, int]], k: int) -> D
             A[i, j] = 1.0
             A[j, i] = 1.0
 
-    # 正規化ラプラシアン L = I - D^{-1/2} A D^{-1/2}
+    # Normalized Laplacian L = I - D^{-1/2} A D^{-1/2}.
     if num_nodes == 0:
         x = torch.zeros((0, max(k, 0)), dtype=torch.float)
     else:
@@ -97,9 +132,9 @@ def create_pyg_dict(nodes: List[int], edges: List[Tuple[int, int]], k: int) -> D
         S = D_inv_sqrt @ A @ D_inv_sqrt
         eye = torch.eye(num_nodes, dtype=torch.float)
         L = eye - S
-        L = (L + L.T) / 2  # 数値的な対称化
+        L = (L + L.T) / 2  # Symmetrize numerically.
 
-        # 固有分解（昇順）。最小固有値（定数ベクトル）は除外
+        # Eigen decomposition (ascending); discard the trivial eigenvector.
         if k <= 0:
             x = torch.zeros((num_nodes, 0), dtype=torch.float)
         else:
@@ -109,7 +144,7 @@ def create_pyg_dict(nodes: List[int], edges: List[Tuple[int, int]], k: int) -> D
             if nontrivial > 0:
                 x[:, :nontrivial] = evecs[:, 1 : 1 + nontrivial]
 
-    # edge_index（連番インデックスで双方向に展開）
+    # Build bidirectional edge_index using consecutive indices.
     source_nodes: List[int] = []
     target_nodes: List[int] = []
     if edges:
