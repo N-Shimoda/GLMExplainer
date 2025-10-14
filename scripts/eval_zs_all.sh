@@ -11,7 +11,14 @@ LOGFILE="$LOG_DIR/eval_zs_all.log"
 
 cd "$FT_DIR"
 
-for subset in node_count edge_count cycle_check triangle_counting; do
+subsets=(
+	node_count
+	edge_count
+	cycle_check
+	triangle_counting
+)
+
+for subset in "${subsets[@]}"; do
 	echo "[INFO] $(date '+%Y-%m-%d %H:%M:%S') ${subset} started" >>"$LOGFILE"
 	torchrun --standalone --nproc_per_node=2 eval_ft.py --subset "$subset" \
 		--use-pretrained \

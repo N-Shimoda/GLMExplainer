@@ -22,7 +22,7 @@ log() {
 subsets=(
 	node_count
 	edge_count
-	# cycle_check
+	cycle_check
 	triangle_counting
 	# maximum_flow
 )

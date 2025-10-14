@@ -55,7 +55,7 @@ def build_args(*, multitask: bool = False):
     p.add_argument("--per-device-eval-batch-size", type=int, default=2)
     p.add_argument("--gradient-accumulation-steps", type=int, default=4)
     p.add_argument("--save-intermediate-models", action="store_true", help="Save intermediate models")
-    p.add_argument("--save-epoch-interval", type=int, default=1, help="Save every N epochs")
+    p.add_argument("--save-interval-epochs", type=int, default=1, help="Save every N epochs")
 
     # Logging
     p.add_argument("--wandb", action="store_true", help="Use wandb logging")
@@ -83,7 +83,7 @@ def build_args(*, multitask: bool = False):
         "learning_rate": args.lr,
         "gradient_accumulation_steps": args.gradient_accumulation_steps,
         "save_intermediate_models": args.save_intermediate_models,
-        "save_epoch_interval": args.save_epoch_interval,
+        "save_interval_epochs": args.save_interval_epochs,
     }
 
     # Remove overlapped args
@@ -260,14 +260,14 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
     steps_per_epoch = ceil(micro_batches_per_epoch / sft_args["gradient_accumulation_steps"])
 
     save_intermediate_models = sft_args.pop("save_intermediate_models")
-    save_epoch_interval = sft_args.pop("save_epoch_interval")
+    save_interval_epochs = sft_args.pop("save_interval_epochs")
 
     sft_config = SFTConfig(
         output_dir=output_dir,
         lr_scheduler_type="linear",
         logging_steps=10,
         save_strategy="steps" if save_intermediate_models else "no",
-        save_steps=steps_per_epoch * save_epoch_interval,
+        save_steps=steps_per_epoch * save_interval_epochs,
         bf16=True,
         optim="lion_32bit",
         report_to="wandb" if args.wandb else "none",

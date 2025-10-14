@@ -5,7 +5,7 @@ torchrun --nproc_per_node 2 train_multitask.py \
 	--gnn-hidden-dim 256 --gnn-out-dim 512 --num-gnn-layers 4 \
 	--num-proj-layers 1 \
 	--epochs 24 --lr 0.01 \
-	--save-intermediate-models --save-epoch-interval 12 \
+	--save-intermediate-models --save-interval-epochs 12 \
 	--wandb
 
 python eval_multitask.py --model-path outputs/multitask --num-trials 10

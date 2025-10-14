@@ -22,18 +22,18 @@ fi
 
 subsets=(
 	node_count
-	# edge_count
-	# cycle_check
-	# triangle_counting
+	edge_count
+	cycle_check
+	triangle_counting
 )
 
 BASE_ARGS=(
 	--base-model "Qwen/Qwen3-4B-Base"
-	--epochs 1 --lr 0.005
+	--epochs 3 --lr 0.005
 	--save-intermediate-models
-	--save-epoch-interval 3
+	--save-interval-epochs 3
 	--do-eval
-	# --wandb
+	--wandb
 )
 
 for subset in "${subsets[@]}"; do
