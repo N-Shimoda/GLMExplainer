@@ -21,7 +21,7 @@ fi
 
 BASE_ARGS=(
 	--base-model "Qwen/Qwen3-4B-Base"
-	--epochs 9
+	--epochs 3 --lr 0.005
 	--save-intermediate-models
 	--save-epoch-interval 3
 	--do-eval --wandb

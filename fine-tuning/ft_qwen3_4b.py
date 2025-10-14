@@ -6,6 +6,7 @@ Fine-tune Qwen/Qwen3-4B-Instruct-2507 on GraphQA with QLoRA (4bit).
 """
 
 import argparse
+import json
 import os
 import time
 from math import ceil
@@ -229,19 +230,6 @@ def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: d
     save_intermediate_models = sft_args.pop("save_intermediate_models")
     save_epoch_interval = sft_args.pop("save_epoch_interval")
 
-    world_size = int(os.environ.get("WORLD_SIZE", "1"))
-    micro_batches_per_epoch = ceil(len(train_ds) / sft_args["per_device_train_batch_size"] * world_size)
-    steps_per_epoch = ceil(micro_batches_per_epoch / sft_args["gradient_accumulation_steps"])
-    if is_main_process():
-        pprint(
-            {
-                "world_size": world_size,
-                "len(train_ds)": len(train_ds),
-                "micro_batches_per_epoch": micro_batches_per_epoch,
-                "steps_per_epoch": steps_per_epoch,
-            }
-        )
-
     # SFT configuration
     sft_cfg = SFTConfig(
         completion_only_loss=True,  # Exclude prompt tokens from loss (prompt-completion)
@@ -254,7 +242,7 @@ def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: d
         eval_steps=25,
         report_to="wandb" if args.wandb else "none",
         save_strategy="steps" if save_intermediate_models else "no",
-        save_steps=steps_per_epoch * save_epoch_interval,
+        save_steps=1,
         **sft_args,
         # Qwen3 ships with a chat template in the tokenizer so it is applied automatically
         # (Optionally set eos_token explicitly: SFTConfig(eos_token=tokenizer.eos_token))
@@ -268,12 +256,29 @@ def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: d
         eval_dataset=eval_ds,
     )
 
+    train_dataloader = trainer.get_train_dataloader()
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    micro_batches_per_epoch = len(train_dataloader)
+    steps_per_epoch = ceil(micro_batches_per_epoch / trainer.args.gradient_accumulation_steps)
+
+    if save_intermediate_models:
+        trainer.args.save_steps = steps_per_epoch * save_epoch_interval
+
+    if is_main_process():
+        print(
+            json.dumps(
+                {
+                    "world_size": world_size,
+                    "len(train_ds)": len(train_ds),
+                    "micro_batches_per_epoch": micro_batches_per_epoch,
+                    "steps_per_epoch": steps_per_epoch,
+                },
+                indent=4,
+            )
+        )
+
     # Training loop
     trainer.train()
-
-    # Save final model
-    final_step = trainer.state.global_step
-    trainer.save_model(os.path.join(output_dir, f"checkpoint-{final_step}"))
 
 
 if __name__ == "__main__":
