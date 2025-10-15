@@ -262,6 +262,9 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
     save_intermediate_models = sft_args.pop("save_intermediate_models")
     save_interval_epochs = sft_args.pop("save_interval_epochs")
 
+    if save_intermediate_models:
+        print(f"[INFO] Intermediate models will be saved every {save_interval_epochs} epochs.")
+
     sft_config = SFTConfig(
         output_dir=output_dir,
         lr_scheduler_type="linear",
@@ -274,6 +277,7 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
         completion_only_loss=True,
         remove_unused_columns=False,
         ddp_backend="nccl",  # DDP
+        ddp_find_unused_parameters=False,  # All parameters participate each forward pass
         **sft_args,
     )
 
@@ -289,6 +293,8 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
     if is_main_process():
         print("***** Training *****")
     trainer.train()
+
+    # Save the final model
     final_step = trainer.state.global_step
     final_ckpt_dir = os.path.join(output_dir, f"checkpoint-{final_step}")
     if is_main_process():

@@ -21,9 +21,9 @@ log() {
 
 subsets=(
 	node_count
-	edge_count
-	cycle_check
-	triangle_counting
+	# edge_count
+	# cycle_check
+	# triangle_counting
 	# maximum_flow
 )
 
@@ -36,8 +36,8 @@ for subset in "${subsets[@]}"; do
 		--num-graph-tokens 4 --node-feat-dim 8 --pos-emb-dim 8
 		--gnn-hidden-dim 256 --gnn-out-dim 512 --num-gnn-layers 4
 		--num-proj-layers 1
-		--epochs 3 --lr 0.01
-		--wandb # --do-eval
+		--epochs 1 --lr 0.01
+		--do-eval # --wandb
 	)
 	log "[START] ${cmd[*]}"
 	start_ts=$(date +%s)

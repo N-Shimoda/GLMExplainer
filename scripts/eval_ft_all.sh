@@ -13,9 +13,9 @@ cd "$FT_DIR"
 
 subsets=(
 	node_count
-	# edge_count
-	# cycle_check
-	# triangle_counting
+	edge_count
+	cycle_check
+	triangle_counting
 )
 
 for subset in "${subsets[@]}"; do
