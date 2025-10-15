@@ -2,23 +2,18 @@ import os
 from datetime import datetime
 
 import torch.distributed as dist
+from datasets import Dataset, concatenate_datasets, load_dataset
 
 import wandb
-from datasets import concatenate_datasets, load_dataset
 from eval import collect_result, eval_model
 from src.preprocess import add_graph_column
-from train import build_args, train_glm
+from train import build_args, is_main_process, train_glm
 
 # List of subsets targeted for joint training
 subsets = ["node_count", "edge_count", "cycle_check", "triangle_counting"]
 
 
-def is_main_process() -> bool:
-    # RANK=0 is the main process under torchrun/accelerate
-    return int(os.environ.get("RANK", "0")) == 0
-
-
-def build_dataset(node_feat_dim: int, do_eval: bool = False):
+def build_dataset(node_feat_dim: int, do_eval: bool = False) -> tuple[Dataset, Dataset, list[Dataset] | None]:
     """
     Load train_raw / eval_raw (/ test_raw) from the subsets defined in `subsets`,
     concatenate them, and return unified train_ds / eval_ds (/ test_ds).
@@ -26,6 +21,22 @@ def build_dataset(node_feat_dim: int, do_eval: bool = False):
     The legacy argument `subset` is kept for backward compatibility, but this function
     uses the contents of `subsets`. Since maximum_flow lacks a validation split, use
     the test split for eval.
+
+    Parameters
+    ----------
+    node_feat_dim : int
+        Dimension of node features to be added.
+    do_eval : bool, optional
+        Whether to load test datasets for evaluation, by default False.
+
+    Returns
+    -------
+    train_ds : Dataset
+        Combined training dataset.
+    eval_ds : Dataset
+        Combined evaluation dataset.
+    test_ds_list : list[Dataset] | None
+        List of test datasets for each subset, or None if do_eval is False.
     """
 
     def modify_dataset(example):
