@@ -29,16 +29,17 @@ subsets=(
 
 BASE_ARGS=(
 	--base-model "Qwen/Qwen3-4B-Base"
-	--epochs 3 --lr 0.005
+	--epochs 4 --lr 1.5e-4
 	--save-intermediate-models
-	--save-interval-epochs 3
-	--do-eval
-	--wandb
+	--save-interval-epochs 2
+	--do-eval --wandb
 )
 
 for subset in "${subsets[@]}"; do
 	echo
 	start_time=$(date +%s)
+	echo "[$(date "+%Y-%m-%d %H:%M:%S")] [INFO] Starting fine-tuning for $subset" >>"$LOG_FILE"
+
 	if "$ACCELERATE_BIN" launch --config_file "$ACCELERATE_CONFIG" ft_qwen3_4b.py "${BASE_ARGS[@]}" --subset "$subset"; then
 		status=0
 	else
