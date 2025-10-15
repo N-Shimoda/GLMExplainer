@@ -20,3 +20,6 @@ class PerplexityCallback(TrainerCallback):
             except (OverflowError, ValueError):
                 metrics["eval_ppl"] = float("inf")
         # No need to return metrics here; it's updated by reference and recorded by Trainer as-is.
+
+
+__all__ = ["PerplexityCallback"]
