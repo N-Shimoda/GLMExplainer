@@ -27,7 +27,7 @@ def add_graph_column(example, k: int = 4) -> Dict[str, Any]:
     edges = extract_edges_from_text(text)
 
     example["prompt"] = example["task_description"]
-    example["completion"] = example["answer"].strip()
+    example["completion"] = example["answer"].strip() + " "
     example["graph"] = create_pyg_dict(nodes, edges, k=k)  # k: dimension of LPE
     return example
 
