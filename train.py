@@ -293,7 +293,7 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
         completion_only_loss=True,
         remove_unused_columns=False,
         ddp_backend="nccl",  # DDP
-        ddp_find_unused_parameters=False,  # All parameters participate each forward pass
+        # ddp_find_unused_parameters=False,  # All parameters participate each forward pass
         **sft_args,
     )
 

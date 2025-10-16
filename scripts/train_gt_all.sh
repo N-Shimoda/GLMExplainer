@@ -21,23 +21,22 @@ log() {
 
 subsets=(
 	node_count
-	# edge_count
-	# cycle_check
-	# triangle_counting
-	# maximum_flow
+	edge_count
+	cycle_check
+	triangle_counting
 )
 
 for subset in "${subsets[@]}"; do
 	cmd=(
 		torchrun --nproc_per_node=2 train.py --subset "${subset}"
-		--use-custom-dataset
+		# --use-custom-dataset
 		--base-model "Qwen/Qwen3-4B-Base"
 		--gnn-type "GCN"
 		--num-graph-tokens 4 --node-feat-dim 8 --pos-emb-dim 8
 		--gnn-hidden-dim 256 --gnn-out-dim 512 --num-gnn-layers 4
 		--num-proj-layers 1
-		--epochs 1 --lr 0.01
-		--do-eval # --wandb
+		--epochs 12 --lr 0.01
+		--do-eval --wandb
 	)
 	log "[START] ${cmd[*]}"
 	start_ts=$(date +%s)

@@ -1,13 +1,17 @@
+import sys
+from pathlib import Path
 from pprint import pprint
 
 import torch
 from transformers import AutoTokenizer, GenerationConfig
 
-from src.glm import GraphTokenLM
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from src.glm import GraphTokenLM  # noqa: E402
 
-ckpt_path = "outputs/edge_count/0924-1525/checkpoint-189"
+ckpt_path = "outputs/cycle_check/1016-1200/checkpoint-189"
 model = GraphTokenLM.from_pretrained(ckpt_path)
 model.eval()
+print(model)
 tokenizer = AutoTokenizer.from_pretrained(ckpt_path)
 
 # text = ["My name is Naoki Shimoda. Nice to see you." for _ in range(4)]

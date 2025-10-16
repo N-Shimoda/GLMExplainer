@@ -8,6 +8,7 @@ __pycache__/
 outputs/
 results/
 fig/
+ds_debug/
 
 # Fine-tuning
 fine-tuning/qwen3-4b-*/
