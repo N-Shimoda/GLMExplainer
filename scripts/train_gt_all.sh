@@ -37,6 +37,7 @@ for subset in "${subsets[@]}"; do
 		--epochs 6
 		# --optim "lion" --lr 0.01
 		--optim "adamw" --lr 0.001 --weight-decay 0.01
+		--lr-scheduler-type "cosine" --warmup-ratio 0.05
 		--do-eval --wandb
 	)
 	log "[START] ${cmd[*]}"

@@ -60,6 +60,8 @@ def build_args(*, multitask: bool = False):
         help="Optimizer to use for SFT training.",
     )
     p.add_argument("--weight-decay", type=float, default=0.0)
+    p.add_argument("--lr-scheduler-type", type=str, choices=["linear", "cosine"], default="linear")
+    p.add_argument("--warmup-ratio", type=float, default=0.1)
     p.add_argument("--per-device-train-batch-size", type=int, default=2)
     p.add_argument("--per-device-eval-batch-size", type=int, default=2)
     p.add_argument("--gradient-accumulation-steps", type=int, default=4)
@@ -91,13 +93,14 @@ def build_args(*, multitask: bool = False):
         "num_train_epochs": args.epochs,
         "learning_rate": args.lr,
         "optim": args.optim,
+        "lr_scheduler_type": args.lr_scheduler_type,
+        "warmup_ratio": args.warmup_ratio,
         "gradient_accumulation_steps": args.gradient_accumulation_steps,
         "save_intermediate_models": args.save_intermediate_models,
         "save_interval_epochs": args.save_interval_epochs,
     }
     if args.optim in ["adamw"]:
         sft_args["weight_decay"] = args.weight_decay
-        print(f"[INFO] Using --weight-decay {args.weight_decay} with --optim {args.optim}.")
     elif args.weight_decay > 0:
         print(f"[WARNING] --weight-decay is ignored when --optim {args.optim} is used.")
 
@@ -305,18 +308,17 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
     }
 
     sft_config = SFTConfig(
+        optim=hf_optim_map[optim_choice],
+        completion_only_loss=True,
+        bf16=True,
         output_dir=output_dir,
-        lr_scheduler_type="linear",
         logging_steps=10,
         save_strategy="steps" if save_intermediate_models else "no",
         save_steps=steps_per_epoch * save_interval_epochs,
-        bf16=True,
         report_to="wandb" if args.wandb else "none",
-        completion_only_loss=True,
         remove_unused_columns=False,
         ddp_backend="nccl",  # DDP
         ddp_find_unused_parameters=False,  # since all params are used in each forward pass
-        optim=hf_optim_map[optim_choice],
         **sft_args,
     )
 
