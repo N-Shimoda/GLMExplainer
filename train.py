@@ -7,6 +7,7 @@ import torch.distributed as dist
 from datasets import load_dataset
 from datasets.arrow_dataset import Dataset
 from transformers import AutoTokenizer
+from transformers.trainer_utils import set_seed
 from trl import SFTConfig, SFTTrainer
 
 import wandb
@@ -147,7 +148,7 @@ def build_dataset(
         os.makedirs(out_dir, exist_ok=True)
         train_ds.to_json(os.path.join(out_dir, "train.jsonl"), orient="records", lines=True)
         eval_ds.to_json(os.path.join(out_dir, "eval.jsonl"), orient="records", lines=True)
-        if do_eval and test_ds is not None:
+        if do_eval:
             test_ds.to_json(os.path.join(out_dir, "test.jsonl"), orient="records", lines=True)
 
     # Sync processes if running with DDP
@@ -278,7 +279,7 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
     save_intermediate_models = sft_args.pop("save_intermediate_models")
     save_interval_epochs = sft_args.pop("save_interval_epochs")
 
-    if save_intermediate_models:
+    if save_intermediate_models and is_main_process():
         print(f"[INFO] Intermediate models will be saved every {save_interval_epochs} epochs.")
 
     sft_config = SFTConfig(
@@ -293,7 +294,7 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
         completion_only_loss=True,
         remove_unused_columns=False,
         ddp_backend="nccl",  # DDP
-        # ddp_find_unused_parameters=False,  # All parameters participate each forward pass
+        ddp_find_unused_parameters=False,  # All parameters participate each forward pass
         **sft_args,
     )
 
@@ -314,7 +315,8 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
     final_step = trainer.state.global_step
     final_ckpt_dir = os.path.join(output_dir, f"checkpoint-{final_step}")
     if is_main_process():
-        trainer.save_model(final_ckpt_dir)
+        if not save_intermediate_models:
+            trainer.save_model(final_ckpt_dir)
         trainer.save_state()
         print("***** Done *****")
 
@@ -354,12 +356,15 @@ if __name__ == "__main__":
     if is_main_process():
         print(f"Subset: {args.subset}")
 
+    # Wandb initialization, output directory
     date_str = datetime.now().strftime("%m%d-%H%M")
     run_name = f"{args.subset}_{date_str}"
     output_dir = os.path.join("outputs", args.subset, date_str)
-
     if args.wandb and is_main_process():
         wandb.init(project=args.wandb_project, name=run_name)
+
+    # Fix seed for reproducibility
+    set_seed(42)
 
     # Training
     if args.use_custom_dataset:
