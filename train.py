@@ -61,7 +61,7 @@ def build_args(*, multitask: bool = False):
     )
     p.add_argument("--weight-decay", type=float, default=0.0)
     p.add_argument("--lr-scheduler-type", type=str, choices=["linear", "cosine"], default="linear")
-    p.add_argument("--warmup-ratio", type=float, default=0.1)
+    p.add_argument("--warmup-ratio", type=float, default=0)
     p.add_argument("--per-device-train-batch-size", type=int, default=2)
     p.add_argument("--per-device-eval-batch-size", type=int, default=2)
     p.add_argument("--gradient-accumulation-steps", type=int, default=4)
@@ -312,6 +312,8 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
         completion_only_loss=True,
         bf16=True,
         output_dir=output_dir,
+        eval_strategy="steps",
+        eval_steps=100,
         logging_steps=10,
         save_strategy="steps" if save_intermediate_models else "no",
         save_steps=steps_per_epoch * save_interval_epochs,
