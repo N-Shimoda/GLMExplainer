@@ -65,7 +65,6 @@ subsets=(
 	edge_count
 	cycle_check
 	triangle_counting
-	# maximum_flow
 )
 
 for subset in "${subsets[@]}"; do
@@ -73,7 +72,7 @@ for subset in "${subsets[@]}"; do
 		python eval.py --subset "${subset}"
 		--model-path "outputs/${subset}"
 		--split "${SPLIT}"
-		--batch-size 8
+		--batch-size 64
 		--num-trials 10
 		--model-version-index -1
 	)

@@ -158,8 +158,9 @@ def collect_result(results: list[dict], res_file: str, subset: str):
     subset : str
         The subset name used for accuracy computation.
     """
+
     def _prepare_refs(refs: list[str], subset_name: str) -> list[str]:
-        if subset_name in {"edge_count", "node_count", "triangle_counting", "maximum_flow"}:
+        if subset_name in {"edge_count", "node_count", "triangle_counting"}:
             cleaned = []
             for ref in refs:
                 matches = re.findall(r"\d+", ref)
