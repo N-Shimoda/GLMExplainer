@@ -321,6 +321,34 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
     return model, final_ckpt_dir
 
 
+def eval_ddp(model, subset: str, test_ds: Dataset, date_str: str, use_wandb: bool):
+    if dist.is_initialized():
+        dist.barrier()
+        world_size = dist.get_world_size()
+        rank = dist.get_rank()
+        local_test_ds = test_ds.shard(num_shards=world_size, index=rank)
+    else:
+        world_size = 1
+        rank = 0
+        local_test_ds = test_ds
+
+    # Evaluate on the shard assigned to this rank.
+    local_results = eval_model(model, local_test_ds, batch_size=8, subset=subset)
+
+    if dist.is_initialized():
+        gathered_results = [None] * world_size
+        dist.all_gather_object(gathered_results, local_results)
+        results = [item for sublist in gathered_results for item in sublist] if rank == 0 else None
+    else:
+        results = local_results
+
+    if is_main_process():
+        res_file = os.path.join("results", subset, f"{date_str}.json")
+        acc = collect_result(results, res_file, subset)
+        if use_wandb:
+            wandb.log({"test_acc": acc})
+
+
 if __name__ == "__main__":
     glm_args, sft_args, args = build_args()
     if is_main_process():
@@ -355,32 +383,7 @@ if __name__ == "__main__":
     if args.do_eval and test_ds is not None:
         if is_main_process():
             print("***** Evaluation *****")
-
-        if dist.is_initialized():
-            dist.barrier()
-            world_size = dist.get_world_size()
-            rank = dist.get_rank()
-            local_test_ds = test_ds.shard(num_shards=world_size, index=rank)
-        else:
-            world_size = 1
-            rank = 0
-            local_test_ds = test_ds
-
-        # Evaluate on the shard assigned to this rank.
-        local_results = eval_model(model, local_test_ds, batch_size=8, subset=args.subset)
-
-        if dist.is_initialized():
-            gathered_results = [None] * world_size
-            dist.all_gather_object(gathered_results, local_results)
-            results = [item for sublist in gathered_results for item in sublist] if rank == 0 else None
-        else:
-            results = local_results
-
-        if is_main_process():
-            res_file = os.path.join("results", args.subset, f"{date_str}.json")
-            acc = collect_result(results, res_file, args.subset)
-            if args.wandb:
-                wandb.log({"test_acc": acc})
+        eval_ddp(model, args.subset, test_ds, date_str, args.wandb)
 
     if dist.is_initialized():
         dist.destroy_process_group()
