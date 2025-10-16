@@ -33,23 +33,6 @@ class GraphTokenLMConfig(PretrainedConfig):
         tie_word_embeddings=True,
         **kwargs,
     ):
-        legacy_llm_name = kwargs.pop("llm_name", None)
-        legacy_node_pos_emb_dim = kwargs.pop("node_pos_emb_dim", None)
-        legacy_node_pos_dim = kwargs.pop("node_pos_dim", None)
-        legacy_gnn_hidden = kwargs.pop("gnn_hidden", None)
-        legacy_gnn_out = kwargs.pop("gnn_out", None)
-
-        if legacy_llm_name is not None:
-            base_model = legacy_llm_name
-        if legacy_node_pos_emb_dim is not None:
-            pos_emb_dim = legacy_node_pos_emb_dim
-        elif legacy_node_pos_dim is not None:
-            pos_emb_dim = legacy_node_pos_dim
-        if legacy_gnn_hidden is not None:
-            gnn_hidden_dim = legacy_gnn_hidden
-        if legacy_gnn_out is not None:
-            gnn_out_dim = legacy_gnn_out
-
         self.base_model = base_model
         self.llm_name = base_model  # backward compatibility
         self.gnn_type = gnn_type
