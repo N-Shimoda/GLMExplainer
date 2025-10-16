@@ -94,7 +94,9 @@ def build_args(*, multitask: bool = False):
     return glm_args, sft_args, args
 
 
-def build_dataset(subset: str, node_feat_dim: int, do_eval: bool = False) -> tuple[Dataset, Dataset, Dataset | None]:
+def build_dataset(
+    subset: str, node_feat_dim: int, do_eval: bool = False, load_from_cache_file: bool = True
+) -> tuple[Dataset, Dataset, Dataset | None]:
     """Build dataset for training and evaluation.
 
     Parameters
@@ -105,6 +107,8 @@ def build_dataset(subset: str, node_feat_dim: int, do_eval: bool = False) -> tup
         Dimensionality of node features (k in Laplacian PE).
     do_eval : bool, default=False
         Whether to prepare the test dataset for evaluation.
+    load_from_cache_file : bool, default=True
+        Whether to load from cache file if available.
 
     Returns
     -------
@@ -121,20 +125,34 @@ def build_dataset(subset: str, node_feat_dim: int, do_eval: bool = False) -> tup
 
     cols = ["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"]
 
-    train_raw = load_dataset("baharef/GraphQA", subset, split="zero_shot_train")
-    eval_raw = load_dataset(
-        "baharef/GraphQA",
-        subset,
-        split="zero_shot_validation" if subset != "maximum_flow" else "zero_shot_test",
-    )
-    train_ds = train_raw.map(modify_dataset, remove_columns=cols, desc="Preprocessing train")
-    eval_ds = eval_raw.map(modify_dataset, remove_columns=cols, desc="Preprocessing eval")
-
+    splits = {"train": "zero_shot_train", "validation": "zero_shot_validation"}
     if do_eval:
-        test_raw = load_dataset("baharef/GraphQA", subset, split="zero_shot_test")
-        test_ds = test_raw.map(modify_dataset, remove_columns=cols, desc="Preprocessing test")
-    else:
-        test_ds = None
+        splits["test"] = "zero_shot_test"
+
+    raw_ds = load_dataset("baharef/GraphQA", subset, split=splits)
+    processed_ds = raw_ds.map(
+        modify_dataset,
+        remove_columns=cols,
+        load_from_cache_file=load_from_cache_file,
+        desc="Preprocessing dataset",
+    )
+
+    train_ds = processed_ds["train"]
+    eval_ds = processed_ds["validation"]
+    test_ds = processed_ds["test"] if do_eval else None
+
+    # Save datasets locally as JSONL (only on the main process to avoid races)
+    out_dir = os.path.join("ds_debug", subset)
+    if is_main_process():
+        os.makedirs(out_dir, exist_ok=True)
+        train_ds.to_json(os.path.join(out_dir, "train.jsonl"), orient="records", lines=True)
+        eval_ds.to_json(os.path.join(out_dir, "eval.jsonl"), orient="records", lines=True)
+        if do_eval and test_ds is not None:
+            test_ds.to_json(os.path.join(out_dir, "test.jsonl"), orient="records", lines=True)
+
+    # Sync processes if running with DDP
+    if dist.is_available() and dist.is_initialized():
+        dist.barrier()
 
     return train_ds, eval_ds, test_ds
 
@@ -242,11 +260,9 @@ def build_custom_dataset(
 def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
     glm_cfg = GraphTokenLMConfig(**glm_args)
     model = GraphTokenLM(glm_cfg)
-    if is_main_process():
-        print(model)
-
     tokenizer = AutoTokenizer.from_pretrained(glm_cfg.base_model, trust_remote_code=True)
     if tokenizer.pad_token is None:
+        print("[INFO] Explicitly setting pad_token to eos_token")
         tokenizer.pad_token = tokenizer.eos_token
 
     collator = GraphQACollator(
@@ -302,7 +318,7 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
         trainer.save_state()
         print("***** Done *****")
 
-    return final_ckpt_dir
+    return model, final_ckpt_dir
 
 
 if __name__ == "__main__":
@@ -331,18 +347,40 @@ if __name__ == "__main__":
             args.subset,
             glm_args["node_feat_dim"],
             do_eval=args.do_eval,
+            load_from_cache_file=False,
         )
-    ckpt_path = train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args)
+    model, ckpt_path = train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args)
 
     # Quick evaluation with 1 trial
-    if is_main_process() and args.do_eval:
-        print("***** Evaluation *****")
-        model = GraphTokenLM.from_pretrained(ckpt_path)
-        results = eval_model(model, test_ds, batch_size=8, subset=args.subset)
-        res_file = os.path.join("results", args.subset, f"{date_str}.json")
-        acc = collect_result(results, res_file, args.subset)
-        if args.wandb:
-            wandb.log({"test_acc": acc})
+    if args.do_eval and test_ds is not None:
+        if is_main_process():
+            print("***** Evaluation *****")
+
+        if dist.is_initialized():
+            dist.barrier()
+            world_size = dist.get_world_size()
+            rank = dist.get_rank()
+            local_test_ds = test_ds.shard(num_shards=world_size, index=rank)
+        else:
+            world_size = 1
+            rank = 0
+            local_test_ds = test_ds
+
+        # Evaluate on the shard assigned to this rank.
+        local_results = eval_model(model, local_test_ds, batch_size=8, subset=args.subset)
+
+        if dist.is_initialized():
+            gathered_results = [None] * world_size
+            dist.all_gather_object(gathered_results, local_results)
+            results = [item for sublist in gathered_results for item in sublist] if rank == 0 else None
+        else:
+            results = local_results
+
+        if is_main_process():
+            res_file = os.path.join("results", args.subset, f"{date_str}.json")
+            acc = collect_result(results, res_file, args.subset)
+            if args.wandb:
+                wandb.log({"test_acc": acc})
 
     if dist.is_initialized():
         dist.destroy_process_group()
