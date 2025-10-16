@@ -52,6 +52,14 @@ def build_args(*, multitask: bool = False):
     # Training parameters
     p.add_argument("--epochs", type=int, default=3)
     p.add_argument("--lr", type=float, default=0.01)
+    p.add_argument(
+        "--optim",
+        type=str,
+        choices=["lion", "adamw", "adafactor"],
+        default="lion",
+        help="Optimizer to use for SFT training.",
+    )
+    p.add_argument("--weight-decay", type=float, default=0.0)
     p.add_argument("--per-device-train-batch-size", type=int, default=2)
     p.add_argument("--per-device-eval-batch-size", type=int, default=2)
     p.add_argument("--gradient-accumulation-steps", type=int, default=4)
@@ -82,10 +90,16 @@ def build_args(*, multitask: bool = False):
         "per_device_eval_batch_size": args.per_device_eval_batch_size,
         "num_train_epochs": args.epochs,
         "learning_rate": args.lr,
+        "optim": args.optim,
         "gradient_accumulation_steps": args.gradient_accumulation_steps,
         "save_intermediate_models": args.save_intermediate_models,
         "save_interval_epochs": args.save_interval_epochs,
     }
+    if args.optim in ["adamw"]:
+        sft_args["weight_decay"] = args.weight_decay
+        print(f"[INFO] Using --weight-decay {args.weight_decay} with --optim {args.optim}.")
+    elif args.weight_decay > 0:
+        print(f"[WARNING] --weight-decay is ignored when --optim {args.optim} is used.")
 
     # Remove overlapped args
     for attr in [*glm_args.keys(), *sft_args.keys(), "epochs", "lr"]:
@@ -278,9 +292,17 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
 
     save_intermediate_models = sft_args.pop("save_intermediate_models")
     save_interval_epochs = sft_args.pop("save_interval_epochs")
+    optim_choice = sft_args.pop("optim")
 
     if save_intermediate_models and is_main_process():
         print(f"[INFO] Intermediate models will be saved every {save_interval_epochs} epochs.")
+
+    # Map CLI choices to HF/TRL optimizer identifiers
+    hf_optim_map = {
+        "lion": "lion_32bit",
+        "adamw": "adamw_torch",
+        "adafactor": "adafactor",
+    }
 
     sft_config = SFTConfig(
         output_dir=output_dir,
@@ -289,12 +311,12 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
         save_strategy="steps" if save_intermediate_models else "no",
         save_steps=steps_per_epoch * save_interval_epochs,
         bf16=True,
-        optim="lion_32bit",
         report_to="wandb" if args.wandb else "none",
         completion_only_loss=True,
         remove_unused_columns=False,
         ddp_backend="nccl",  # DDP
-        ddp_find_unused_parameters=False,  # All parameters participate each forward pass
+        ddp_find_unused_parameters=False,  # since all params are used in each forward pass
+        optim=hf_optim_map[optim_choice],
         **sft_args,
     )
 
