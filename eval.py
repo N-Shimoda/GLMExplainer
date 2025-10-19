@@ -112,7 +112,7 @@ def eval_model(model: GraphTokenLM, test_ds, batch_size: int, subset: str) -> li
     tokenizer = AutoTokenizer.from_pretrained(model.config.base_model)
 
     # max_new_token_dict = {"node_count": 64, "edge_count": 256, "cycle_check": 8, "triangle_counting": 512}
-    max_new_token_dict = {"node_count": 8, "edge_count": 8, "cycle_check": 12, "triangle_counting": 8}
+    max_new_token_dict = {"node_count": 4, "edge_count": 4, "cycle_check": 8, "triangle_counting": 4}
     gen_cfg = GenerationConfig(
         max_new_tokens=max_new_token_dict.get(subset, 6),
         do_sample=True,
