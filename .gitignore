@@ -6,6 +6,7 @@ __pycache__/
 
 # GraphToken
 outputs/
+masters/
 results/
 fig/
 ds_debug/
