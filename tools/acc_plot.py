@@ -9,10 +9,12 @@ import numpy as np
 
 
 def build_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--data", type=str, choices=["gnn", "node-feat", "multitask"], default="gnn")
-    parser.add_argument("--show-title", action="store_true", help="Whether to show the title on the plot")
-    return parser.parse_args()
+    p = argparse.ArgumentParser()
+    p.add_argument("--data", type=str, choices=["gnn", "node-feat", "multitask"], default="gnn")
+    p.add_argument("--show-title", action="store_true", help="Whether to show the title on the plot")
+    p.add_argument("--svg", action="store_true", help="Whether to save the figure as SVG instead of PDF")
+
+    return p.parse_args()
 
 
 args = build_args()
@@ -135,7 +137,8 @@ plt.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.6)
 plt.tight_layout()
 
 # Save and show
-output_path = f"fig/acc_{args.data}.pdf"
+ext = "svg" if args.svg else "pdf"
+output_path = f"fig/acc_{args.data}.{ext}"
 os.makedirs("fig", exist_ok=True)
 plt.savefig(output_path, bbox_inches="tight", dpi=480)
 print(f"Saved grouped bar chart to {output_path}")
