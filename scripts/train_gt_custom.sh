@@ -7,7 +7,7 @@ cd "$ROOT_DIR"
 
 LOG_DIR="$ROOT_DIR/logs"
 mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/train_gt_all.log"
+LOG_FILE="$LOG_DIR/train_gt_custom.log"
 
 # Remove existing log file
 rm -f "$LOG_FILE"
