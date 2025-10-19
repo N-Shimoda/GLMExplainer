@@ -113,7 +113,7 @@ def build_dataset(subset: str, split: str, node_feat_dim: int):
 
 def get_max_new_tokens(subset: str, use_custom: bool = False) -> int:
     max_new_tokens_dict = (
-        {"node_count": 64, "edge_count": 256, "cycle_check": 512, "triangle_counting": 256}
+        {"node_count": 96, "edge_count": 256, "cycle_check": 512, "triangle_counting": 256}
         if use_custom
         else {"node_count": 4, "edge_count": 4, "cycle_check": 8, "triangle_counting": 4}
     )
@@ -170,20 +170,6 @@ def collect_result(results: list[dict], res_file: str, subset: str):
     subset : str
         The subset name used for accuracy computation.
     """
-
-    # def _prepare_refs(refs: list[str], subset_name: str) -> list[str]:
-    #     if subset_name in {"edge_count", "node_count", "triangle_counting"}:
-    #         cleaned = []
-    #         for ref in refs:
-    #             matches = re.findall(r"\d+", ref)
-    #             cleaned.append(matches[-1] if matches else ref)
-    #         return cleaned
-    #     return refs
-
-    # refs = _prepare_refs([r["answer"] for r in results], subset)
-    # Compute accuracy
-    # acc, unknowns = comp_accuracy([r["preds"] for r in results], refs, subset)
-
     refs = [r["answer"] for r in results]
     acc, unknowns = comp_accuracy([r["preds"] for r in results], refs, subset)
     print(f"Accuracy: {acc * 100:.4f}%")

@@ -20,7 +20,7 @@ log() {
 }
 
 subsets=(
-	# node_count
+	node_count
 	edge_count
 	# cycle_check
 	# triangle_counting
@@ -34,7 +34,7 @@ for subset in "${subsets[@]}"; do
 		--gnn-type "GCN"
 		--num-graph-tokens 4 --node-feat-dim 8 --pos-emb-dim 8
 		--gnn-hidden-dim 256 --gnn-out-dim 512 --num-gnn-layers 4
-		--num-proj-layers 1
+		--num-proj-layers 2
 		--epochs 3
 		--optim "lion" --lr 0.01
 		--lr-scheduler-type "linear" --warmup-ratio 0.05
