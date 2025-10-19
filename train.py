@@ -159,15 +159,6 @@ def build_dataset(
     eval_ds = processed_ds["validation"]
     test_ds = processed_ds["test"] if do_eval else None
 
-    # Save datasets locally as JSONL (only on the main process to avoid races)
-    out_dir = os.path.join("ds_debug", subset)
-    if is_main_process():
-        os.makedirs(out_dir, exist_ok=True)
-        train_ds.to_json(os.path.join(out_dir, "train.jsonl"), orient="records", lines=True)
-        eval_ds.to_json(os.path.join(out_dir, "eval.jsonl"), orient="records", lines=True)
-        if do_eval:
-            test_ds.to_json(os.path.join(out_dir, "test.jsonl"), orient="records", lines=True)
-
     # Sync processes if running with DDP
     if dist.is_available() and dist.is_initialized():
         dist.barrier()
@@ -275,6 +266,17 @@ def build_custom_dataset(
     return ds_dict["train"], ds_dict["validation"], ds_dict["test"] if do_eval else None
 
 
+def get_max_new_tokens(subset: str, use_custom: bool = False) -> int:
+    max_new_tokens_dict = (
+        {"edge_count": 256}
+        if use_custom
+        else {"node_count": 4, "edge_count": 4, "cycle_check": 8, "triangle_counting": 4}
+    )
+    if subset not in max_new_tokens_dict:
+        raise NotImplementedError(f"Max new tokens for subset {subset} is not defined.")
+    return max_new_tokens_dict[subset]
+
+
 def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
     glm_cfg = GraphTokenLMConfig(**glm_args)
     model = GraphTokenLM(glm_cfg)
@@ -349,7 +351,7 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
     return model, final_ckpt_dir
 
 
-def eval_ddp(model, subset: str, test_ds: Dataset, date_str: str, use_wandb: bool):
+def eval_ddp(model, subset: str, test_ds: Dataset, max_new_tokens: int, date_str: str, use_wandb: bool):
     if dist.is_initialized():
         dist.barrier()
         world_size = dist.get_world_size()
@@ -361,7 +363,8 @@ def eval_ddp(model, subset: str, test_ds: Dataset, date_str: str, use_wandb: boo
         local_test_ds = test_ds
 
     # Evaluate on the shard assigned to this rank.
-    local_results = eval_model(model, local_test_ds, batch_size=8, subset=subset)
+    print("Max_new_tokens:", max_new_tokens)
+    local_results = eval_model(model, local_test_ds, batch_size=8, max_new_tokens=max_new_tokens)
 
     if dist.is_initialized():
         gathered_results = [None] * world_size
@@ -408,13 +411,23 @@ if __name__ == "__main__":
             do_eval=args.do_eval,
             load_from_cache_file=False,
         )
+    # Save datasets locally as JSONL (only on the main process to avoid races)
+    out_dir = os.path.join("ds_debug", args.subset)
+    if is_main_process():
+        os.makedirs(out_dir, exist_ok=True)
+        train_ds.to_json(os.path.join(out_dir, "train.jsonl"), orient="records", lines=True)
+        eval_ds.to_json(os.path.join(out_dir, "eval.jsonl"), orient="records", lines=True)
+        if args.do_eval:
+            test_ds.to_json(os.path.join(out_dir, "test.jsonl"), orient="records", lines=True)
+
     model, ckpt_path = train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args)
 
     # Quick evaluation with 1 trial
     if args.do_eval and test_ds is not None:
         if is_main_process():
             print("***** Evaluation *****")
-        eval_ddp(model, args.subset, test_ds, date_str, args.wandb)
+        max_new_tokens = get_max_new_tokens(args.subset, args.use_custom_dataset)
+        eval_ddp(model, args.subset, test_ds, max_new_tokens, date_str, args.wandb)
 
     if dist.is_initialized():
         dist.destroy_process_group()

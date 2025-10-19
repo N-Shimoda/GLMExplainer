@@ -1,7 +1,6 @@
 import argparse
 import json
 import os
-import re
 from math import ceil
 
 import torch
@@ -33,6 +32,7 @@ def build_args(*, multitask: bool = False):
     p.add_argument("--num-trials", type=int, default=1)
     p.add_argument("--split", choices=["train", "validation", "test"], default="test")
     p.add_argument("--batch-size", type=int, default=64)
+    p.add_argument("--max-new-tokens", type=int)
 
     return p.parse_args()
 
@@ -107,14 +107,13 @@ def build_dataset(subset: str, split: str, node_feat_dim: int):
 
 
 @torch.no_grad()
-def eval_model(model: GraphTokenLM, test_ds, batch_size: int, subset: str) -> list[dict]:
+def eval_model(model: GraphTokenLM, test_ds, batch_size: int, max_new_tokens: int) -> list[dict]:
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(model.config.base_model)
 
     # max_new_token_dict = {"node_count": 64, "edge_count": 256, "cycle_check": 8, "triangle_counting": 512}
-    max_new_token_dict = {"node_count": 4, "edge_count": 4, "cycle_check": 8, "triangle_counting": 4}
     gen_cfg = GenerationConfig(
-        max_new_tokens=max_new_token_dict.get(subset, 6),
+        max_new_tokens=max_new_tokens,
         do_sample=True,
         eos_token_id=tokenizer.eos_token_id,
         pad_token_id=tokenizer.eos_token_id,
@@ -160,18 +159,20 @@ def collect_result(results: list[dict], res_file: str, subset: str):
         The subset name used for accuracy computation.
     """
 
-    def _prepare_refs(refs: list[str], subset_name: str) -> list[str]:
-        if subset_name in {"edge_count", "node_count", "triangle_counting"}:
-            cleaned = []
-            for ref in refs:
-                matches = re.findall(r"\d+", ref)
-                cleaned.append(matches[-1] if matches else ref)
-            return cleaned
-        return refs
+    # def _prepare_refs(refs: list[str], subset_name: str) -> list[str]:
+    #     if subset_name in {"edge_count", "node_count", "triangle_counting"}:
+    #         cleaned = []
+    #         for ref in refs:
+    #             matches = re.findall(r"\d+", ref)
+    #             cleaned.append(matches[-1] if matches else ref)
+    #         return cleaned
+    #     return refs
 
-    refs = _prepare_refs([r["answer"] for r in results], subset)
+    # refs = _prepare_refs([r["answer"] for r in results], subset)
     # Compute accuracy
-    acc, unknowns = comp_accuracy([r["preds"] for r in results], refs, subset)
+    # acc, unknowns = comp_accuracy([r["preds"] for r in results], refs, subset)
+
+    acc, unknowns = comp_accuracy([r["preds"] for r in results], results["answer"], subset)
     print(f"Accuracy: {acc * 100:.4f}%")
     if unknowns:
         print(f"[WARNING] {unknowns} unknown predictions found.")
@@ -197,7 +198,12 @@ if __name__ == "__main__":
     test_ds = build_dataset(args.subset, args.split, model.config.node_feat_dim)
     repeated_ds = concatenate_datasets([test_ds] * args.num_trials)
 
-    results = eval_model(model, repeated_ds, args.batch_size, args.subset)
+    max_new_tokens = (
+        args.max_new_tokens
+        or {"node_count": 4, "edge_count": 4, "cycle_check": 8, "triangle_counting": 4}[args.subset]
+    )
+    print(max_new_tokens)
+    results = eval_model(model, repeated_ds, args.batch_size, max_new_tokens)
     match args.split:
         case "test":
             file_name = f"{run_name}.json" if run_name else "results.json"
