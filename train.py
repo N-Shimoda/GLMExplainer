@@ -11,7 +11,7 @@ from transformers.trainer_utils import set_seed
 from trl import SFTConfig, SFTTrainer
 
 import wandb
-from eval import collect_result, eval_model
+from eval import collect_result, eval_model, get_max_new_tokens
 from src.collator import GraphQACollator
 from src.ds_stats import completion_length_report
 from src.glm import GraphTokenLM, GraphTokenLMConfig
@@ -266,17 +266,6 @@ def build_custom_dataset(
     return ds_dict["train"], ds_dict["validation"], ds_dict["test"] if do_eval else None
 
 
-def get_max_new_tokens(subset: str, use_custom: bool = False) -> int:
-    max_new_tokens_dict = (
-        {"edge_count": 256}
-        if use_custom
-        else {"node_count": 4, "edge_count": 4, "cycle_check": 8, "triangle_counting": 4}
-    )
-    if subset not in max_new_tokens_dict:
-        raise NotImplementedError(f"Max new tokens for subset {subset} is not defined.")
-    return max_new_tokens_dict[subset]
-
-
 def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
     glm_cfg = GraphTokenLMConfig(**glm_args)
     model = GraphTokenLM(glm_cfg)
@@ -363,7 +352,8 @@ def eval_ddp(model, subset: str, test_ds: Dataset, max_new_tokens: int, date_str
         local_test_ds = test_ds
 
     # Evaluate on the shard assigned to this rank.
-    print("Max_new_tokens:", max_new_tokens)
+    if is_main_process():
+        print("Max_new_tokens:", max_new_tokens)
     local_results = eval_model(model, local_test_ds, batch_size=8, max_new_tokens=max_new_tokens)
 
     if dist.is_initialized():
