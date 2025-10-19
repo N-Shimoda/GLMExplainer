@@ -55,9 +55,11 @@ def comp_accuracy(
                 acc = sum(p == r for p, r in zip(preds_yes_no, refs_yes_no)) / max(1, len(refs_yes_no))
                 num_unknown = sum(p == "unknown" for p in preds_yes_no)
         case "node_count" | "edge_count" | "triangle_counting":
-            digit_ans_li = [int(ref.strip().split(".")[0]) for ref in refs]
+            digit_ans_li = [int(matches[-1]) if (matches := re.findall(r"\d+", ref)) else -100 for ref in refs]
             preds = [int(matches[-1]) if (matches := re.findall(r"\d+", pred)) else -1 for pred in preds]
-            acc = sum([d == pred for d, pred in zip(digit_ans_li, preds)]) / max(1, len(refs))
+            acc = sum([(ans == pred and not (ans < 0 or pred < 0)) for ans, pred in zip(digit_ans_li, preds)]) / max(
+                1, len(refs)
+            )
             num_unknown = 0
 
     return acc, num_unknown
