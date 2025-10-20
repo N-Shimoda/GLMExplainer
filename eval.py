@@ -18,6 +18,8 @@ from src.preprocess import add_graph_column
 
 def build_args(*, multitask: bool = False):
     p = argparse.ArgumentParser()
+
+    # Dataset settings
     if not multitask:
         p.add_argument(
             "--subset",
@@ -25,13 +27,17 @@ def build_args(*, multitask: bool = False):
             choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
             default="edge_count",
         )
+    p.add_argument("--use-custom-dataset", action="store_true", default=False)
+
     # Model selection
     p.add_argument("--model-path", type=str, required=True)
     p.add_argument("--model-version-index", type=int, default=-1)
+
     # Evaluation settings
     p.add_argument("--num-trials", type=int, default=1)
     p.add_argument("--split", choices=["train", "validation", "test"], default="test")
     p.add_argument("--batch-size", type=int, default=64)
+    p.add_argument("--max-new-tokens", type=int)
 
     return p.parse_args()
 
@@ -105,14 +111,21 @@ def build_dataset(subset: str, split: str, node_feat_dim: int):
     return test_ds
 
 
+def get_max_new_tokens(subset: str, use_custom: bool = False) -> int:
+    max_new_tokens_dict = (
+        {"node_count": 96, "edge_count": 256, "cycle_check": 512, "triangle_counting": 256}
+        if use_custom
+        else {"node_count": 4, "edge_count": 4, "cycle_check": 8, "triangle_counting": 4}
+    )
+    return max_new_tokens_dict[subset]
+
+
 @torch.no_grad()
-def eval_model(model: GraphTokenLM, test_ds, batch_size: int, subset: str) -> list[dict]:
+def eval_model(model: GraphTokenLM, test_ds, batch_size: int, max_new_tokens: int) -> list[dict]:
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(model.config.base_model)
-
-    max_new_token_dict = {"node_count": 64, "edge_count": 256, "cycle_check": 8, "triangle_counting": 512}
     gen_cfg = GenerationConfig(
-        max_new_tokens=max_new_token_dict.get(subset, 6),
+        max_new_tokens=max_new_tokens,
         do_sample=True,
         eos_token_id=tokenizer.eos_token_id,
         pad_token_id=tokenizer.eos_token_id,
@@ -157,8 +170,8 @@ def collect_result(results: list[dict], res_file: str, subset: str):
     subset : str
         The subset name used for accuracy computation.
     """
-    # Compute accuracy
-    acc, unknowns = comp_accuracy([r["preds"] for r in results], [r["answer"] for r in results], subset)
+    refs = [r["answer"] for r in results]
+    acc, unknowns = comp_accuracy([r["preds"] for r in results], refs, subset)
     print(f"Accuracy: {acc * 100:.4f}%")
     if unknowns:
         print(f"[WARNING] {unknowns} unknown predictions found.")
@@ -183,9 +196,16 @@ if __name__ == "__main__":
     # Load dataset
     test_ds = build_dataset(args.subset, args.split, model.config.node_feat_dim)
     repeated_ds = concatenate_datasets([test_ds] * args.num_trials)
-    print("Test dataset:\n", repeated_ds)
 
-    results = eval_model(model, repeated_ds, args.batch_size, args.subset)
+    # Evaluate the model
+    if args.max_new_tokens is not None:
+        max_new_tokens = args.max_new_tokens
+        print(f"Using user-specified max_new_tokens: {max_new_tokens}")
+    else:
+        max_new_tokens = get_max_new_tokens(args.subset, args.use_custom_dataset)
+    results = eval_model(model, repeated_ds, args.batch_size, max_new_tokens)
+
+    # Save results
     match args.split:
         case "test":
             file_name = f"{run_name}.json" if run_name else "results.json"

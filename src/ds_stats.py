@@ -87,7 +87,7 @@ def completion_length_report(ds_dict, subset: str, *, main_process: bool = True)
     if not main_process or not lengths_by_split:
         return stats_payload
 
-    plot_dir = os.path.join("fig", "completion_length", subset)
+    plot_dir = os.path.join("ds_debug", "completion_length", subset)
     os.makedirs(plot_dir, exist_ok=True)
 
     stats_out = os.path.join(plot_dir, "stats.json")

@@ -14,6 +14,7 @@ from pprint import pprint
 from typing import Dict, Tuple
 
 import torch
+import wandb
 from accelerate.utils import set_seed
 from datasets import Dataset, load_dataset
 from eval_ft import eval_model
@@ -21,8 +22,8 @@ from peft import LoraConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
 
-import wandb
 from src.ckpt import _resolve_ckpt_path
+from src.sft_callback import PerplexityCallback
 
 
 def is_main_process() -> bool:
@@ -69,7 +70,7 @@ def build_args():
     p.add_argument("--warmup-ratio", type=float, default=0.03)
     p.add_argument("--weight-decay", type=float, default=0.1)
     p.add_argument("--save-intermediate-models", action="store_true", help="Save intermediate checkpoints")
-    p.add_argument("--save-epoch-interval", type=int, default=1, help="Save intermediate checkpoints every N epochs")
+    p.add_argument("--save-interval-epochs", type=int, default=1, help="Save intermediate checkpoints every N epochs")
 
     # LoRA
     p.add_argument("--lora-r", type=int, default=16)
@@ -87,7 +88,7 @@ def build_args():
         "warmup_ratio": parsed_args.warmup_ratio,
         "weight_decay": parsed_args.weight_decay,
         "save_intermediate_models": parsed_args.save_intermediate_models,
-        "save_epoch_interval": parsed_args.save_epoch_interval,
+        "save_interval_epochs": parsed_args.save_interval_epochs,
     }
     lora_args = {
         "r": parsed_args.lora_r,
@@ -163,8 +164,8 @@ def build_dataset(subset: str, do_eval: bool) -> Tuple[Dataset, Dataset, Dataset
 
     if do_eval:
         test_ds = load_dataset("baharef/GraphQA", subset, split="zero_shot_test")
-        rm_cols = [col for col in test_ds.column_names if col != "question"]
-        test_ds = test_ds.map(to_conv_prompt_completion, remove_columns=rm_cols)
+        # rm_cols = [col for col in test_ds.column_names if col not in ["question", "answer"]]
+        # test_ds = test_ds.map(to_conv_prompt_completion, remove_columns=rm_cols)
     else:
         test_ds = None
 
@@ -228,7 +229,7 @@ def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: d
 
     # Compute save interval steps
     save_intermediate_models = sft_args.pop("save_intermediate_models")
-    save_epoch_interval = sft_args.pop("save_epoch_interval")
+    save_interval_epochs = sft_args.pop("save_interval_epochs")
 
     # SFT configuration
     sft_cfg = SFTConfig(
@@ -237,12 +238,15 @@ def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: d
         packing=True,
         bf16=True,
         optim="adamw_8bit",
+        # Logging and saving
         output_dir=output_dir,
-        logging_steps=10,
-        eval_steps=25,
-        report_to="wandb" if args.wandb else "none",
+        logging_steps=5,
+        eval_strategy="steps",
         save_strategy="steps" if save_intermediate_models else "no",
-        save_steps=1,
+        load_best_model_at_end=True,
+        metric_for_best_model="eval_ppl",
+        greater_is_better=False,
+        report_to="wandb" if args.wandb else "none",
         **sft_args,
         # Qwen3 ships with a chat template in the tokenizer so it is applied automatically
         # (Optionally set eos_token explicitly: SFTConfig(eos_token=tokenizer.eos_token))
@@ -255,6 +259,7 @@ def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: d
         train_dataset=train_ds,
         eval_dataset=eval_ds,
     )
+    trainer.add_callback(PerplexityCallback)
 
     train_dataloader = trainer.get_train_dataloader()
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
@@ -262,7 +267,8 @@ def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: d
     steps_per_epoch = ceil(micro_batches_per_epoch / trainer.args.gradient_accumulation_steps)
 
     if save_intermediate_models:
-        trainer.args.save_steps = steps_per_epoch * save_epoch_interval
+        trainer.args.save_steps = steps_per_epoch * save_interval_epochs
+        trainer.args.eval_steps = trainer.args.save_steps
 
     if is_main_process():
         print(
@@ -272,6 +278,7 @@ def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: d
                     "len(train_ds)": len(train_ds),
                     "micro_batches_per_epoch": micro_batches_per_epoch,
                     "steps_per_epoch": steps_per_epoch,
+                    "save_steps": trainer.args.save_steps,
                 },
                 indent=4,
             )

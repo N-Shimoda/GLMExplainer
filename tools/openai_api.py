@@ -1,24 +1,24 @@
-"""OpenAI GPT-4o-mini を使って簡単な数学/グラフ問題を解かせるサンプルスクリプト。
+"""Sample script that asks OpenAI GPT-4o-mini to solve simple math/graph problems.
 
-更新点 (2025-10-01):
-    - 取得したモデル出力は標準出力には表示せず、ランダムなファイル名のテキストファイルに保存します。
-    - 保存先パスのみ標準出力に表示されます (回答本文は表示されません)。
+Updates (2025-10-01):
+    - Do not print the model output to stdout; save it to a text file with a random filename instead.
+    - Only print the saved file path to stdout (the answer itself remains hidden).
 
-使い方:
-    1. 環境変数 OPENAI_API_KEY に API キーを設定:
+Usage:
+    1. Set your API key via the OPENAI_API_KEY environment variable:
              export OPENAI_API_KEY=sk-xxxx
-    2. 実行例:
-             python tools/openai_api.py --question "2x + 3 = 11 の x を求めて"
+    2. Example:
+             python tools/openai_api.py --question "Solve for x in 2x + 3 = 11"
 
-    質問を省略するとデフォルトで (12 * (7 - 2)) の計算を行います。
+    If the question is omitted, the default calculation is (12 * (7 - 2)).
 
-依存インストール (environment.yml へ openai 追加済み):
+Dependencies (openai is already listed in environment.yml):
         conda env update -f environment.yml
 
-注意:
-    - API キーは決してリポジトリにコミットしないでください。
-    - ネットワークやレート制限エラーに対して指数バックオフ風の再試行を行います。
-    - 回答出力は自動的に tools/outputs/answers/ 配下 (無ければ作成) に保存されます。
+Notes:
+    - Never commit your API key to the repository.
+    - Retries requests with an exponential-backoff-like approach when network or rate limits occur.
+    - Automatically saves answers under tools/outputs/answers/ (creates the directory if missing).
 """
 
 from __future__ import annotations
@@ -27,34 +27,50 @@ import argparse
 import os
 import sys
 import time
-import uuid
 from pathlib import Path
 from typing import Optional
 
-from openai import OpenAI  # openai>=1.0.0 の新クライアント
+from openai import OpenAI  # New client introduced in openai>=1.0.0
 
 
-def build_prompt(question: str) -> str:
-    return (
-        "あなたは丁寧でステップを示す数学チュータです。"
-        "以下の問題を解き、途中式を列挙し、最後に '答え: <number or expression>' の形式で明示してください。\n\n"
-        f"問題: {question}\n"
+def build_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Solve simple math problems with GPT-4o-mini")
+    p.add_argument(
+        "--subset",
+        type=str,
+        choices=["edge_count", "triangle_counting", "cycle_check"],
+        default="edge_count",
+        help="The subset of GraphQA to solve",
     )
+    return p.parse_args()
 
 
-def solve_math(question: str, max_retries: int = 3, retry_wait: float = 2.0) -> str:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY が環境変数に設定されていません。export OPENAI_API_KEY=... してください。")
-
-    client = OpenAI(api_key=api_key)
-    # prompt = build_prompt(question)
+def get_prompt(subset: str) -> str:
     prompt_data = {
-        "triangle_counting": (
+        # "edge_count": (
+        #     "In an undirected graph, (i,j) means that node i and node j are connected with an undirected edge. "
+        #     "G describes a graph among nodes 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, and 17. "
+        #     "The edges in G are: (0, 1) (0, 2) (0, 3) (0, 6) (0, 7) (0, 11) (0, 12) (0, 13) (0, 14) (0, 15) "
+        #     "(0, 16) (0, 17) (1, 2) (1, 5) (1, 6) (1, 7) (1, 8) (1, 10) (1, 11) (1, 13) (1, 14) (1, 16) (2, 3) "
+        #     "(2, 4) (2, 5) (2, 6) (2, 8) (2, 10) (2, 11) (2, 12) (2, 13) (2, 14) (2, 15) (2, 16) (2, 17) (3, 4) "
+        #     "(3, 5) (3, 6) (3, 7) (3, 8) (3, 9) (3, 10) (3, 16) (3, 17) (4, 5) (4, 6) (4, 7) (4, 8) (4, 9) "
+        #     "(4, 11) (4, 12) (4, 13) (4, 14) (4, 15) (4, 16) (4, 17) (5, 7) (5, 8) (5, 9) (5, 10) (5, 11) "
+        #     "(5, 12) (5, 14) (5, 15) (5, 16) (5, 17) (6, 8) (6, 9) (6, 10) (6, 11) (6, 12) (6, 14) (6, 15) "
+        #     "(6, 16) (7, 8) (7, 9) (7, 11) (7, 13) (7, 15) (7, 16) (7, 17) (8, 9) (8, 11) (8, 12) (8, 13) "
+        #     "(8, 16) (8, 17) (9, 10) (9, 12) (9, 13) (9, 16) (9, 17) (10, 11) (10, 12) (10, 13) (10, 14) "
+        #     "(10, 15) (10, 16) (10, 17) (11, 13) (11, 14) (11, 15) (11, 17) (12, 13) (12, 14) (12, 15) (13, 14) "
+        #     "(13, 15) (13, 16) (13, 17) (14, 15) (14, 16) (14, 17) (15, 17) (16, 17). "
+        #     "Q: How many edges are in this graph? A:"
+        #     # Expected answer: 115
+        # ),
+        "edge_count": (
             "In an undirected graph, (i,j) means that node i and node j are connected with an undirected edge. "
-            "G describes a graph among nodes 0, 1, 2, 3, 4, 5, 6, and 7. "
-            "The edges in G are: (0, 1) (0, 2) (0, 5) (0, 7) (1, 2) (1, 4) (1, 5) (1, 7) (2, 5) (3, 5) (5, 7). "
-            "Q: How many triangles are in this graph?"
+            "G describes a graph among nodes 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, and 10. "
+            "The edges in G are: (0, 3) (0, 5) (0, 6) (0, 9) (1, 2) (1, 3) (1, 4) (1, 6) (1, 8) (1, 10) (2, 3) "
+            "(2, 6) (2, 7) (2, 9) (2, 10) (3, 4) (3, 8) (3, 9) (3, 10) (4, 5) (4, 6) (4, 9) (4, 10) (5, 7) "
+            "(5, 10) (6, 7) (6, 8) (6, 9) (6, 10) (7, 8) (8, 9) (9, 10). "
+            "Q: How many edges are in this graph? A:"
+            # Expected answer: 32
         ),
         "cycle_check": (
             "In an undirected graph, (i,j) means that node i and node j are connected with an undirected edge. "
@@ -62,8 +78,22 @@ def solve_math(question: str, max_retries: int = 3, retry_wait: float = 2.0) -> 
             "The edges in G are: (0, 1) (0, 2) (0, 5) (0, 7) (1, 2) (1, 4) (1, 5) (1, 7) (2, 5) (3, 5) (5, 7). "
             "Q: Is there a cycle in this graph? A:"
         ),
+        "triangle_counting": (
+            "In an undirected graph, (i,j) means that node i and node j are connected with an undirected edge. "
+            "G describes a graph among nodes 0, 1, 2, 3, 4, 5, 6, and 7. "
+            "The edges in G are: (0, 1) (0, 2) (0, 5) (0, 7) (1, 2) (1, 4) (1, 5) (1, 7) (2, 5) (3, 5) (5, 7). "
+            "Q: How many triangles are in this graph?"
+        ),
     }
-    prompt = prompt_data["triangle_counting"]
+    return prompt_data[subset]
+
+
+def solve_math(prompt: str, max_new_tokens: int, max_retries: int = 3, retry_wait: float = 2.0) -> str:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not set in the environment. Please export OPENAI_API_KEY=...")
+
+    client = OpenAI(api_key=api_key)
 
     last_error: Optional[Exception] = None
     for attempt in range(1, max_retries + 1):
@@ -72,11 +102,11 @@ def solve_math(question: str, max_retries: int = 3, retry_wait: float = 2.0) -> 
                 model="gpt-4o-mini",
                 input=prompt,
                 temperature=0.2,
-                max_output_tokens=512 + 256,
+                max_output_tokens=max_new_tokens,
             )
-            if hasattr(response, "output_text") and response.output_text:  # SDK 便宜メソッド
+            if hasattr(response, "output_text") and response.output_text:  # Convenience helper provided by the SDK
                 return response.output_text.strip()
-            # fallback: 手動で content を結合
+            # Fallback: manually concatenate the content
             parts: list[str] = []
             for item in getattr(response, "output", []) or []:
                 for c in getattr(item, "content", []) or []:
@@ -93,62 +123,47 @@ def solve_math(question: str, max_retries: int = 3, retry_wait: float = 2.0) -> 
                 break
             wait = retry_wait * attempt
             print(
-                f"[WARN] 呼び出し失敗 (試行 {attempt}/{max_retries}): {e}. {wait:.1f}s 待機後再試行",
+                f"[WARN] Call failed (attempt {attempt}/{max_retries}): {e}. Retrying after {wait:.1f}s",
                 file=sys.stderr,
             )
             time.sleep(wait)
-    raise RuntimeError(f"OpenAI 呼び出し失敗: {last_error}")
+    raise RuntimeError(f"OpenAI call failed: {last_error}")
 
 
 def extract_final_answer(text: str) -> Optional[str]:
-    """出力テキストから '答え:' 以降を抽出。見つからなければ None。"""
+    """Extract the portion after the literal 'Answer:' marker from the output; return None if it is missing."""
     import re
 
-    m = re.search(r"答え\s*[:：]\s*(.+)$", text.strip(), re.MULTILINE)
+    m = re.search(r"Answer\s*[:：]\s*(.+)$", text.strip(), re.MULTILINE)
     if m:
         return m.group(1).strip()
     return None
 
 
 def main() -> None:  # pragma: no cover
-    parser = argparse.ArgumentParser(description="GPT-4o-mini で簡単な数学問題を解く")
-    parser.add_argument(
-        "--question",
-        "-q",
-        type=str,
-        default="12 * (7 - 2) を計算せよ",
-        help="数学の問題文",
-    )
-    parser.add_argument(
-        "--show-answer-only",
-        action="store_true",
-        help="抽出した最終答えのみ表示",
-    )
-    args = parser.parse_args()
+    args = build_args()
 
     try:
-        result = solve_math(args.question)
+        prompt = get_prompt(args.subset)
+        result = solve_math(prompt, max_new_tokens=1024)
     except Exception as e:  # pragma: no cover
         print(f"[ERROR] {e}", file=sys.stderr)
         sys.exit(1)
-    # 保存ディレクトリ (tools/outputs/answers) を作成
-    out_dir = Path(__file__).resolve().parent / "outputs" / "answers"
+
+    # Create the output directory (tools/outputs/answers)
+    out_dir = Path(__file__).resolve().parent / "outputs"
     out_dir.mkdir(parents=True, exist_ok=True)
-    # ランダムファイル名生成
-    filename = f"answer_{int(time.time())}_{uuid.uuid4().hex[:8]}.txt"
-    out_path = out_dir / filename
-    # ファイルへ書き込み (UTF-8)
+    # Generate a random filename
+    out_path = out_dir / f"{args.subset}.txt"
+    # Write to the file (UTF-8)
     try:
         out_path.write_text(result, encoding="utf-8")
-    except Exception as e:  # 失敗したらエラー表示して終了
-        print(f"[ERROR] 回答のファイル保存に失敗しました: {e}", file=sys.stderr)
+    except Exception as e:  # If writing fails, report the error and exit
+        print(f"[ERROR] Failed to save the answer to a file: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # 標準出力にはパスのみ表示。内容は表示しない。
+    print(result)
     print(f"Answer saved to: {out_path}")
-    # show-answer-only オプションは後方互換のため残しているが、表示抑制方針により無効化。
-    if args.show_answer_only:
-        print("(NOTE) --show-answer-only は現在非表示ポリシーにより無効です。")
 
 
 if __name__ == "__main__":

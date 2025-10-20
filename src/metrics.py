@@ -13,7 +13,7 @@ def _normalize_text(s: str) -> str:
 def comp_accuracy(
     preds: List[str],
     refs: List[str],
-    subset: Literal["cycle_check", "node_count", "edge_count", "triangle_counting", "maximum_flow"],
+    subset: Literal["cycle_check", "node_count", "edge_count", "triangle_counting"],
     exact_match: bool = False,
 ) -> tuple[float, int]:
     """
@@ -25,7 +25,7 @@ def comp_accuracy(
         The list of model predictions.
     refs : List[str]
         The list of reference answers.
-    subset : Literal["cycle_check", "node_count", "edge_count", "triangle_counting", "maximum_flow"]
+    subset : Literal["cycle_check", "node_count", "edge_count", "triangle_counting"]
         The subset of the GraphQA dataset.
     exact_match : bool, default=False
         Whether to use exact match for the "cycle_check" subset.
@@ -39,7 +39,7 @@ def comp_accuracy(
         The number of unknown predictions.
         This value is only defined for the "cycle_check" subset.
     """
-    if subset not in ["cycle_check", "node_count", "edge_count", "triangle_counting", "maximum_flow"]:
+    if subset not in ["cycle_check", "node_count", "edge_count", "triangle_counting"]:
         raise NotImplementedError(f"Unsupported subset: {subset}")
 
     match subset:
@@ -54,10 +54,12 @@ def comp_accuracy(
                 refs_yes_no = ["yes" if "yes" in ref else "no" if "no" in ref else "unknown" for ref in low_refs]
                 acc = sum(p == r for p, r in zip(preds_yes_no, refs_yes_no)) / max(1, len(refs_yes_no))
                 num_unknown = sum(p == "unknown" for p in preds_yes_no)
-        case "edge_count" | "node_count" | "triangle_counting" | "maximum_flow":
-            digit_ans_li = [int(ref.strip().split(".")[0]) for ref in refs]
+        case "node_count" | "edge_count" | "triangle_counting":
+            digit_ans_li = [int(matches[-1]) if (matches := re.findall(r"\d+", ref)) else -100 for ref in refs]
             preds = [int(matches[-1]) if (matches := re.findall(r"\d+", pred)) else -1 for pred in preds]
-            acc = sum([d == pred for d, pred in zip(digit_ans_li, preds)]) / max(1, len(refs))
+            acc = sum([(ans == pred and not (ans < 0 or pred < 0)) for ans, pred in zip(digit_ans_li, preds)]) / max(
+                1, len(refs)
+            )
             num_unknown = 0
 
     return acc, num_unknown

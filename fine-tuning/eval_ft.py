@@ -22,18 +22,25 @@ from src.ckpt import _resolve_ckpt_path  # noqa: E402
 
 
 def is_main_process() -> bool:
-    # RANK = 0 is the main process
+    """Determine whether the current process is the distributed main rank.
+
+    Returns
+    -------
+    bool
+        ``True`` if the ``RANK`` environment variable is ``"0"`` or unset,
+        otherwise ``False``.
+    """
     return int(os.environ.get("RANK", "0")) == 0
 
 
 def build_args():
-    """
-    Parses and returns command-line arguments for fine-tuning a Qwen3-4B model on the GraphQA dataset.
+    """Parse command-line options for evaluating fine-tuned checkpoints.
 
     Returns
     -------
     argparse.Namespace
-        An object containing all the parsed command-line arguments.
+        Parsed command-line arguments covering dataset selection, model
+        resolution, and loader settings.
     """
     p = argparse.ArgumentParser()
     p.add_argument(
@@ -59,6 +66,19 @@ def build_args():
 
 
 def _normalize_text(s: str) -> str:
+    """Normalize a free-form answer for string comparison.
+
+    Parameters
+    ----------
+    s : str
+        Raw answer text.
+
+    Returns
+    -------
+    str
+        Lower-cased version with collapsed whitespace and trailing period
+        removed.
+    """
     s = s.strip()
     s = s.replace("\n", " ").replace("\t", " ")
     s = re.sub(r"\s+", "", s)
@@ -72,16 +92,24 @@ def comp_accuracy(
     subset: Literal["cycle_check", "node_count", "edge_count", "triangle_counting", "maximum_flow"],
     exact_match: bool = False,
 ) -> tuple[float, int]:
-    """
-    Compute the accuracy of the model's predictions depending on the subset.
+    """Compute task-specific accuracy statistics.
+
+    Parameters
+    ----------
+    preds : list of str
+        Generated predictions aligned with ``refs``.
+    refs : list of str
+        Ground-truth answers.
+    subset : {"cycle_check", "node_count", "edge_count", "triangle_counting", "maximum_flow"}
+        Task subset that determines the scoring strategy.
+    exact_match : bool, default=False
+        When ``True`` for ``"cycle_check"``, require an exact textual match.
 
     Returns
     -------
-    acc : float
-        The accuracy of the model's predictions.
-    unknowns : int
-        The number of unknown predictions.
-        This value is only defined for the "cycle_check" subset.
+    tuple of (float, int)
+        Accuracy value and the count of ``"unknown"`` predictions (only
+        applicable to ``"cycle_check"``).
     """
     if subset not in ["cycle_check", "node_count", "edge_count", "triangle_counting", "maximum_flow"]:
         raise NotImplementedError(f"Unsupported subset: {subset}")
@@ -108,7 +136,35 @@ def comp_accuracy(
 
 
 def _with_prompts(dataset: arrow_dataset.Dataset, tokenizer: PreTrainedTokenizerBase) -> arrow_dataset.Dataset:
+    """Build chat-formatted prompts for each question in the dataset.
+
+    Parameters
+    ----------
+    dataset : datasets.arrow_dataset.Dataset
+        Dataset containing ``question`` and ``answer`` columns.
+    tokenizer : transformers.PreTrainedTokenizerBase
+        Tokenizer whose chat template specifies how to wrap questions.
+
+    Returns
+    -------
+    datasets.arrow_dataset.Dataset
+        Dataset restricted to ``prompt``, ``question``, and ``answer`` columns
+        ready for generation.
+    """
+
     def _build_prompts(batch: dict[str, list[str]]) -> dict[str, list[str]]:
+        """Render prompts for a batch of questions.
+
+        Parameters
+        ----------
+        batch : dict of list of str
+            Mini-batch containing the ``question`` column.
+
+        Returns
+        -------
+        dict of list of str
+            Dictionary with a ``prompt`` column matching the input length.
+        """
         prompts = [
             tokenizer.apply_chat_template(
                 [
@@ -127,6 +183,21 @@ def _with_prompts(dataset: arrow_dataset.Dataset, tokenizer: PreTrainedTokenizer
 
 
 def _collate_eval_batch(batch: list[dict[str, str]]) -> dict[str, list[str]]:
+    """Collate evaluation examples into parallel lists.
+
+    Parameters
+    ----------
+    batch : list of dict of str
+        Sequence of dataset rows with ``prompt``, ``question``, and ``answer`` keys.
+
+    Returns
+    -------
+    dict of list of str
+        Dictionary with individual lists for prompts, questions, and answers.
+    """
+    if not batch:
+        return {"prompt": [], "question": [], "answer": []}
+
     return {
         "prompt": [row["prompt"] for row in batch],
         "question": [row["question"] for row in batch],
@@ -135,12 +206,32 @@ def _collate_eval_batch(batch: list[dict[str, str]]) -> dict[str, list[str]]:
 
 
 def _distributed_context() -> tuple[int, int, bool]:
+    """Return the rank, world size, and status of distributed execution.
+
+    Returns
+    -------
+    tuple of (int, int, bool)
+        ``rank``, ``world_size``, and a flag indicating whether the process is
+        part of an initialised distributed group.
+    """
     if dist.is_available() and dist.is_initialized():
         return dist.get_rank(), dist.get_world_size(), True
     return 0, 1, False
 
 
 def _maybe_init_distributed(local_rank: int | None) -> int:
+    """Initialise distributed process group if required and set CUDA device.
+
+    Parameters
+    ----------
+    local_rank : int or None
+        Local rank from CLI arguments or ``LOCAL_RANK`` environment variable.
+
+    Returns
+    -------
+    int
+        Effective local rank after initialisation.
+    """
     if local_rank is None:
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
 
@@ -159,19 +250,44 @@ class _ShardedSequentialSampler(Sampler[int]):
     """Evenly shard indices across distributed ranks without duplication."""
 
     def __init__(self, dataset_size: int, num_replicas: int, rank: int) -> None:
+        """Initialise shard indices for the current rank.
+
+        Parameters
+        ----------
+        dataset_size : int
+            Total number of samples in the dataset.
+        num_replicas : int
+            Count of distributed workers.
+        rank : int
+            Rank assigned to this worker.
+        """
         self.dataset_size = dataset_size
         self.num_replicas = num_replicas
         self.rank = rank
         self.indices = list(range(rank, dataset_size, num_replicas))
 
     def __iter__(self):
+        """Iterate over the indices assigned to this rank."""
         return iter(self.indices)
 
     def __len__(self) -> int:
+        """Return the number of indices owned by this rank."""
         return len(self.indices)
 
 
 def _gather_lists(payload: Sequence[list[str]]) -> list[Sequence[list[str]]]:
+    """Gather per-rank payloads from all distributed workers.
+
+    Parameters
+    ----------
+    payload : sequence of list of str
+        Local lists to synchronise, typically questions, predictions, and answers.
+
+    Returns
+    -------
+    list of sequence of list of str
+        Payloads collected from every rank, ordered by rank index.
+    """
     rank, world_size, dist_enabled = _distributed_context()
     if not dist_enabled or world_size == 1:
         return [payload]
@@ -183,13 +299,45 @@ def _gather_lists(payload: Sequence[list[str]]) -> list[Sequence[list[str]]]:
 
 def eval_model(
     model_path: str,
-    test_ds: arrow_dataset.Dataset,
+    test_raw: arrow_dataset.Dataset,
     subset: str,
     tokenizer: PreTrainedTokenizerBase,
     batch_size: int = 64,
+    num_trials: int = 1,
     num_workers: int = 0,
     device: torch.device | None = None,
 ):
+    """Evaluate a causal LM checkpoint on a GraphQA subset.
+
+    Parameters
+    ----------
+    model_path : str
+        Hugging Face hub identifier or filesystem path to the model weights.
+    test_raw : datasets.arrow_dataset.Dataset
+        Prepared evaluation dataset containing prompts, questions, and answers.
+    subset : str
+        GraphQA subset name used to compute accuracy.
+    tokenizer : transformers.PreTrainedTokenizerBase
+        Tokenizer used for prompt construction and decoding.
+    batch_size : int, default=64
+        Number of samples per evaluation batch.
+    num_trials : int, default=1
+        Number of times to repeat the evaluation dataset.
+    num_workers : int, default=0
+        Number of DataLoader worker processes.
+    device : torch.device, optional
+        Device on which to run inference. Defaults to current CUDA device or CPU.
+
+    Returns
+    -------
+    tuple of (float | None, int | None)
+        Accuracy and unknown-count on rank 0. Non-zero ranks return ``(None, None)``.
+    """
+    # build dataset with prompts
+    test_ds = _with_prompts(test_raw, tokenizer)
+    if num_trials > 1:
+        test_ds = concatenate_datasets([test_ds] * num_trials)
+
     rank, world_size, dist_enabled = _distributed_context()
     torch_dtype = torch.bfloat16 if torch.cuda.is_available() else None
     if device is None:
@@ -288,14 +436,13 @@ if __name__ == "__main__":
         if args.num_trials > 1:
             print("[WARNING] --quick is enabled; num_trials will be set to 1.")
         N = 96
-        test_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
-        test_raw = test_raw.select(range(N))  # for quick testing
-        test_ds = _with_prompts(test_raw, tokenizer)
-        print(f"Subset: {args.subset} (top {N} samples)")
+        test_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test").select(
+            range(N)
+        )  # for quick testing
+        if is_main_process():
+            print(f"Subset: {args.subset} (top {N} samples)")
     else:
         test_raw = load_dataset("baharef/GraphQA", args.subset, split="zero_shot_test")
-        test_ds = _with_prompts(test_raw, tokenizer)
-        test_ds = concatenate_datasets([test_ds] * args.num_trials)
         if is_main_process():
             print(f"[INFO] Subset: {args.subset}")
             print(f"[INFO] Number of trials: {args.num_trials}")
@@ -316,10 +463,11 @@ if __name__ == "__main__":
     start_time = time.time()
     eval_model(
         ckpt_path,
-        test_ds,
+        test_raw,
         args.subset,
         tokenizer=tokenizer,
         batch_size=args.batch_size,
+        num_trials=args.num_trials,
         num_workers=args.loader_workers,
         device=torch.device("cuda", local_rank) if torch.cuda.is_available() else torch.device("cpu"),
     )

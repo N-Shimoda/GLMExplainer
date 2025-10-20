@@ -6,8 +6,10 @@ __pycache__/
 
 # GraphToken
 outputs/
+masters/
 results/
 fig/
+ds_debug/
 
 # Fine-tuning
 fine-tuning/qwen3-4b-*/
