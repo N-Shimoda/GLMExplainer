@@ -323,4 +323,3 @@ if __name__ == "__main__":
             print(f"[INFO] Evaluation completed in {time.time() - start_time:.2f} seconds")
         if args.wandb and is_main_process():
             wandb.log({"test_accuracy": acc, "test_unknown": unknowns})
-            wandb.log({"test_accuracy": acc, "test_unknown": unknowns})
