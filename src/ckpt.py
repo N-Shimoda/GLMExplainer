@@ -1,5 +1,5 @@
 import os
-from typing import Literal
+from typing import Literal, Tuple
 
 
 def _checkpoint_step(path: str) -> int:
@@ -26,7 +26,7 @@ def _get_dir_type(path: str) -> Literal["task", "model", "checkpoint"]:
         raise ValueError(f"Directory '{path}' is neither a task, model, nor checkpoint directory.")
 
 
-def _resolve_ckpt_path(model_path: str, version_index: int = -1) -> tuple[str, str]:
+def _resolve_ckpt_path(model_path: str, version_index: int = -1) -> Tuple[str, str]:
     """
     Resolve the concrete checkpoint directory to load.
 
