@@ -8,7 +8,7 @@ from transformers import AutoTokenizer, GenerationConfig
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from src.glm import GraphTokenLM  # noqa: E402
 
-ckpt_path = "outputs/cycle_check/1016-1200/checkpoint-189"
+ckpt_path = "masters/node_count/1016-1706/checkpoint-756"
 model = GraphTokenLM.from_pretrained(ckpt_path)
 model.eval()
 print(model)
