@@ -48,7 +48,7 @@ def build_dataset(subset: str, split: str, node_feat_dim: int):
     ds = load_dataset("baharef/GraphQA", subset, split=f"zero_shot_{split}")
     ds = ds.map(
         lambda x: add_graph_column(x, k=node_feat_dim),
-        remove_columns=["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"],
+        remove_columns=["algorithm", "answer", "nedges", "nnodes", "task_description", "text_encoding"],
     )
     return ds
 
@@ -83,7 +83,7 @@ def save_explanation(explanation: Explanation, out_dir: str, sample_idx: int):
     feat_path = os.path.join(out_dir, f"feature_{sample_idx}.pdf")
     explanation.visualize_graph(graph_path)
     explanation.visualize_feature_importance(feat_path)
-    print(f"Saved explanation graphs to\n- {graph_path}\n- {feat_path}")
+    print(f"Saved explanation graphs to\n\t- {graph_path}\n\t- {feat_path}")
 
 
 class GLMWrapper(torch.nn.Module):
@@ -132,6 +132,7 @@ class GLMWrapper(torch.nn.Module):
 
         outputs = self.model(**inputs, graph=graph, labels=labels)
 
+        # Compute log probs
         log_probs = torch.log_softmax(outputs.logits, dim=-1)
         shift_log_probs = log_probs[:, :-1, :]
         shift_token_ids = inputs["input_ids"][:, 1:]
@@ -154,10 +155,10 @@ class GLMWrapper(torch.nn.Module):
         print("Output token probabilities:", out_token_probs)
 
         out_tokens = self.tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
-        print("Output tokens:", out_tokens)
+        print("Output tokens:", [t.replace("Ġ", " ") for t in out_tokens[X_len:]])
         print("Sum of log probabilities:", cumulative_log_likelihood.item())
         for t, p, lp in zip(out_tokens[X_len:], out_token_probs, log_prob_values):
-            print(f"{t:>15s}: {p:.12f} (log={lp:.12f})")
+            print(f"{t:>12s}: {p:.12f} (log={lp:.12f})")
 
         return cumulative_log_likelihood
 
@@ -216,14 +217,13 @@ def main():
         pad_token_id=tokenizer.eos_token_id,
     )
 
-    MAX_TRIALS = 20
+    MAX_TRIALS = 10
     correct = False
     generated = []
     for _ in range(MAX_TRIALS):
         output_text = wrapper.set_input(sample["prompt"], pyg_batch, gen_cfg)
         ans_val = sample["completion"].split(".")[0].strip()
         if ans_val in output_text:
-            print(f"[INFO] The generated output contains the correct answer ({ans_val}).")
             correct = True
             break
         else:
@@ -246,8 +246,10 @@ def main():
         ),
     )
     explanation = explainer(x=pyg_batch.x, edge_index=pyg_batch.edge_index, batch=pyg_batch.batch)
-    print(explanation)
+    print("Question:", sample["question"])
+    print("Generated answer:", output_text)
     print("Correct answer:", sample["completion"])
+    print("Explanation:", explanation)
 
     OUT_DIR = os.path.join("explanations", args.subset)
     os.makedirs(OUT_DIR, exist_ok=True)
