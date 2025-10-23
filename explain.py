@@ -1,10 +1,11 @@
 import argparse
+import os
 
 import torch
 from datasets import load_dataset
 from torch_geometric.data import Batch as PygBatch
 from torch_geometric.data import Data as PygData
-from torch_geometric.explain import Explainer, GNNExplainer
+from torch_geometric.explain import Explainer, Explanation, GNNExplainer
 from transformers import AutoTokenizer, GenerationConfig
 
 from eval import create_pyg_batch
@@ -75,6 +76,14 @@ def load_model(model_path: str) -> tuple[GraphTokenLM, AutoTokenizer]:
 
     tokenizer = AutoTokenizer.from_pretrained(model.config.llm_name, trust_remote_code=True)
     return model, tokenizer
+
+
+def save_explanation(explanation: Explanation, out_dir: str, sample_idx: int):
+    graph_path = os.path.join(out_dir, f"graph_{sample_idx}.pdf")
+    feat_path = os.path.join(out_dir, f"feature_{sample_idx}.pdf")
+    explanation.visualize_graph(graph_path)
+    explanation.visualize_feature_importance(feat_path)
+    print(f"Saved explanation graphs to\n- {graph_path}\n- {feat_path}")
 
 
 class GLMWrapper(torch.nn.Module):
@@ -206,11 +215,22 @@ def main():
         eos_token_id=tokenizer.eos_token_id,
         pad_token_id=tokenizer.eos_token_id,
     )
-    output_text = wrapper.set_input(sample["prompt"], pyg_batch, gen_cfg)
-    print(f"Generated output: `{output_text}`")
-    ans_val = sample["completion"].split(".")[0].strip()
-    if ans_val not in output_text:
-        print(f"[INFO] The generated output does not contain the correct answer ({ans_val}).")
+
+    MAX_TRIALS = 20
+    correct = False
+    generated = []
+    for _ in range(MAX_TRIALS):
+        output_text = wrapper.set_input(sample["prompt"], pyg_batch, gen_cfg)
+        ans_val = sample["completion"].split(".")[0].strip()
+        if ans_val in output_text:
+            print(f"[INFO] The generated output contains the correct answer ({ans_val}).")
+            correct = True
+            break
+        else:
+            generated.append(output_text)
+    if not correct:
+        print(f"[WARN] Failed to generate the correct answer after {MAX_TRIALS} trials (correct answer: {ans_val}).")
+        print("Generated outputs:", generated)
         return
 
     explainer = Explainer(
@@ -220,16 +240,18 @@ def main():
         node_mask_type="attributes",
         edge_mask_type="object",
         model_config=dict(
-            mode="binary_classification",
+            mode="regression",
             task_level="graph",
             return_type="raw",
         ),
     )
     explanation = explainer(x=pyg_batch.x, edge_index=pyg_batch.edge_index, batch=pyg_batch.batch)
     print(explanation)
-    explanation.visualize_graph(f"fig/explanation_{args.sample_idx}.pdf")
-    explanation.visualize_feature_importance(f"fig/feature_importance_{args.sample_idx}.pdf")
     print("Correct answer:", sample["completion"])
+
+    OUT_DIR = os.path.join("explanations", args.subset)
+    os.makedirs(OUT_DIR, exist_ok=True)
+    save_explanation(explanation, OUT_DIR, args.sample_idx)
 
 
 if __name__ == "__main__":
