@@ -22,11 +22,13 @@ with torch.no_grad():
     # 損失を計算
     labels = inputs["input_ids"].clone()
     labels[:, :X_len] = -100  # Xの部分の損失は無視
+    print(f"Labels ({labels.shape}):\n{labels}")
+
     outputs = model(**inputs, labels=labels)
+    print(outputs.keys())
 
     loss = outputs.loss  # Y部分の平均負の対数尤度
     ppl = torch.exp(loss)  # perplexity（任意）
 
 print(f"Loss: {loss.item():.4f}")
 print(f"Perplexity: {ppl.item():.4f}")
-
