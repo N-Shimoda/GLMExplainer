@@ -79,6 +79,17 @@ def load_model(model_path: str) -> tuple[GraphTokenLM, AutoTokenizer]:
 
 
 def save_explanation(explanation: Explanation, out_dir: str, sample_idx: int):
+    """Save explanation visualizations to files.
+
+    Parameters
+    ----------
+    explanation : torch_geometric.explain.Explanation
+        The explanation object containing the results to visualize.
+    out_dir : str
+        Directory to save the explanation files.
+    sample_idx : int
+        Index of the sample being explained (used for file naming).
+    """
     graph_path = os.path.join(out_dir, f"graph_{sample_idx}.pdf")
     feat_path = os.path.join(out_dir, f"feature_{sample_idx}.pdf")
     explanation.visualize_graph(graph_path)
@@ -92,17 +103,28 @@ class GLMWrapper(torch.nn.Module):
         self.model = model
         self.tokenizer = tokenizer
         self.input_text = None
-        self.output_text = None
+        self.generated_ids = None
         self._graph_template: PygBatch | None = None
 
     def forward(self, x: torch.Tensor, edge_index: torch.Tensor, batch: torch.Tensor | None = None):
         """Pseudo forward method for explainer compatibility."""
         if self.input_text is None:
-            raise ValueError("Input text is not set. Please set it using 'set_input_text' method.")
+            raise ValueError("Input text is not set. Please run `set_input` first.")
+        if self.generated_ids is None:
+            raise ValueError("No generated output available. Please run `set_input` first.")
 
         # Text input
-        concat_text = self.input_text + self.output_text
-        inputs = self.tokenizer(concat_text, return_tensors="pt").to(self.model.device)
+        prompt_inputs = self.tokenizer(self.input_text, return_tensors="pt").to(self.model.device)
+        prompt_ids = prompt_inputs["input_ids"]
+        generated_ids = self.generated_ids.to(self.model.device).unsqueeze(0)
+        inputs = {"input_ids": torch.cat([prompt_ids, generated_ids], dim=1)}
+        if "attention_mask" in prompt_inputs:
+            gen_attention = torch.ones(
+                (generated_ids.size(0), generated_ids.size(1)),
+                dtype=prompt_inputs["attention_mask"].dtype,
+                device=self.model.device,
+            )
+            inputs["attention_mask"] = torch.cat([prompt_inputs["attention_mask"], gen_attention], dim=1)
 
         # Graph input
         if batch is None:
@@ -122,7 +144,7 @@ class GLMWrapper(torch.nn.Module):
             graph = PygBatch.from_data_list([data]).to(self.model.device)
 
         # Labels for loss calculation
-        X_len = len(self.tokenizer(self.input_text, return_tensors="pt")["input_ids"][0])
+        X_len = prompt_ids.size(1)
         labels = inputs["input_ids"].clone()
         labels[:, :X_len] = -100
         prefix_labels = torch.full(
@@ -130,6 +152,7 @@ class GLMWrapper(torch.nn.Module):
         )
         labels = torch.cat([prefix_labels, labels], dim=1)
 
+        # Forward pass
         outputs = self.model(**inputs, graph=graph, labels=labels)
 
         # Compute log probs
@@ -138,9 +161,8 @@ class GLMWrapper(torch.nn.Module):
         shift_token_ids = inputs["input_ids"][:, 1:]
         token_log_probs = shift_log_probs.gather(dim=-1, index=shift_token_ids.unsqueeze(-1)).squeeze(-1)
 
-        positions = torch.arange(shift_token_ids.size(1), device=token_log_probs.device)
-        mask = positions >= (X_len - 1)
-        output_log_probs = token_log_probs[:, mask]
+        gen_len = generated_ids.size(1)
+        output_log_probs = token_log_probs[:, -gen_len:] if gen_len > 0 else token_log_probs[:, :0]
 
         if output_log_probs.numel() == 0:
             cumulative_log_likelihood = torch.zeros((), device=self.model.device)
@@ -154,10 +176,11 @@ class GLMWrapper(torch.nn.Module):
 
         print("Output token probabilities:", out_token_probs)
 
-        out_tokens = self.tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
-        print("Output tokens:", [t.replace("Ġ", " ") for t in out_tokens[X_len:]])
+        generated_token_ids = self.generated_ids.detach().cpu().tolist()
+        generated_tokens = self.tokenizer.convert_ids_to_tokens(generated_token_ids)
+        print("Output tokens:", [t.replace("Ġ", " ") for t in generated_tokens])
         print("Sum of log probabilities:", cumulative_log_likelihood.item())
-        for t, p, lp in zip(out_tokens[X_len:], out_token_probs, log_prob_values):
+        for t, p, lp in zip(generated_tokens, out_token_probs, log_prob_values):
             print(f"{t:>12s}: {p:.12f} (log={lp:.12f})")
 
         return cumulative_log_likelihood
@@ -190,12 +213,13 @@ class GLMWrapper(torch.nn.Module):
         input_ids = self.tokenizer(input_text, return_tensors="pt").to(self.model.device)
         outputs = self.model.generate(**input_ids, graph=graph, generation_config=gen_cfg)
         prompt_length = input_ids["input_ids"].shape[-1]
-        generated_ids = outputs[:, prompt_length:]
-        if generated_ids.numel() == 0:
-            self.output_text = ""
+        self.generated_ids = outputs[:, prompt_length:][0]
+
+        if self.generated_ids.numel() == 0:
+            output_text = ""
         else:
-            self.output_text = self.tokenizer.decode(generated_ids[0], skip_special_tokens=True)
-        return self.output_text
+            output_text = self.tokenizer.decode(self.generated_ids, skip_special_tokens=True)
+        return output_text
 
 
 def main():
@@ -211,7 +235,7 @@ def main():
 
     wrapper = GLMWrapper(model, tokenizer)
     gen_cfg = GenerationConfig(
-        max_new_tokens=8,
+        max_new_tokens=10,
         do_sample=True,
         eos_token_id=tokenizer.eos_token_id,
         pad_token_id=tokenizer.eos_token_id,
@@ -246,10 +270,10 @@ def main():
         ),
     )
     explanation = explainer(x=pyg_batch.x, edge_index=pyg_batch.edge_index, batch=pyg_batch.batch)
-    print("Question:", sample["question"])
-    print("Generated answer:", output_text)
-    print("Correct answer:", sample["completion"])
-    print("Explanation:", explanation)
+    print(f"Question: `{sample['question']}`")
+    print(f"Generated answer: `{output_text}`")
+    print(f"Correct answer: `{sample['completion']}`")
+    print(f"Explanation: {explanation}")
 
     OUT_DIR = os.path.join("explanations", args.subset)
     os.makedirs(OUT_DIR, exist_ok=True)
