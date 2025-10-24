@@ -1,5 +1,6 @@
 import argparse
 import os
+from typing import Optional
 
 import torch
 from datasets import load_dataset
@@ -104,9 +105,9 @@ class GLMWrapper(torch.nn.Module):
         self.tokenizer = tokenizer
         self.input_text = None
         self.generated_ids = None
-        self._graph_template: PygBatch | None = None
+        self._graph_template: Optional[PygBatch] = None
 
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, batch: torch.Tensor | None = None):
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, batch: Optional[torch.Tensor] = None):
         """Pseudo forward method for explainer compatibility."""
         if self.input_text is None:
             raise ValueError("Input text is not set. Please run `set_input` first.")
