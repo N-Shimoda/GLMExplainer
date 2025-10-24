@@ -42,63 +42,10 @@ def build_args():
         default="test",
         help="Dataset split to use",
     )
-    # p.add_argument("--sample-idx", type=check_non_negative_int, default=0, help="Sample index to explain")
-    return p.parse_args()
-
-
-def build_dataset(subset: str, split: str, node_feat_dim: int) -> arrow_dataset.Dataset:
-    """Builds and returns the specified dataset subset and split."""
-    ds = load_dataset("baharef/GraphQA", subset, split=f"zero_shot_{split}")
-    ds = ds.map(
-        lambda x: add_graph_column(x, k=node_feat_dim),
-        remove_columns=["algorithm", "answer", "nedges", "nnodes", "task_description", "text_encoding"],
+    p.add_argument(
+        "--target-value", type=check_non_negative_int, required=True, help="Targeted answer value to explain"
     )
-    ds = ds.add_column("index", list(range(len(ds))))
-    return ds
-
-
-def load_model(model_path: str) -> tuple[GraphTokenLM, AutoTokenizer]:
-    """Loads the GraphTokenLM model and tokenizer from the specified checkpoint path.
-
-    Parameters
-    ----------
-    model_path : str
-        Path to the task directory, model directory or a specific checkpoint.
-
-    Returns
-    -------
-    model : GraphTokenLM
-        Loaded GraphTokenLM model.
-    tokenizer : AutoTokenizer
-        Corresponding tokenizer used with the model.
-    """
-    ckpt_path, run_name = _resolve_ckpt_path(model_path)
-
-    model = GraphTokenLM.from_pretrained(ckpt_path, load_llm_weights=False)
-    model.to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
-    print(f"Loaded model from {ckpt_path} (run name: {run_name})")
-
-    tokenizer = AutoTokenizer.from_pretrained(model.config.llm_name, trust_remote_code=True)
-    return model, tokenizer
-
-
-def save_explanation(explanation: Explanation, out_dir: str, sample_idx: int):
-    """Save explanation visualizations to files.
-
-    Parameters
-    ----------
-    explanation : torch_geometric.explain.Explanation
-        The explanation object containing the results to visualize.
-    out_dir : str
-        Directory to save the explanation files.
-    sample_idx : int
-        Index of the sample being explained (used for file naming).
-    """
-    graph_path = os.path.join(out_dir, f"graph_{sample_idx}.pdf")
-    feat_path = os.path.join(out_dir, f"feature_{sample_idx}.pdf")
-    explanation.visualize_graph(graph_path)
-    explanation.visualize_feature_importance(feat_path)
-    print(f"Saved explanation graphs to\n\t- {graph_path}\n\t- {feat_path}")
+    return p.parse_args()
 
 
 class GLMWrapper(torch.nn.Module):
@@ -224,8 +171,68 @@ class GLMWrapper(torch.nn.Module):
         return output_text
 
 
-def explain_sample(wrapper: GLMWrapper, sample, pyg_batch: PygBatch, gen_cfg: GenerationConfig, MAX_TRIALS=10):
+def build_dataset(subset: str, split: str, node_feat_dim: int) -> arrow_dataset.Dataset:
+    """Builds and returns the specified dataset subset and split."""
+    ds = load_dataset("baharef/GraphQA", subset, split=f"zero_shot_{split}")
+    ds = ds.map(
+        lambda x: add_graph_column(x, k=node_feat_dim),
+        remove_columns=["algorithm", "answer", "nedges", "nnodes", "task_description", "text_encoding"],
+    )
+    ds = ds.add_column("index", list(range(len(ds))))
+    return ds
 
+
+def load_model(model_path: str) -> tuple[GraphTokenLM, AutoTokenizer]:
+    """Loads the GraphTokenLM model and tokenizer from the specified checkpoint path.
+
+    Parameters
+    ----------
+    model_path : str
+        Path to the task directory, model directory or a specific checkpoint.
+
+    Returns
+    -------
+    model : GraphTokenLM
+        Loaded GraphTokenLM model.
+    tokenizer : AutoTokenizer
+        Corresponding tokenizer used with the model.
+    """
+    ckpt_path, run_name = _resolve_ckpt_path(model_path)
+
+    model = GraphTokenLM.from_pretrained(ckpt_path, load_llm_weights=False)
+    model.to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+    print(f"Loaded model from {ckpt_path} (run name: {run_name})")
+
+    tokenizer = AutoTokenizer.from_pretrained(model.config.llm_name, trust_remote_code=True)
+    return model, tokenizer
+
+
+def explain_sample(
+    wrapper: GLMWrapper, sample: dict[str, str], pyg_batch: PygBatch, gen_cfg: GenerationConfig, MAX_TRIALS=10
+):
+    """Generates output for the given sample and explains it using GNNExplainer.
+
+    Parameters
+    ----------
+    wrapper : GLMWrapper
+        The model wrapper for GraphTokenLM.
+    sample : dict
+        A single dataset sample containing 'question' and 'completion'.
+    pyg_batch : torch_geometric.data.Batch
+        The graph data in PyG Batch format.
+    gen_cfg : GenerationConfig
+        Configuration for text generation.
+    MAX_TRIALS : int, optional
+        Maximum number of trials to generate the correct answer, by default 10.
+
+    Returns
+    -------
+    explanation : torch_geometric.explain.Explanation
+        The explanation object containing the results.
+    output_text : str
+        The generated output text.
+    """
+    # Generate output and verify correctness
     correct = False
     generated = []
     for _ in range(MAX_TRIALS):
@@ -241,6 +248,7 @@ def explain_sample(wrapper: GLMWrapper, sample, pyg_batch: PygBatch, gen_cfg: Ge
         print("Generated outputs:", generated)
         return None, None
 
+    # Generate explanation by GNNExplainer
     explainer = Explainer(
         model=wrapper,
         algorithm=GNNExplainer(epochs=200),
@@ -255,6 +263,25 @@ def explain_sample(wrapper: GLMWrapper, sample, pyg_batch: PygBatch, gen_cfg: Ge
     )
     explanation = explainer(x=pyg_batch.x, edge_index=pyg_batch.edge_index, batch=pyg_batch.batch)
     return explanation, output_text
+
+
+def save_explanation(explanation: Explanation, out_dir: str, sample_idx: int):
+    """Save explanation visualizations to files.
+
+    Parameters
+    ----------
+    explanation : torch_geometric.explain.Explanation
+        The explanation object containing the results to visualize.
+    out_dir : str
+        Directory to save the explanation files.
+    sample_idx : int
+        Index of the sample being explained (used for file naming).
+    """
+    graph_path = os.path.join(out_dir, f"graph_{sample_idx}.pdf")
+    feat_path = os.path.join(out_dir, f"feature_{sample_idx}.pdf")
+    explanation.visualize_graph(graph_path)
+    explanation.visualize_feature_importance(feat_path)
+    print(f"Saved explanation graphs to\n\t- {graph_path}\n\t- {feat_path}")
 
 
 def main():
@@ -277,10 +304,11 @@ def main():
         pad_token_id=tokenizer.eos_token_id,
     )
 
-    OUT_DIR = os.path.join("explanations", args.subset)
+    filtered_ds = dataset.filter(lambda x: int(x["completion"].split(".")[0]) == args.target_value)
+    OUT_DIR = os.path.join("explanations", f"{args.subset}_{args.target_value}")
     os.makedirs(OUT_DIR, exist_ok=True)
-    targets = dataset.filter(lambda x: int(x["completion"].split(".")[0]) == 1)
-    for sample in tqdm(targets):
+
+    for sample in tqdm(filtered_ds):
         pyg_batch = create_pyg_batch(sample["graph"], device=model.device)
         explanation, output_text = explain_sample(wrapper, sample, pyg_batch, gen_cfg)
 
@@ -290,8 +318,6 @@ def main():
             print(f"Correct answer: `{sample['completion']}`")
             print(f"Explanation: {explanation}")
             save_explanation(explanation, OUT_DIR, sample_idx=sample["index"])
-        else:
-            print("explanation was None.")
 
 
 if __name__ == "__main__":
