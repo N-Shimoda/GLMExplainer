@@ -17,6 +17,9 @@ fine-tuning/wandb/
 fine-tuning/examples/
 fine-tuning/models/
 
+# GNNExplainer
+explanations/
+
 # logs
 logs/
 wandb/

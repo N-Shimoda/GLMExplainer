@@ -15,6 +15,12 @@ torchrun --nproc_per_node=2 train.py --subset "${subset}" \
 
 Choice of the subsets are "node_count", "edge_count", "cycle_check", "triangle_counting", and "maximum_flow".
 
+## Apply explainer
+
+```shell
+python explain.py --model-path MODEL_PATH --subset SUBSET
+```
+
 ## Files & Directories
 
 - `fine-tuning`: Codes for fine-tuning `Qwen3-4B-Instruct-2507` on Graph-level tasks of GraphQA dataset.
