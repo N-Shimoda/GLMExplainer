@@ -1,3 +1,5 @@
+import argparse
+import os
 from collections import Counter
 from typing import Literal
 
@@ -154,9 +156,23 @@ def plot_all(x: pd.Series, pmf: pd.DataFrame, prefix="dist"):
 
 
 if __name__ == "__main__":
-    data = load_data(subset="node_count", split="test")
+    p = argparse.ArgumentParser()
+    p.add_argument(
+        "--subset",
+        type=str,
+        choices=["node_count", "edge_count", "triangle_counting"],
+        default="node_count",
+        help="Dataset subset to analyze",
+    )
+    p.add_argument(
+        "--split", type=str, choices=["train", "validation", "test"], default="test", help="Dataset split to analyze"
+    )
+    args = p.parse_args()
+
+    data = load_data(subset=args.subset, split=args.split)
     x, pmf, summary = summarize_distribution(data)
     print(pd.Series(summary))
-    plot_all(x, pmf, prefix="mydata")
-    print(pd.Series(summary))
-    plot_all(x, pmf, prefix="mydata")
+
+    OUT_DIR = f"fig/{args.subset}"
+    os.makedirs(OUT_DIR, exist_ok=True)
+    plot_all(x, pmf, prefix=f"{OUT_DIR}/{args.split}")
