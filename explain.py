@@ -3,10 +3,11 @@ import os
 from typing import Optional
 
 import torch
-from datasets import load_dataset
+from datasets import arrow_dataset, load_dataset
 from torch_geometric.data import Batch as PygBatch
 from torch_geometric.data import Data as PygData
 from torch_geometric.explain import Explainer, Explanation, GNNExplainer
+from tqdm import tqdm
 from transformers import AutoTokenizer, GenerationConfig
 
 from eval import create_pyg_batch
@@ -41,16 +42,18 @@ def build_args():
         default="test",
         help="Dataset split to use",
     )
-    p.add_argument("--sample-idx", type=check_non_negative_int, default=0, help="Sample index to explain")
+    # p.add_argument("--sample-idx", type=check_non_negative_int, default=0, help="Sample index to explain")
     return p.parse_args()
 
 
-def build_dataset(subset: str, split: str, node_feat_dim: int):
+def build_dataset(subset: str, split: str, node_feat_dim: int) -> arrow_dataset.Dataset:
+    """Builds and returns the specified dataset subset and split."""
     ds = load_dataset("baharef/GraphQA", subset, split=f"zero_shot_{split}")
     ds = ds.map(
         lambda x: add_graph_column(x, k=node_feat_dim),
         remove_columns=["algorithm", "answer", "nedges", "nnodes", "task_description", "text_encoding"],
     )
+    ds = ds.add_column("index", list(range(len(ds))))
     return ds
 
 
@@ -167,22 +170,20 @@ class GLMWrapper(torch.nn.Module):
 
         if output_log_probs.numel() == 0:
             cumulative_log_likelihood = torch.zeros((), device=self.model.device)
-            log_prob_values = []
-            out_token_probs = []
+            # log_prob_values = []
+            # out_token_probs = []
         else:
             cumulative_log_likelihood = output_log_probs.sum()
-            output_log_probs_flat = output_log_probs.squeeze(0)
-            log_prob_values = output_log_probs_flat.detach().cpu().tolist()
-            out_token_probs = output_log_probs_flat.exp().detach().cpu().tolist()
+            # output_log_probs_flat = output_log_probs.squeeze(0)
+            # log_prob_values = output_log_probs_flat.detach().cpu().tolist()
+            # out_token_probs = output_log_probs_flat.exp().detach().cpu().tolist()
 
-        print("Output token probabilities:", out_token_probs)
-
-        generated_token_ids = self.generated_ids.detach().cpu().tolist()
-        generated_tokens = self.tokenizer.convert_ids_to_tokens(generated_token_ids)
-        print("Output tokens:", [t.replace("Ġ", " ") for t in generated_tokens])
-        print("Sum of log probabilities:", cumulative_log_likelihood.item())
-        for t, p, lp in zip(generated_tokens, out_token_probs, log_prob_values):
-            print(f"{t:>12s}: {p:.12f} (log={lp:.12f})")
+        # generated_token_ids = self.generated_ids.detach().cpu().tolist()
+        # generated_tokens = self.tokenizer.convert_ids_to_tokens(generated_token_ids)
+        # print("Output tokens:", [t.replace("Ġ", " ") for t in generated_tokens])
+        # print("Sum of log probabilities:", cumulative_log_likelihood.item())
+        # for t, p, lp in zip(generated_tokens, out_token_probs, log_prob_values):
+        #     print(f"{t:>16s}: {p:.12f} (log={lp:.12f})")
 
         return cumulative_log_likelihood
 
@@ -223,26 +224,8 @@ class GLMWrapper(torch.nn.Module):
         return output_text
 
 
-def main():
-    args = build_args()
-    model, tokenizer = load_model(args.model_path)
-    model.eval()
+def explain_sample(wrapper: GLMWrapper, sample, pyg_batch: PygBatch, gen_cfg: GenerationConfig, MAX_TRIALS=10):
 
-    dataset = build_dataset(args.subset, args.split, node_feat_dim=model.config.node_feat_dim)
-    print("Dataset: ", dataset)
-
-    sample = dataset[args.sample_idx]
-    pyg_batch = create_pyg_batch(sample["graph"], device=model.device)
-
-    wrapper = GLMWrapper(model, tokenizer)
-    gen_cfg = GenerationConfig(
-        max_new_tokens=10,
-        do_sample=True,
-        eos_token_id=tokenizer.eos_token_id,
-        pad_token_id=tokenizer.eos_token_id,
-    )
-
-    MAX_TRIALS = 10
     correct = False
     generated = []
     for _ in range(MAX_TRIALS):
@@ -256,7 +239,7 @@ def main():
     if not correct:
         print(f"[WARN] Failed to generate the correct answer after {MAX_TRIALS} trials (correct answer: {ans_val}).")
         print("Generated outputs:", generated)
-        return
+        return None, None
 
     explainer = Explainer(
         model=wrapper,
@@ -271,14 +254,44 @@ def main():
         ),
     )
     explanation = explainer(x=pyg_batch.x, edge_index=pyg_batch.edge_index, batch=pyg_batch.batch)
-    print(f"Question: `{sample['question']}`")
-    print(f"Generated answer: `{output_text}`")
-    print(f"Correct answer: `{sample['completion']}`")
-    print(f"Explanation: {explanation}")
+    return explanation, output_text
+
+
+def main():
+    args = build_args()
+
+    # Load model and tokenizer
+    model, tokenizer = load_model(args.model_path)
+    model.eval()
+
+    # Load dataset
+    dataset = build_dataset(args.subset, args.split, node_feat_dim=model.config.node_feat_dim)
+    print("Dataset: ", dataset)
+
+    # Create wrapper and generation config
+    wrapper = GLMWrapper(model, tokenizer)
+    gen_cfg = GenerationConfig(
+        max_new_tokens=10,
+        do_sample=True,
+        eos_token_id=tokenizer.eos_token_id,
+        pad_token_id=tokenizer.eos_token_id,
+    )
 
     OUT_DIR = os.path.join("explanations", args.subset)
     os.makedirs(OUT_DIR, exist_ok=True)
-    save_explanation(explanation, OUT_DIR, args.sample_idx)
+    targets = dataset.filter(lambda x: int(x["completion"].split(".")[0]) == 1)
+    for sample in tqdm(targets):
+        pyg_batch = create_pyg_batch(sample["graph"], device=model.device)
+        explanation, output_text = explain_sample(wrapper, sample, pyg_batch, gen_cfg)
+
+        if explanation is not None:
+            print(f"Question: `{sample['question']}`")
+            print(f"Generated answer: `{output_text}`")
+            print(f"Correct answer: `{sample['completion']}`")
+            print(f"Explanation: {explanation}")
+            save_explanation(explanation, OUT_DIR, sample_idx=sample["index"])
+        else:
+            print("explanation was None.")
 
 
 if __name__ == "__main__":
