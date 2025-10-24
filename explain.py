@@ -6,9 +6,10 @@ import torch
 from datasets import arrow_dataset, load_dataset
 from torch_geometric.data import Batch as PygBatch
 from torch_geometric.data import Data as PygData
-from torch_geometric.explain import Explainer, Explanation, GNNExplainer
+from torch_geometric.explain import Explainer, GNNExplainer
 from tqdm import tqdm
 from transformers import AutoTokenizer, GenerationConfig
+from transformers.trainer_utils import set_seed
 
 from eval import create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
@@ -113,24 +114,24 @@ class GLMWrapper(torch.nn.Module):
         token_log_probs = shift_log_probs.gather(dim=-1, index=shift_token_ids.unsqueeze(-1)).squeeze(-1)
 
         gen_len = generated_ids.size(1)
-        output_log_probs = token_log_probs[:, -gen_len:] if gen_len > 0 else token_log_probs[:, :0]
+        output_log_probs = token_log_probs[:, -gen_len:-1] if gen_len > 0 else token_log_probs[:, :0]
 
         if output_log_probs.numel() == 0:
             cumulative_log_likelihood = torch.zeros((), device=self.model.device)
-            # log_prob_values = []
-            # out_token_probs = []
+            log_prob_values = []
+            out_token_probs = []
         else:
             cumulative_log_likelihood = output_log_probs.sum()
-            # output_log_probs_flat = output_log_probs.squeeze(0)
-            # log_prob_values = output_log_probs_flat.detach().cpu().tolist()
-            # out_token_probs = output_log_probs_flat.exp().detach().cpu().tolist()
+            output_log_probs_flat = output_log_probs.squeeze(0)
+            log_prob_values = output_log_probs_flat.detach().cpu().tolist()
+            out_token_probs = output_log_probs_flat.exp().detach().cpu().tolist()
 
-        # generated_token_ids = self.generated_ids.detach().cpu().tolist()
-        # generated_tokens = self.tokenizer.convert_ids_to_tokens(generated_token_ids)
-        # print("Output tokens:", [t.replace("Ġ", " ") for t in generated_tokens])
-        # print("Sum of log probabilities:", cumulative_log_likelihood.item())
-        # for t, p, lp in zip(generated_tokens, out_token_probs, log_prob_values):
-        #     print(f"{t:>16s}: {p:.12f} (log={lp:.12f})")
+        generated_token_ids = self.generated_ids.detach().cpu().tolist()
+        generated_tokens = self.tokenizer.convert_ids_to_tokens(generated_token_ids)
+        print("Output tokens:", [t.replace("Ġ", " ") for t in generated_tokens])
+        print("Sum of log probabilities:", cumulative_log_likelihood.item())
+        for t, p, lp in zip(generated_tokens, out_token_probs, log_prob_values):
+            print(f"{t:>16s}: {p:.12f} (log={lp:.12f})")
 
         return cumulative_log_likelihood
 
@@ -233,25 +234,27 @@ def explain_sample(
         The generated output text.
     """
     # Generate output and verify correctness
+    ans_val = sample["completion"].split(".")[0].strip()
     correct = False
     generated = []
+
     for _ in range(MAX_TRIALS):
         output_text = wrapper.set_input(sample["prompt"], pyg_batch, gen_cfg)
-        ans_val = sample["completion"].split(".")[0].strip()
+        generated.append(output_text)
         if ans_val in output_text:
             correct = True
             break
-        else:
-            generated.append(output_text)
+
+    print("Generated outputs:", generated)
     if not correct:
         print(f"[WARN] Failed to generate the correct answer after {MAX_TRIALS} trials (correct answer: {ans_val}).")
-        print("Generated outputs:", generated)
         return None, None
 
     # Generate explanation by GNNExplainer
     explainer = Explainer(
         model=wrapper,
         algorithm=GNNExplainer(epochs=200),
+        # algorithm=CaptumExplainer("IntegratedGradients"),
         explanation_type="model",
         node_mask_type="attributes",
         edge_mask_type="object",
@@ -263,25 +266,6 @@ def explain_sample(
     )
     explanation = explainer(x=pyg_batch.x, edge_index=pyg_batch.edge_index, batch=pyg_batch.batch)
     return explanation, output_text
-
-
-def save_explanation(explanation: Explanation, out_dir: str, sample_idx: int):
-    """Save explanation visualizations to files.
-
-    Parameters
-    ----------
-    explanation : torch_geometric.explain.Explanation
-        The explanation object containing the results to visualize.
-    out_dir : str
-        Directory to save the explanation files.
-    sample_idx : int
-        Index of the sample being explained (used for file naming).
-    """
-    graph_path = os.path.join(out_dir, f"graph_{sample_idx}.pdf")
-    feat_path = os.path.join(out_dir, f"feature_{sample_idx}.pdf")
-    explanation.visualize_graph(graph_path)
-    explanation.visualize_feature_importance(feat_path)
-    print(f"Saved explanation graphs to\n\t- {graph_path}\n\t- {feat_path}")
 
 
 def main():
@@ -317,8 +301,12 @@ def main():
             print(f"Generated answer: `{output_text}`")
             print(f"Correct answer: `{sample['completion']}`")
             print(f"Explanation: {explanation}")
-            save_explanation(explanation, OUT_DIR, sample_idx=sample["index"])
+            # Save explanation graphs
+            graph_path = os.path.join(OUT_DIR, f"graph_{sample['index']}.pdf")
+            explanation.visualize_graph(graph_path)
+            print(f"Saved explanation graphs to {graph_path}")
 
 
 if __name__ == "__main__":
+    set_seed(42)
     main()
