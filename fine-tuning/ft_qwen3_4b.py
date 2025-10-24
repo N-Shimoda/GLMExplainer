@@ -14,7 +14,6 @@ from pprint import pprint
 from typing import Dict, Tuple
 
 import torch
-import wandb
 from accelerate.utils import set_seed
 from datasets import Dataset, load_dataset
 from eval_ft import eval_model
@@ -22,8 +21,8 @@ from peft import LoraConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
 
+import wandb
 from src.ckpt import _resolve_ckpt_path
-from src.sft_callback import PerplexityCallback
 
 
 def is_main_process() -> bool:
@@ -259,7 +258,6 @@ def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: d
         train_dataset=train_ds,
         eval_dataset=eval_ds,
     )
-    trainer.add_callback(PerplexityCallback)
 
     train_dataloader = trainer.get_train_dataloader()
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
