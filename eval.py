@@ -87,7 +87,11 @@ def _infer_model_device(model: torch.nn.Module) -> torch.device:
     return next(base_model.parameters()).device
 
 
-def create_pyg_batch(graph_dicts: list[dict[str, list]], device: torch.device | str | None) -> PygBatch:
+def create_pyg_batch(
+    graph_dicts: list[dict[str, list]] | dict[str, list], device: torch.device | str | None
+) -> PygBatch:
+    if isinstance(graph_dicts, dict):
+        graph_dicts = [graph_dicts]
     data_list = [
         PygData(
             x=torch.tensor(d["x"], dtype=torch.float),

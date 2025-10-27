@@ -349,9 +349,9 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         self,
         input_ids=None,
         attention_mask=None,
-        labels=None,
         inputs_embeds=None,
         graph=None,
+        labels=None,
         **generate_kwargs,
     ) -> CausalLMOutputWithPast:
         if (input_ids is None) and (inputs_embeds is None):

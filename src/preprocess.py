@@ -5,33 +5,6 @@ from typing import Any, Dict, List, Tuple
 import torch
 
 
-def add_graph_column(example, k: int = 4) -> Dict[str, Any]:
-    """Enrich an example with graph metadata parsed from the question.
-
-    Parameters
-    ----------
-    example : Mapping[str, Any]
-        Input example containing at least ``question``, ``task_description``,
-        and ``answer`` fields.
-    k : int, default=4
-        Number of Laplacian positional embedding dimensions to include in the
-        generated graph features.
-
-    Returns
-    -------
-    dict
-        Updated example with ``prompt``, ``completion``, and ``graph`` keys.
-    """
-    text = example["question"]
-    nodes = extract_nodes_from_text(text)
-    edges = extract_edges_from_text(text)
-
-    example["prompt"] = example["task_description"]
-    example["completion"] = example["answer"].strip()
-    example["graph"] = create_pyg_dict(nodes, edges, k=k)  # k: dimension of LPE
-    return example
-
-
 def extract_nodes_from_text(text: str) -> List[int]:
     """Parse node identifiers from a GraphQA-style question.
 
@@ -162,6 +135,33 @@ def create_pyg_dict(nodes: List[int], edges: List[Tuple[int, int]], k: int) -> D
         "edge_index": edge_index,
         "batch": batch,
     }
+
+
+def add_graph_column(example, k: int = 4) -> Dict[str, Any]:
+    """Enrich an example with graph metadata parsed from the question.
+
+    Parameters
+    ----------
+    example : Mapping[str, Any]
+        Input example containing at least ``question``, ``task_description``,
+        and ``answer`` fields.
+    k : int, default=4
+        Number of Laplacian positional embedding dimensions to include in the
+        generated graph features.
+
+    Returns
+    -------
+    dict
+        Updated example with ``prompt``, ``completion``, and ``graph`` keys.
+    """
+    text = example["question"]
+    nodes = extract_nodes_from_text(text)
+    edges = extract_edges_from_text(text)
+
+    example["prompt"] = example["task_description"]
+    example["completion"] = example["answer"].strip()
+    example["graph"] = create_pyg_dict(nodes, edges, k=k)  # k: dimension of LPE
+    return example
 
 
 # --- Execution block ---
