@@ -5,6 +5,8 @@ channels:
   - conda-forge
 dependencies:
   - python=3.12
+  - matplotlib
+  - ninja
   - pip
   - pip:
     - --extra-index-url https://download.pytorch.org/whl/cu124
@@ -13,7 +15,7 @@ dependencies:
     - transformers
     - datasets
     - trl
-    - bitsandbytes
     - peft
+    - bitsandbytes
     - flash_attn
     - wandb
