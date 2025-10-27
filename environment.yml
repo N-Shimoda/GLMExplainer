@@ -10,7 +10,9 @@ dependencies:
       - torch
       - torch_geometric
       - transformers
+      - datasets
       - trl
       - bitsandbytes
-      - datasets
+      - peft
+      - flash_attn
       - wandb

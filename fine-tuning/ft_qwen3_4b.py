@@ -14,7 +14,6 @@ from pprint import pprint
 from typing import Dict, Tuple
 
 import torch
-import wandb
 from accelerate.utils import set_seed
 from datasets import Dataset, load_dataset
 from eval_ft import eval_model
@@ -22,6 +21,7 @@ from peft import LoraConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
 
+import wandb
 from src.ckpt import _resolve_ckpt_path
 from src.sft_callback import PerplexityCallback
 
@@ -214,7 +214,7 @@ def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: d
         quantization_config=bnb_config,
         device_map=device_map,
         trust_remote_code=True,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         attn_implementation="flash_attention_2",
     )
     tokenizer = AutoTokenizer.from_pretrained(args.base_model, use_fast=False, trust_remote_code=True)
