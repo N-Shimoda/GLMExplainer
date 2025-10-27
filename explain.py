@@ -47,6 +47,7 @@ def build_args():
         "--target-value", type=check_non_negative_int, default=None, help="Targeted answer value to explain"
     )
     p.add_argument("--sample-idx", type=check_non_negative_int, default=None, help="Index of the sample to explain")
+    p.add_argument("--num-trials", type=int, default=1, help="Number of trials for explaining each sample")
 
     args = p.parse_args()
     if args.target_value is not None and args.sample_idx is not None:
@@ -123,20 +124,20 @@ class GLMWrapper(torch.nn.Module):
 
         if output_log_probs.numel() == 0:
             cumulative_log_likelihood = torch.zeros((), device=self.model.device)
-            log_prob_values = []
-            out_token_probs = []
+            # log_prob_values = []
+            # out_token_probs = []
         else:
             cumulative_log_likelihood = output_log_probs.sum()
-            output_log_probs_flat = output_log_probs.squeeze(0)
-            log_prob_values = output_log_probs_flat.detach().cpu().tolist()
-            out_token_probs = output_log_probs_flat.exp().detach().cpu().tolist()
+            # output_log_probs_flat = output_log_probs.squeeze(0)
+            # log_prob_values = output_log_probs_flat.detach().cpu().tolist()
+            # out_token_probs = output_log_probs_flat.exp().detach().cpu().tolist()
 
-        generated_token_ids = self.generated_ids.detach().cpu().tolist()
-        generated_tokens = self.tokenizer.convert_ids_to_tokens(generated_token_ids)
-        print("Output tokens:", [t.replace("Ġ", " ") for t in generated_tokens])
-        print("Sum of log probabilities:", cumulative_log_likelihood.item())
-        for t, p, lp in zip(generated_tokens, out_token_probs, log_prob_values):
-            print(f"{t:>16s}: {p:.12f} (log={lp:.12f})")
+        # generated_token_ids = self.generated_ids.detach().cpu().tolist()
+        # generated_tokens = self.tokenizer.convert_ids_to_tokens(generated_token_ids)
+        # print("Output tokens:", [t.replace("Ġ", " ") for t in generated_tokens])
+        # print("Sum of log probabilities:", cumulative_log_likelihood.item())
+        # for t, p, lp in zip(generated_tokens, out_token_probs, log_prob_values):
+        #     print(f"{t:>16s}: {p:.12f} (log={lp:.12f})")
 
         return cumulative_log_likelihood
 
@@ -183,6 +184,7 @@ def build_dataset(subset: str, split: str, node_feat_dim: int) -> arrow_dataset.
     ds = ds.map(
         lambda x: add_graph_column(x, k=node_feat_dim),
         remove_columns=["algorithm", "answer", "nedges", "nnodes", "task_description", "text_encoding"],
+        load_from_cache_file=False,
     )
     ds = ds.add_column("index", list(range(len(ds))))
     return ds
@@ -285,8 +287,10 @@ def main():
     dataset = build_dataset(args.subset, args.split, node_feat_dim=model.config.node_feat_dim)
     if args.target_value is not None:
         filtered_ds = dataset.filter(lambda x: int(x["completion"].split(".")[0]) == args.target_value)
+        TARGET_VALUE = args.target_value
     elif args.sample_idx is not None:
         filtered_ds = dataset.filter(lambda x: x["index"] == args.sample_idx)
+        TARGET_VALUE = int(filtered_ds[0]["completion"].split(".")[0])
     print("Dataset: ", filtered_ds)
 
     # Create wrapper and generation config
@@ -299,23 +303,26 @@ def main():
     )
 
     # Directory to save explanations
-    OUT_DIR = os.path.join("explanations", f"{args.subset}_{args.target_value}")
+    OUT_DIR = os.path.join("explanations", f"{args.subset}_{TARGET_VALUE}")
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    # Compute explanations for each sample
-    for sample in tqdm(filtered_ds):
-        pyg_batch = create_pyg_batch(sample["graph"], device=model.device)
-        explanation, output_text = explain_sample(wrapper, sample, pyg_batch, gen_cfg)
+    for i in range(args.num_trials):
+        # Compute explanations for each sample
+        for sample in tqdm(filtered_ds):
+            pyg_batch = create_pyg_batch(sample["graph"], device=model.device)
+            explanation, output_text = explain_sample(wrapper, sample, pyg_batch, gen_cfg)
 
-        if explanation is not None:
-            print(f"Question: `{sample['question']}`")
-            print(f"Generated answer: `{output_text}`")
-            print(f"Correct answer: `{sample['completion']}`")
-            print(f"Explanation: {explanation}")
-            # Save explanation graphs
-            graph_path = os.path.join(OUT_DIR, f"graph_{sample['index']}.pdf")
-            explanation.visualize_graph(graph_path)
-            print(f"Saved explanation graphs to {graph_path}")
+            if explanation is not None:
+                print(f"Question: `{sample['question']}`")
+                print(f"Generated answer: `{output_text}`")
+                print(f"Correct answer: `{sample['completion']}`")
+                print(f"Explanation: {explanation}")
+                # Save explanation graphs
+                suffix = f"{sample['index']}_{i}" if args.num_trials > 1 else f"{sample['index']}"
+                graph_path = os.path.join(OUT_DIR, f"graph_{suffix}.svg")
+                explanation.visualize_graph(graph_path)
+                explanation.visualize_feature_importance(os.path.join(OUT_DIR, f"node_feat_{suffix}.svg"))
+                print(f"Saved explanation graphs to {graph_path}")
 
 
 if __name__ == "__main__":

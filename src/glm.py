@@ -234,7 +234,7 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
                 config.base_model, trust_remote_code=True, tie_word_embeddings=True
             )
         else:
-            llm_cfg = AutoConfig.from_pretrained(config.base_model, torch_dtype=torch.float32)
+            llm_cfg = AutoConfig.from_pretrained(config.base_model, dtype=torch.float32)
             self.llm = AutoModelForCausalLM.from_config(llm_cfg)
 
         self.num_graph_tokens = config.num_graph_tokens
