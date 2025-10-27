@@ -1,4 +1,3 @@
-# flash_attn_check.py
 import math
 import time
 
@@ -25,7 +24,7 @@ def check(B=2, S=256, H=8, D=64, causal=False, dtype=torch.bfloat16):
     torch.cuda.synchronize()
     t1 = time.time()
 
-    # --- 参照: PyTorch SDPA (math固定 & 同dtype) ---
+    # --- Reference: PyTorch SDPA (math fixed & same dtype) ---
     qf = q.reshape(B * H, S, D)
     kf = k.reshape(B * H, S, D)
     vf = v.reshape(B * H, S, D)
@@ -42,7 +41,7 @@ def check(B=2, S=256, H=8, D=64, causal=False, dtype=torch.bfloat16):
         torch.cuda.synchronize()
         t3 = time.time()
 
-    # 誤差評価はfp32に上げて実施（出力のみアップキャスト）
+    # Error evaluation is performed in fp32 (only the outputs are upcast)
     diff = (out_fa.to(torch.float32) - out_ref.to(torch.float32)).abs()
     print(f"torch: {torch.__version__}, torch.cuda: {torch.version.cuda}")
     print(f"device: {torch.cuda.get_device_name(0)}")
@@ -56,5 +55,5 @@ def check(B=2, S=256, H=8, D=64, causal=False, dtype=torch.bfloat16):
 
 
 if __name__ == "__main__":
-    # Adaはbf16OK。必要なら dtype=torch.float16 でも試せます
+    # Ada model supports bf16. If desired, you can also try dtype=torch.float16
     check(B=2, S=256, H=8, D=64, causal=False, dtype=torch.bfloat16)
