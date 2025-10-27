@@ -44,9 +44,14 @@ def build_args():
         help="Dataset split to use",
     )
     p.add_argument(
-        "--target-value", type=check_non_negative_int, required=True, help="Targeted answer value to explain"
+        "--target-value", type=check_non_negative_int, default=None, help="Targeted answer value to explain"
     )
-    return p.parse_args()
+    p.add_argument("--sample-idx", type=check_non_negative_int, default=None, help="Index of the sample to explain")
+
+    args = p.parse_args()
+    if args.target_value is not None and args.sample_idx is not None:
+        raise ValueError("Only one of `target_value` or `sample_idx` should be specified.")
+    return args
 
 
 class GLMWrapper(torch.nn.Module):
@@ -269,6 +274,7 @@ def explain_sample(
 
 
 def main():
+    set_seed(42)
     args = build_args()
 
     # Load model and tokenizer
@@ -277,7 +283,11 @@ def main():
 
     # Load dataset
     dataset = build_dataset(args.subset, args.split, node_feat_dim=model.config.node_feat_dim)
-    print("Dataset: ", dataset)
+    if args.target_value is not None:
+        filtered_ds = dataset.filter(lambda x: int(x["completion"].split(".")[0]) == args.target_value)
+    elif args.sample_idx is not None:
+        filtered_ds = dataset.filter(lambda x: x["index"] == args.sample_idx)
+    print("Dataset: ", filtered_ds)
 
     # Create wrapper and generation config
     wrapper = GLMWrapper(model, tokenizer)
@@ -288,10 +298,11 @@ def main():
         pad_token_id=tokenizer.eos_token_id,
     )
 
-    filtered_ds = dataset.filter(lambda x: int(x["completion"].split(".")[0]) == args.target_value)
+    # Directory to save explanations
     OUT_DIR = os.path.join("explanations", f"{args.subset}_{args.target_value}")
     os.makedirs(OUT_DIR, exist_ok=True)
 
+    # Compute explanations for each sample
     for sample in tqdm(filtered_ds):
         pyg_batch = create_pyg_batch(sample["graph"], device=model.device)
         explanation, output_text = explain_sample(wrapper, sample, pyg_batch, gen_cfg)
@@ -308,5 +319,4 @@ def main():
 
 
 if __name__ == "__main__":
-    set_seed(42)
     main()
