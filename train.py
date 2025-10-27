@@ -312,6 +312,7 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
         remove_unused_columns=False,
         ddp_backend="nccl",  # DDP
         ddp_find_unused_parameters=False,  # since all params are used in each forward pass
+        gradient_checkpointing=False,  # GraphTokenLM currently lacks gradient checkpoint support.
         **sft_args,
     )
 

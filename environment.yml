@@ -1,0 +1,15 @@
+name: graphtoken
+channels:
+  - anaconda
+  - pytorch
+  - conda-forge
+dependencies:
+  - python==3.11
+  - pip
+  - pip:
+      - transformers>=4.57
+      - datasets>=4.3
+      - trl>=0.24
+      - torch>=2.9
+      - torch_geometric>=2.7
+      - wandb>=0.22
