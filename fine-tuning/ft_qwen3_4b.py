@@ -6,7 +6,6 @@ Fine-tune Qwen/Qwen3-4B-Instruct-2507 on GraphQA with QLoRA (4bit).
 """
 
 import argparse
-import json
 import os
 import time
 from math import ceil
@@ -294,27 +293,12 @@ def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: d
     trainer.add_callback(PerplexityCallback)
 
     train_dataloader = trainer.get_train_dataloader()
-    world_size = int(os.environ.get("WORLD_SIZE", "1"))
     micro_batches_per_epoch = len(train_dataloader)
     steps_per_epoch = ceil(micro_batches_per_epoch / trainer.args.gradient_accumulation_steps)
 
     if save_intermediate_models:
         trainer.args.save_steps = steps_per_epoch * save_interval_epochs
         trainer.args.eval_steps = trainer.args.save_steps
-
-    if is_main_process():
-        print(
-            json.dumps(
-                {
-                    "world_size": world_size,
-                    "len(train_ds)": len(train_ds),
-                    "micro_batches_per_epoch": micro_batches_per_epoch,
-                    "steps_per_epoch": steps_per_epoch,
-                    "save_steps": trainer.args.save_steps,
-                },
-                indent=4,
-            )
-        )
 
     # Training loop
     trainer.train()
