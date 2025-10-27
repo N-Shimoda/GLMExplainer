@@ -7,12 +7,13 @@ dependencies:
   - python==3.12
   - pip
   - pip:
-      - torch
-      - torch_geometric
-      - transformers
-      - datasets
-      - trl
-      - bitsandbytes
-      - peft
-      - flash_attn
-      - wandb
+    - --index-url https://download.pytorch.org/whl/cu124
+    - torch
+    - torch_geometric
+    - transformers
+    - datasets
+    - trl
+    - bitsandbytes
+    - peft
+    - flash_attn
+    - wandb
