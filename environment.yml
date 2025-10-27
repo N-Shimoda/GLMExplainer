@@ -1,14 +1,19 @@
 name: graphtoken
 channels:
-  - defaults
+  - anaconda
+  - pytorch
   - conda-forge
 dependencies:
-- python
-  - transformers
-  - pytorch
-  - pytorch_geometric
-  - trl
-  - datasets
-  - wandb
-  - openai
-prefix: /opt/homebrew/anaconda3/envs/graphtoken
+  - python=3.12
+  - pip
+  - pip:
+    - --extra-index-url https://download.pytorch.org/whl/cu124
+    - torch
+    - torch_geometric
+    - transformers
+    - datasets
+    - trl
+    - bitsandbytes
+    - peft
+    - flash_attn
+    - wandb

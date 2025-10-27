@@ -6,7 +6,6 @@ Fine-tune Qwen/Qwen3-4B-Instruct-2507 on GraphQA with QLoRA (4bit).
 """
 
 import argparse
-import json
 import os
 import time
 from math import ceil
@@ -70,6 +69,13 @@ def build_args():
     p.add_argument("--weight-decay", type=float, default=0.1)
     p.add_argument("--save-intermediate-models", action="store_true", help="Save intermediate checkpoints")
     p.add_argument("--save-interval-epochs", type=int, default=1, help="Save intermediate checkpoints every N epochs")
+    p.add_argument(
+        "--attn-implementation",
+        type=str,
+        default="auto",
+        choices=["auto", "flash_attention_2", "sdpa", "eager"],
+        help="Attention backend. Use 'auto' to prefer FlashAttention with SDPA fallback.",
+    )
 
     # LoRA
     p.add_argument("--lora-r", type=int, default=16)
@@ -208,14 +214,38 @@ def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: d
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
         device_map = {"": local_rank}
 
-    model = AutoModelForCausalLM.from_pretrained(
-        args.base_model,
-        quantization_config=bnb_config,
-        device_map=device_map,
-        trust_remote_code=True,
-        torch_dtype=torch.bfloat16,
-        attn_implementation="flash_attention_2",
-    )
+    def _load_model(attn_impl: str):
+        return AutoModelForCausalLM.from_pretrained(
+            args.base_model,
+            quantization_config=bnb_config,
+            device_map=device_map,
+            trust_remote_code=True,
+            dtype=torch.bfloat16,
+            attn_implementation=attn_impl,
+        )
+
+    requested_attn_impl = args.attn_implementation
+    if requested_attn_impl == "auto":
+        try:
+            model = _load_model("flash_attention_2")
+        except (ImportError, RuntimeError) as err:
+            err_str = str(err)
+            if "flash_attn" not in err_str and "FlashAttention" not in err_str:
+                raise
+            if is_main_process():
+                print("[WARN] FlashAttention backend unavailable, falling back to PyTorch SDPA.")
+                print(f"[WARN] Original error: {err_str}")
+            model = _load_model("sdpa")
+    else:
+        model = _load_model(requested_attn_impl)
+
+    if getattr(model, "gradient_checkpointing_disable", None):
+        model.gradient_checkpointing_disable()
+    model.config.gradient_checkpointing = False
+    model.config.use_cache = False
+    if is_main_process():
+        print("[INFO] Disabled gradient checkpointing and cache on the base model (avoid DDP re-entrancy).")
+
     tokenizer = AutoTokenizer.from_pretrained(args.base_model, use_fast=False, trust_remote_code=True)
 
     # LoRA configuration (typical projection names for Qwen models)
@@ -246,6 +276,7 @@ def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: d
         metric_for_best_model="eval_ppl",
         greater_is_better=False,
         report_to="wandb" if args.wandb else "none",
+        gradient_checkpointing=False,
         **sft_args,
         # Qwen3 ships with a chat template in the tokenizer so it is applied automatically
         # (Optionally set eos_token explicitly: SFTConfig(eos_token=tokenizer.eos_token))
@@ -260,27 +291,12 @@ def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: d
     )
 
     train_dataloader = trainer.get_train_dataloader()
-    world_size = int(os.environ.get("WORLD_SIZE", "1"))
     micro_batches_per_epoch = len(train_dataloader)
     steps_per_epoch = ceil(micro_batches_per_epoch / trainer.args.gradient_accumulation_steps)
 
     if save_intermediate_models:
         trainer.args.save_steps = steps_per_epoch * save_interval_epochs
         trainer.args.eval_steps = trainer.args.save_steps
-
-    if is_main_process():
-        print(
-            json.dumps(
-                {
-                    "world_size": world_size,
-                    "len(train_ds)": len(train_ds),
-                    "micro_batches_per_epoch": micro_batches_per_epoch,
-                    "steps_per_epoch": steps_per_epoch,
-                    "save_steps": trainer.args.save_steps,
-                },
-                indent=4,
-            )
-        )
 
     # Training loop
     trainer.train()

@@ -262,8 +262,18 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
             self.llm.eval()
 
         # --- sync basic generation fields so GenerationMixin works cleanly ---
-        for k in ["vocab_size", "pad_token_id", "bos_token_id", "eos_token_id"]:
-            setattr(self.config, k, getattr(self.llm.config, k, None))
+        mirror_keys = [
+            "vocab_size",
+            "pad_token_id",
+            "bos_token_id",
+            "eos_token_id",
+            "hidden_size",
+            "num_hidden_layers",
+            "num_attention_heads",
+        ]
+        for k in mirror_keys:
+            if hasattr(self.llm.config, k):
+                setattr(self.config, k, getattr(self.llm.config, k))
 
         # make sure tying is done once at init (harmless if already tied)
         if getattr(self.config, "tie_word_embeddings", False):

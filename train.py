@@ -312,6 +312,7 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
         remove_unused_columns=False,
         ddp_backend="nccl",  # DDP
         ddp_find_unused_parameters=False,  # since all params are used in each forward pass
+        gradient_checkpointing=False,  # GraphTokenLM currently lacks gradient checkpoint support.
         **sft_args,
     )
 
@@ -353,7 +354,7 @@ def eval_ddp(model, subset: str, test_ds: Dataset, max_new_tokens: int, date_str
 
     # Evaluate on the shard assigned to this rank.
     if is_main_process():
-        print("Max_new_tokens:", max_new_tokens)
+        print(f"[INFO] max_new_tokens={max_new_tokens}")
     local_results = eval_model(model, local_test_ds, batch_size=8, max_new_tokens=max_new_tokens)
 
     if dist.is_initialized():
