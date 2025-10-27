@@ -21,6 +21,12 @@ Choice of the subsets are "node_count", "edge_count", "cycle_check", "triangle_c
 python explain.py --model-path MODEL_PATH --subset SUBSET
 ```
 
+## Environment setup
+
+```shell
+conda env create -f environment.yml
+```
+
 ## Files & Directories
 
 - `fine-tuning`: Codes for fine-tuning `Qwen3-4B-Instruct-2507` on Graph-level tasks of GraphQA dataset.
