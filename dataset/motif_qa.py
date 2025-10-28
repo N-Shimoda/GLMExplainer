@@ -23,22 +23,29 @@ if not is_undirected(data.edge_index):
     raise ValueError("The generated graph is not undirected.")
 G = to_networkx(data, to_undirected=True)
 
-# ノード座標を生成
+# Setup layout
 pos = nx.spring_layout(G, seed=42)
 
-# node_mask を取得して motif ノードを抽出
+# Extract motif nodes from node_mask
 node_mask = getattr(data, "node_mask", None)
-if node_mask is None:
-    raise AttributeError(f"This Data object has no 'node_mask'. Available keys: {list(data.keys())}")
-
+print(node_mask)
 motif_nodes = node_mask.nonzero(as_tuple=True)[0].tolist()
 normal_nodes = [n for n in G.nodes if n not in motif_nodes]
+print(f"Motif nodes: {motif_nodes}")
 
-# 描画
+# Draw figure
 plt.figure(figsize=(6, 6))
 nx.draw_networkx_nodes(G, pos, nodelist=normal_nodes, node_color="skyblue", node_size=40)
 nx.draw_networkx_nodes(G, pos, nodelist=motif_nodes, node_color="orange", node_size=80)
 nx.draw_networkx_edges(G, pos, alpha=0.3)
+
+# Draw node labels (indices). Use black for normal nodes and white for motif nodes
+# so labels remain readable on the different node colors.
+labels = {n: str(n) for n in G.nodes()}
+if normal_nodes:
+    nx.draw_networkx_labels(G, pos, labels={n: labels[n] for n in normal_nodes}, font_size=8, font_color="black")
+if motif_nodes:
+    nx.draw_networkx_labels(G, pos, labels={n: labels[n] for n in motif_nodes}, font_size=8, font_color="white")
 
 plt.title("Graph with Motifs Highlighted")
 plt.axis("off")
