@@ -12,6 +12,7 @@ from torch_geometric.datasets.graph_generator import (  # noqa E401
     TreeGraph,
 )
 from torch_geometric.explain import Explanation
+from torch_geometric.transforms import BaseTransform
 from torch_geometric.utils import is_undirected, to_networkx
 
 _NAME2GEN = {
@@ -39,6 +40,7 @@ class NegativeGraphs(InMemoryDataset):
         num_graphs: int,
         graph_generator_kwargs: Optional[dict] = None,
         seed: Optional[int] = None,
+        **kwargs,
     ):
         """Initialize the negative graph dataset.
 
@@ -53,7 +55,10 @@ class NegativeGraphs(InMemoryDataset):
             Keyword arguments passed to the graph generator during construction.
         seed : int, optional
             Random seed for deterministic graph generation.
+        **kwargs : optional
+            Additional keyword arguments for customization.
         """
+        super().__init__(**kwargs)
         self.num_graphs = int(num_graphs)
         self.graph_generator_kwargs = graph_generator_kwargs or {}
 
@@ -148,8 +153,49 @@ class NegativeGraphs(InMemoryDataset):
 
         # Optionally add node labels for compatibility.
         # base.y = torch.zeros(num_nodes, dtype=torch.long, device=device)
+        if self.transform is not None:
+            base = self.transform(base)
 
         return base
+
+
+class ShuffleNodes(BaseTransform):
+    def __init__(self, keep_perm: bool = False, generator: torch.Generator | None = None):
+        self.keep_perm = keep_perm
+        self.generator = generator
+
+    # 互換性のために __call__ と forward の両方を実装
+    def __call__(self, data: Data) -> Data:
+        return self._apply(data)
+
+    def forward(self, data: Data) -> Data:  # BaseTransform が forward を要求する版に対応
+        return self._apply(data)
+
+    def _apply(self, data: Data) -> Data:
+        N = data.num_nodes
+        if N is None:
+            return data
+        perm = torch.randperm(N, generator=self.generator, device=data.edge_index.device)
+
+        # ノードIDの置換（列順は維持）
+        data.edge_index = perm[data.edge_index]
+
+        # ノードに紐づくテンソルを並べ替え
+        if hasattr(data, "x") and data.x is not None and data.x.size(0) == N:
+            data.x = data.x[perm]
+        if hasattr(data, "y") and data.y is not None and data.y.numel() == N:
+            data.y = data.y[perm]
+        if hasattr(data, "node_mask") and data.node_mask is not None and data.node_mask.numel() == N:
+            data.node_mask = data.node_mask[perm]
+        if hasattr(data, "pos") and data.pos is not None and data.pos.size(0) == N:
+            data.pos = data.pos[perm]
+
+        # エッジに紐づくもの（edge_mask 等）は、edge_index の「列順」を変えない限り不要
+        # （列順までシャッフルした場合だけ、同じ順序変換を edge_mask にも適用が必要）
+
+        if self.keep_perm:
+            data.permutation = perm  # 後で逆写像が必要なら保存（任意）
+        return data
 
 
 def create_base_graphs(num_pos_samples: int, num_neg_samples: int):
@@ -160,16 +206,18 @@ def create_base_graphs(num_pos_samples: int, num_neg_samples: int):
         motif_generator="house",
         num_motifs=1,
         num_graphs=num_pos_samples,
+        transform=ShuffleNodes(),
     )
     ds1 = NegativeGraphs(
         graph_generator=graph_gen,
         num_graphs=num_neg_samples,
+        transform=ShuffleNodes(),
     )
 
     return ds0, ds1
 
 
-def visualize_graph(data: Explanation, filename: str):
+def visualize_graph(data: Union[Explanation, Data], filename: str):
 
     if not is_undirected(data.edge_index):
         raise ValueError("The generated graph is not undirected.")
@@ -180,10 +228,8 @@ def visualize_graph(data: Explanation, filename: str):
 
     # Extract motif nodes from node_mask
     node_mask = getattr(data, "node_mask", None)
-    print(node_mask)
     motif_nodes = node_mask.nonzero(as_tuple=True)[0].tolist()
     normal_nodes = [n for n in G.nodes if n not in motif_nodes]
-    print(f"Motif nodes: {motif_nodes}")
 
     # Draw figure
     plt.figure(figsize=(6, 6))
@@ -208,9 +254,11 @@ def visualize_graph(data: Explanation, filename: str):
 if __name__ == "__main__":
     ds0, ds1 = create_base_graphs(num_pos_samples=100, num_neg_samples=100)
     print("Positive dataset:", ds0, len(ds0))
-    for i in range(3):
+    for i in range(1):
+        print(ds0[i])
         visualize_graph(ds0[i], filename=f"dataset/pos_graph_{i}.png")
 
     print("Negative dataset:", ds1, len(ds1))
-    for i in range(3):
+    for i in range(1):
+        print(ds1[i])
         visualize_graph(ds1[i], filename=f"dataset/neg_graph_{i}.png")
