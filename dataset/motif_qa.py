@@ -158,17 +158,21 @@ class NegativeGraphs(InMemoryDataset):
 
         return base
 
+    def __repr__(self) -> str:
+        graph_gen_repr = repr(self.gen)
+        return f"{self.__class__.__name__}(" f"{self.num_graphs}, " f"graph_generator={graph_gen_repr}" f")"
+
 
 class ShuffleNodes(BaseTransform):
     def __init__(self, keep_perm: bool = False, generator: torch.Generator | None = None):
         self.keep_perm = keep_perm
         self.generator = generator
 
-    # 互換性のために __call__ と forward の両方を実装
+    # Implement both __call__ and forward for compatibility across versions.
     def __call__(self, data: Data) -> Data:
         return self._apply(data)
 
-    def forward(self, data: Data) -> Data:  # BaseTransform が forward を要求する版に対応
+    def forward(self, data: Data) -> Data:  # Support variants where BaseTransform expects forward.
         return self._apply(data)
 
     def _apply(self, data: Data) -> Data:
@@ -177,10 +181,10 @@ class ShuffleNodes(BaseTransform):
             return data
         perm = torch.randperm(N, generator=self.generator, device=data.edge_index.device)
 
-        # ノードIDの置換（列順は維持）
+        # Permute node IDs while preserving edge column order.
         data.edge_index = perm[data.edge_index]
 
-        # ノードに紐づくテンソルを並べ替え
+        # Reorder tensors associated with nodes.
         if hasattr(data, "x") and data.x is not None and data.x.size(0) == N:
             data.x = data.x[perm]
         if hasattr(data, "y") and data.y is not None and data.y.numel() == N:
@@ -190,11 +194,11 @@ class ShuffleNodes(BaseTransform):
         if hasattr(data, "pos") and data.pos is not None and data.pos.size(0) == N:
             data.pos = data.pos[perm]
 
-        # エッジに紐づくもの（edge_mask 等）は、edge_index の「列順」を変えない限り不要
-        # （列順までシャッフルした場合だけ、同じ順序変換を edge_mask にも適用が必要）
+        # Edge-wise tensors (edge_mask, etc.) stay valid unless the column order changes.
+        # Apply the same permutation to edge-wise data only when columns are shuffled too.
 
         if self.keep_perm:
-            data.permutation = perm  # 後で逆写像が必要なら保存（任意）
+            data.permutation = perm  # Optionally retain permutation when inverse mapping is needed.
         return data
 
 
@@ -254,11 +258,11 @@ def visualize_graph(data: Union[Explanation, Data], filename: str):
 if __name__ == "__main__":
     ds0, ds1 = create_base_graphs(num_pos_samples=100, num_neg_samples=100)
     print("Positive dataset:", ds0, len(ds0))
-    for i in range(1):
+    for i in range(3):
         print(ds0[i])
         visualize_graph(ds0[i], filename=f"dataset/pos_graph_{i}.png")
 
-    print("Negative dataset:", ds1, len(ds1))
-    for i in range(1):
+    print("\nNegative dataset:", ds1, len(ds1))
+    for i in range(3):
         print(ds1[i])
         visualize_graph(ds1[i], filename=f"dataset/neg_graph_{i}.png")
