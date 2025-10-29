@@ -169,9 +169,7 @@ def build_dataset(
     """
 
     def modify_dataset(example):
-        return add_graph_column(example, k=node_feat_dim)
-
-    cols = ["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"]
+        return add_graph_column(example, k=node_feat_dim, ds_name="GraphQA")
 
     splits = {"train": "zero_shot_train", "validation": "zero_shot_validation"}
     if do_eval:
@@ -180,7 +178,7 @@ def build_dataset(
     raw_ds = load_dataset("baharef/GraphQA", subset, split=splits)
     processed_ds = raw_ds.map(
         modify_dataset,
-        remove_columns=cols,
+        remove_columns=["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"],
         load_from_cache_file=load_from_cache_file,
         desc="Preprocessing dataset",
     )
@@ -228,9 +226,14 @@ def build_motif_dataset(
     splits = {"train": "train", "validation": "validation"}
     if do_eval:
         splits["test"] = "test"
-    raw_ds = load_dataset("naos-ku/motif-qa", split=splits)
+    raw_ds = load_dataset("naos-ku/motif-qa", "yes_no", split=splits)
 
-    processed_ds = raw_ds.map(modify_dataset, load_from_cache_file=load_from_cache_file)
+    processed_ds = raw_ds.map(
+        modify_dataset,
+        load_from_cache_file=load_from_cache_file,
+        remove_columns=["response", "nodes", "edges", "nnodes", "nedges"],
+        desc="Preprocessing dataset",
+    )
 
     train_ds = processed_ds["train"]
     eval_ds = processed_ds["validation"]
