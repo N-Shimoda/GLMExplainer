@@ -196,7 +196,9 @@ def build_dataset(
     return train_ds, eval_ds, test_ds
 
 
-def build_motif_dataset(node_feat_dim: int, do_eval: bool = False) -> tuple[Dataset, Dataset, Optional[Dataset]]:
+def build_motif_dataset(
+    node_feat_dim: int, do_eval: bool = False, load_from_cache_file: bool = True
+) -> tuple[Dataset, Dataset, Optional[Dataset]]:
     """Build house motif dataset for training and evaluation.
 
     Parameters
@@ -205,6 +207,8 @@ def build_motif_dataset(node_feat_dim: int, do_eval: bool = False) -> tuple[Data
         Dimensionality of node features (k in Laplacian PE).
     do_eval : bool, default=False
         Whether to prepare the test dataset for evaluation.
+    load_from_cache_file : bool, default=True
+        Whether to load from cache file if available.
 
     Returns
     -------
@@ -226,7 +230,7 @@ def build_motif_dataset(node_feat_dim: int, do_eval: bool = False) -> tuple[Data
         splits["test"] = "test"
     raw_ds = load_dataset("naos-ku/motif-qa", split=splits)
 
-    processed_ds = raw_ds.map(modify_dataset, load_from_cache_file=False)
+    processed_ds = raw_ds.map(modify_dataset, load_from_cache_file=load_from_cache_file)
 
     train_ds = processed_ds["train"]
     eval_ds = processed_ds["validation"]
@@ -471,6 +475,7 @@ def main():
         train_ds, eval_ds, test_ds = build_motif_dataset(
             glm_args["node_feat_dim"],
             do_eval=args.do_eval,
+            load_from_cache_file=False,
         )
     # Save datasets locally as JSONL (only on the main process to avoid races)
     out_dir = os.path.join("ds_debug", args.subset)
