@@ -5,9 +5,11 @@ channels:
   - conda-forge
 dependencies:
   - python=3.12
+  - scipy
   - matplotlib
-  - ninja
+  - openai
   - pip
+  - ninja
   - pip:
     - --extra-index-url https://download.pytorch.org/whl/cu124
     - torch
