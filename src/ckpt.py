@@ -13,15 +13,14 @@ def _checkpoint_step(path: str) -> int:
 def _get_dir_type(path: str) -> Literal["task", "model", "checkpoint"]:
     """Classify directory type."""
     dir_name = os.path.basename(path.rstrip(os.sep))
-
-    if dir_name in ["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow", "multitask"]:
-        return "task"
+    if dir_name.startswith("checkpoint-"):
+        return "checkpoint"
     elif any(
         entry.startswith("checkpoint") and os.path.isdir(os.path.join(path, entry)) for entry in os.listdir(path)
     ):
         return "model"
-    elif dir_name.startswith("checkpoint-"):
-        return "checkpoint"
+    elif dir_name in ["node_count", "edge_count", "cycle_check", "triangle_counting", "house_check", "multitask"]:
+        return "task"
     else:
         raise ValueError(f"Directory '{path}' is neither a task, model, nor checkpoint directory.")
 

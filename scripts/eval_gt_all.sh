@@ -29,7 +29,7 @@ while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--split)
 		if [[ $# -lt 2 ]]; then
-			echo "ERROR: --split に値が必要です (test|train|validation)" >&2
+			echo "ERROR: --split requires a value (test|train|validation)" >&2
 			exit 2
 		fi
 		SPLIT="$2"
@@ -45,7 +45,7 @@ USAGE
 		exit 0
 		;;
 	*)
-		echo "ERROR: 未知の引数: $1" >&2
+		echo "ERROR: Unknown argument: $1" >&2
 		exit 2
 		;;
 	esac
@@ -65,6 +65,7 @@ subsets=(
 	edge_count
 	cycle_check
 	triangle_counting
+	house_check
 )
 
 for subset in "${subsets[@]}"; do

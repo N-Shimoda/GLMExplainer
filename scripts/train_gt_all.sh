@@ -24,16 +24,14 @@ subsets=(
 	edge_count
 	cycle_check
 	triangle_counting
+	house_check
 )
 
 for subset in "${subsets[@]}"; do
 	cmd=(
 		torchrun --nproc_per_node=2 train.py --subset "${subset}"
-		--base-model "Qwen/Qwen3-4B-Base"
-		--gnn-type "GCN"
 		--num-graph-tokens 4 --node-feat-dim 8 --pos-emb-dim 8
 		--gnn-hidden-dim 256 --gnn-out-dim 512 --num-gnn-layers 4
-		--num-proj-layers 1
 		--epochs 12
 		# --optim "lion" --lr 0.01
 		# --lr-scheduler-type "linear" --warmup-ratio 0.05
