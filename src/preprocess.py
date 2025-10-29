@@ -149,7 +149,7 @@ def add_graph_column(example, k: int = 4, ds_name: Literal["GraphQA", "motif-qa"
         Number of Laplacian positional embedding dimensions to include in the
         generated graph features.
     ds_name : {'GraphQA', 'motif-qa'}, default='GraphQA'
-        Type of dataset to process. Currently only 'GraphQA' is supported.
+        Type of dataset to process. Both 'GraphQA' and 'motif-qa' are supported.
 
     Returns
     -------
