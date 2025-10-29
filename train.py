@@ -2,6 +2,7 @@ import argparse
 import os
 from datetime import datetime
 from math import ceil
+from typing import Optional
 
 import torch.distributed as dist
 from datasets import load_dataset
@@ -31,7 +32,7 @@ def build_args(*, multitask: bool = False):
         p.add_argument(
             "--subset",
             type=str,
-            choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
+            choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "house_check"],
             default="edge_count",
         )
     p.add_argument("--do-eval", action="store_true", help="Run evaluation after training")
@@ -70,7 +71,6 @@ def build_args(*, multitask: bool = False):
 
     # Logging
     p.add_argument("--wandb", action="store_true", help="Use wandb logging")
-    p.add_argument("--wandb-project", type=str, default="GraphQA-GLM")
 
     args = p.parse_args()
 
@@ -110,6 +110,36 @@ def build_args(*, multitask: bool = False):
             delattr(args, attr)
 
     return glm_args, sft_args, args
+
+
+def setup_run_context(subset: str, use_wandb: bool):
+    """Setup output directory and initialize wandb if needed.
+
+    Parameters
+    ----------
+    subset : str
+        Subset name for the current run.
+    use_wandb : bool
+        Whether to use wandb logging.
+
+    Returns
+    -------
+    output_dir : str
+        Path to the output directory for the current run.
+    date_str : str
+        Timestamp string for the current run.
+    """
+    date_str = datetime.now().strftime("%m%d-%H%M")
+    run_name = f"{subset}_{date_str}"
+    output_dir = os.path.join("outputs", subset, date_str)
+    if use_wandb and is_main_process():
+        match subset:
+            case "house_check":
+                wandb.init(project="MotifQA-GLM", name=run_name)
+            case _:
+                wandb.init(project="GraphQA-GLM", name=run_name)
+
+    return output_dir, date_str
 
 
 def build_dataset(
@@ -162,6 +192,45 @@ def build_dataset(
     # Sync processes if running with DDP
     if dist.is_available() and dist.is_initialized():
         dist.barrier()
+
+    return train_ds, eval_ds, test_ds
+
+
+def build_motif_dataset(node_feat_dim: int, do_eval: bool = False) -> tuple[Dataset, Dataset, Optional[Dataset]]:
+    """Build house motif dataset for training and evaluation.
+
+    Parameters
+    ----------
+    node_feat_dim : int
+        Dimensionality of node features (k in Laplacian PE).
+    do_eval : bool, default=False
+        Whether to prepare the test dataset for evaluation.
+
+    Returns
+    -------
+    train_ds : Dataset
+        Training dataset with `prompt`, `completion`, and `graph` columns.
+    eval_ds : Dataset
+        Evaluation dataset with `prompt`, `completion`, and `graph` columns.
+    test_ds : Dataset | None
+        Test dataset with `prompt`, `completion`, and `graph` columns, or None if not needed.
+
+    """
+
+    def modify_dataset(example):
+        return add_graph_column(example, k=node_feat_dim, ds_name="motif-qa")
+
+    # Load and preprocess the dataset
+    splits = {"train": "train", "validation": "validation"}
+    if do_eval:
+        splits["test"] = "test"
+    raw_ds = load_dataset("naos-ku/motif-qa", split=splits)
+
+    processed_ds = raw_ds.map(modify_dataset, load_from_cache_file=False)
+
+    train_ds = processed_ds["train"]
+    eval_ds = processed_ds["validation"]
+    test_ds = processed_ds["test"] if do_eval else None
 
     return train_ds, eval_ds, test_ds
 
@@ -371,17 +440,13 @@ def eval_ddp(model, subset: str, test_ds: Dataset, max_new_tokens: int, date_str
             wandb.log({"test_acc": acc})
 
 
-if __name__ == "__main__":
+def main():
     glm_args, sft_args, args = build_args()
     if is_main_process():
         print(f"Subset: {args.subset}")
 
     # Wandb initialization, output directory
-    date_str = datetime.now().strftime("%m%d-%H%M")
-    run_name = f"{args.subset}_{date_str}"
-    output_dir = os.path.join("outputs", args.subset, date_str)
-    if args.wandb and is_main_process():
-        wandb.init(project=args.wandb_project, name=run_name)
+    output_dir, date_str = setup_run_context(args.subset, args.wandb)
 
     # Fix seed for reproducibility
     set_seed(42)
@@ -395,12 +460,17 @@ if __name__ == "__main__":
             glm_args["node_feat_dim"],
             do_eval=args.do_eval,
         )
-    else:
+    elif args.subset in ["node_count", "edge_count", "cycle_check", "triangle_counting"]:
         train_ds, eval_ds, test_ds = build_dataset(
             args.subset,
             glm_args["node_feat_dim"],
             do_eval=args.do_eval,
             load_from_cache_file=False,
+        )
+    else:
+        train_ds, eval_ds, test_ds = build_motif_dataset(
+            glm_args["node_feat_dim"],
+            do_eval=args.do_eval,
         )
     # Save datasets locally as JSONL (only on the main process to avoid races)
     out_dir = os.path.join("ds_debug", args.subset)
@@ -422,3 +492,7 @@ if __name__ == "__main__":
 
     if dist.is_initialized():
         dist.destroy_process_group()
+
+
+if __name__ == "__main__":
+    main()

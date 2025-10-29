@@ -119,7 +119,7 @@ def get_max_new_tokens(subset: str, use_custom: bool = False) -> int:
     max_new_tokens_dict = (
         {"node_count": 96, "edge_count": 256, "cycle_check": 512, "triangle_counting": 256}
         if use_custom
-        else {"node_count": 4, "edge_count": 4, "cycle_check": 8, "triangle_counting": 4}
+        else {"node_count": 4, "edge_count": 4, "cycle_check": 8, "triangle_counting": 4, "house_check": 24}
     )
     return max_new_tokens_dict[subset]
 

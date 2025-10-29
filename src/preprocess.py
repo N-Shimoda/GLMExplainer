@@ -1,6 +1,6 @@
 import re
 from pprint import pprint
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Literal, Tuple
 
 import torch
 
@@ -137,7 +137,7 @@ def create_pyg_dict(nodes: List[int], edges: List[Tuple[int, int]], k: int) -> D
     }
 
 
-def add_graph_column(example, k: int = 4) -> Dict[str, Any]:
+def add_graph_column(example, k: int = 4, ds_name: Literal["GraphQA", "motif-qa"] = "GraphQA") -> Dict[str, Any]:
     """Enrich an example with graph metadata parsed from the question.
 
     Parameters
@@ -148,23 +148,30 @@ def add_graph_column(example, k: int = 4) -> Dict[str, Any]:
     k : int, default=4
         Number of Laplacian positional embedding dimensions to include in the
         generated graph features.
+    ds_name : {'GraphQA', 'motif-qa'}, default='GraphQA'
+        Type of dataset to process. Currently only 'GraphQA' is supported.
 
     Returns
     -------
     dict
         Updated example with ``prompt``, ``completion``, and ``graph`` keys.
     """
-    text = example["question"]
-    nodes = extract_nodes_from_text(text)
-    edges = extract_edges_from_text(text)
+    match ds_name:
+        case "GraphQA":
+            text = example["question"]
+            nodes = extract_nodes_from_text(text)
+            edges = extract_edges_from_text(text)
+            example["prompt"] = example["task_description"]
+            example["completion"] = example["answer"].strip()
+            example["graph"] = create_pyg_dict(nodes, edges, k=k)  # k: dimension of LPE
+        case "motif-qa":
+            example["prompt"] = f"Q: {example['prompt']}\nA:"
+            example["completion"] = example["response"]
+            example["graph"] = create_pyg_dict(example["nodes"], example["edges"], k=k)
 
-    example["prompt"] = example["task_description"]
-    example["completion"] = example["answer"].strip()
-    example["graph"] = create_pyg_dict(nodes, edges, k=k)  # k: dimension of LPE
     return example
 
 
-# --- Execution block ---
 if __name__ == "__main__":
 
     # User-provided text

@@ -13,7 +13,7 @@ def _normalize_text(s: str) -> str:
 def comp_accuracy(
     preds: List[str],
     refs: List[str],
-    subset: Literal["cycle_check", "node_count", "edge_count", "triangle_counting"],
+    subset: Literal["cycle_check", "node_count", "edge_count", "triangle_counting", "house_check"],
     exact_match: bool = False,
 ) -> tuple[float, int]:
     """
@@ -25,7 +25,7 @@ def comp_accuracy(
         The list of model predictions.
     refs : List[str]
         The list of reference answers.
-    subset : Literal["cycle_check", "node_count", "edge_count", "triangle_counting"]
+    subset : Literal["cycle_check", "node_count", "edge_count", "triangle_counting", "house_check"]
         The subset of the GraphQA dataset.
     exact_match : bool, default=False
         Whether to use exact match for the "cycle_check" subset.
@@ -39,11 +39,11 @@ def comp_accuracy(
         The number of unknown predictions.
         This value is only defined for the "cycle_check" subset.
     """
-    if subset not in ["cycle_check", "node_count", "edge_count", "triangle_counting"]:
+    if subset not in ["cycle_check", "node_count", "edge_count", "triangle_counting", "house_check"]:
         raise NotImplementedError(f"Unsupported subset: {subset}")
 
     match subset:
-        case "cycle_check":
+        case "cycle_check" | "house_check":
             if exact_match:
                 acc = sum(_normalize_text(p) == _normalize_text(r) for p, r in zip(preds, refs)) / max(1, len(refs))
                 num_unknown = 0
