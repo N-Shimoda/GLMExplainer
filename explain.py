@@ -277,8 +277,8 @@ def _generate_explanation(
     acc, _, correct_mask = comp_accuracy(generated, [sample["completion"]] * len(generated), subset="house_check")
     if not any(correct_mask):
         print(
-            f"[WARN] Failed to generate the correct answer after {num_trials} trials "
-            f"(correct answer: {sample['completion']})."
+            f"[WARN] Failed to generate the correct answer for sample[index={sample['index']}] "
+            f"(correct answer: `{sample['completion']}`)."
         )
         return None, acc
 
