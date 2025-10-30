@@ -4,6 +4,7 @@ from typing import Dict
 import matplotlib.pyplot as plt
 import networkx as nx
 import torch
+from matplotlib import colors as mcolors
 from torch_geometric.explain import Explanation
 
 
@@ -14,7 +15,7 @@ def visualize_motif_explanation(
     f1: float,
     auroc: float,
     auprc: float,
-    normal_accuracy_display: str,
+    ans_accuracy: float,
 ) -> None:
     """Visualize edge attributions for a MotifQA sample with motif highlights.
 
@@ -34,9 +35,8 @@ def visualize_motif_explanation(
         AUROC metric for the explanation shown in the annotation textbox.
     auprc : float
         AUPRC metric for the explanation shown in the annotation textbox.
-    normal_accuracy_display : str
-        Textual summary of generation accuracy across trials (for example ``\"2/3\"``) displayed
-        alongside the metrics.
+    ans_accuracy : float
+        Fraction of successful generations across trials, expected within ``[0, 1]``.
 
     Returns
     -------
@@ -75,7 +75,7 @@ def visualize_motif_explanation(
     motif_node_ids = sample.get("motif_nodes", [])
     motif_idx_set = {node_to_idx[nid] for nid in motif_node_ids if nid in node_to_idx}
 
-    node_colors = ["#ff8c00" if node in motif_idx_set else "#000000" for node in G.nodes]
+    node_colors = ["#ff8c00" if node in motif_idx_set else "#87ceeb" for node in G.nodes]
     node_sizes = [600 if node in motif_idx_set else 300 for node in G.nodes]
     labels = {idx: str(nodes_list[idx]) if idx < len(nodes_list) else str(idx) for idx in G.nodes}
 
@@ -89,12 +89,23 @@ def visualize_motif_explanation(
     else:
         norm_weights = []
 
-    fig, ax = plt.subplots(figsize=(6, 4))
+    fig, ax_graph = plt.subplots(figsize=(7, 4))
+
     if len(G) > 0:
+        xs = [coord[0] for coord in pos.values()]
+        ys = [coord[1] for coord in pos.values()]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        span_x = max(max_x - min_x, 1e-6)
+        span_y = max(max_y - min_y, 1e-6)
+        for node, (x_coord, y_coord) in pos.items():
+            norm_x = (x_coord - min_x) / span_x
+            norm_y = (y_coord - min_y) / span_y
+            pos[node] = (0.72 * norm_x + 0.02, 0.75 * norm_y + 0.1)
         nx.draw_networkx_edges(
             G,
             pos,
-            ax=ax,
+            ax=ax_graph,
             edge_color=norm_weights if norm_weights else None,
             edge_cmap=plt.cm.Blues if norm_weights else None,
             edge_vmin=0.0 if norm_weights else None,
@@ -106,33 +117,37 @@ def visualize_motif_explanation(
             pos,
             node_color=node_colors,
             node_size=node_sizes,
-            ax=ax,
+            ax=ax_graph,
             linewidths=1.5,
             edgecolors="#333333",
         )
-        nx.draw_networkx_labels(G, pos, labels=labels, font_color="white", ax=ax)
+        nx.draw_networkx_labels(G, pos, labels=labels, font_color="white", ax=ax_graph)
+        if norm_weights:
+            sm = plt.cm.ScalarMappable(cmap=plt.cm.Blues, norm=mcolors.Normalize(vmin=0.0, vmax=1.0))
+            cbar = fig.colorbar(sm, ax=ax_graph, orientation="horizontal", fraction=0.046, pad=0.08)
+            cbar.set_label("Edge importance")
     else:
-        ax.text(0.5, 0.5, "Empty graph", ha="center", va="center", fontsize=12)
+        ax_graph.text(0.5, 0.5, "Empty graph", ha="center", va="center", fontsize=12)
 
     textbox_lines = [
         f"Sample #{sample.get('index', 'N/A')}",
-        f"Normal Accuracy: {normal_accuracy_display}",
+        f"Answer Accuracy: {ans_accuracy:.3f}",
         f"F1: {f1:.3f}",
         f"AUROC: {auroc:.3f}",
         f"AUPRC: {auprc:.3f}",
     ]
-    ax.text(
-        0.02,
+    ax_graph.text(
+        0.98,
         0.98,
         "\n".join(textbox_lines),
-        transform=ax.transAxes,
-        ha="left",
+        transform=ax_graph.transAxes,
+        ha="right",
         va="top",
         fontsize=10,
         bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.85),
     )
 
-    ax.set_axis_off()
+    ax_graph.set_axis_off()
     fig.tight_layout()
     os.makedirs(os.path.dirname(graph_path), exist_ok=True)
     fig.savefig(graph_path, format="svg")

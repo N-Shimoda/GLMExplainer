@@ -75,6 +75,8 @@ def build_args():
         raise ValueError("`subset` argument must be specified for GraphQA dataset.")
     if args.explain_pos_samples and args.dataset != "MotifQA":
         raise ValueError("`--explain-pos-sample` is only supported for the MotifQA dataset.")
+    if args.num_trials < 1:
+        raise ValueError("`num_trials` must be at least 1.")
 
     return args
 
@@ -207,7 +209,7 @@ def _get_gt_explanation(sample: dict[str, str]) -> torch.Tensor:
 
 def _generate_explanation(
     wrapper: GLMWrapper, sample: dict[str, str], pyg_batch: PygBatch, gen_cfg: GenerationConfig, num_trials=10
-):
+) -> tuple[torch.Tensor | None, float]:
     """Generates output for the given sample and explains it using GNNExplainer.
 
     Parameters
@@ -228,12 +230,8 @@ def _generate_explanation(
     explanation : torch_geometric.explain.Explanation | None
         The explanation object containing the results, or ``None`` when no
         correct answer was produced within the allotted trials.
-    output_text : str | None
-        The generated output text when available.
     accuracy : float
         Ratio of correct generations within ``num_trials``.
-    correct_count : int
-        Number of correct generations observed.
     """
     # Generate output and verify correctness
     generated = [wrapper.set_input(sample["prompt"], pyg_batch, gen_cfg) for _ in range(num_trials)]
@@ -241,7 +239,6 @@ def _generate_explanation(
     # Compute accuracy
     acc, _, correct_mask = comp_accuracy(generated, [sample["completion"]] * len(generated), subset="house_check")
     correct_count = sum(1 for flag in correct_mask if flag)
-    print(f"Generated outputs: {generated} (acc={acc:.2f})")
     if not any(correct_mask):
         print(
             f"[WARN] Failed to generate the correct answer after {num_trials} "
@@ -264,7 +261,7 @@ def _generate_explanation(
         ),
     )
     explanation = explainer(x=pyg_batch.x, edge_index=pyg_batch.edge_index, batch=pyg_batch.batch)
-    return explanation, generated[0], acc, correct_count
+    return explanation, acc
 
 
 def explain_sample(
@@ -276,13 +273,12 @@ def explain_sample(
     log_path: str,
     fieldnames: list[str],
     dataset_name: str,
+    NUM_GEN_TRIALS: int = 10,
 ) -> tuple[bool, float, float, float]:
     """Explain a single sample, log metrics, and emit per-trial artifacts."""
-    model_device = getattr(wrapper.model, "device", None)
-    if model_device is None:
-        model_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model_device = wrapper.model.device
     pyg_batch = create_pyg_batch(sample["graph"], device=model_device)
-    explanation, output_text, acc, correct_count = _generate_explanation(wrapper, sample, pyg_batch, gen_cfg)
+    explanation, ans_accuracy = _generate_explanation(wrapper, sample, pyg_batch, gen_cfg, num_trials=NUM_GEN_TRIALS)
 
     if explanation is None:
         return False, 0.0, 0.0, 0.0
@@ -292,20 +288,13 @@ def explain_sample(
     pred_edge_mask = explanation.edge_mask.detach().cpu()
     auroc, f1 = groundtruth_metrics(pred_edge_mask, gt_edge_mask, metrics=["auroc", "f1_score"])
     auprc = average_precision(pred_edge_mask, gt_edge_mask.int(), task="binary").item()
-    normal_acc_display = f"{correct_count}/{num_trials}"
-
-    print(f"Question: `{sample['prompt']}`")
-    print(f"Generated answer: `{output_text}`")
-    print(f"Correct answer: `{sample['completion']}`")
-    print(explanation)
-    print(f"Explanation accuracy: F1={f1:.3f}, AUROC={auroc:.3f}, AUPRC={auprc:.3f}")
 
     metrics_logged = False
     if dataset_name == "MotifQA" and len(sample.get("motif_nodes", [])) > 0:
         record = {
             "sample_index": sample["index"],
             "trial": trial_idx,
-            "normal_accuracy": float(acc),
+            "answer_accuracy": float(ans_accuracy),
             "f1": float(f1),
             "auroc": float(auroc),
             "auprc": float(auprc),
@@ -327,13 +316,12 @@ def explain_sample(
             f1=float(f1),
             auroc=float(auroc),
             auprc=float(auprc),
-            normal_accuracy_display=normal_acc_display,
+            ans_accuracy=float(ans_accuracy),
         )
     else:
         explanation.visualize_graph(graph_path)
     feature_path = os.path.join(out_dir, f"node_feat_{suffix}.svg")
     explanation.visualize_feature_importance(feature_path)
-    print(f"Saved explanation graphs to {graph_path}")
 
     return metrics_logged, float(f1), float(auroc), float(auprc)
 
@@ -353,7 +341,7 @@ def main():
 
     os.makedirs(OUT_DIR, exist_ok=True)
     log_path = os.path.join(OUT_DIR, "explanation_metrics.csv")
-    fieldnames = ["sample_index", "trial", "normal_accuracy", "f1", "auroc", "auprc"]
+    fieldnames = ["sample_index", "trial", "answer_accuracy", "f1", "auroc", "auprc"]
     with open(log_path, "w", newline="") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
@@ -371,8 +359,10 @@ def main():
         pad_token_id=tokenizer.eos_token_id,
     )
 
+    total_steps = len(dataset) * max(1, args.num_trials)
+    progress = tqdm(total=total_steps)
     # Compute explanations for each sample
-    for sample in tqdm(dataset):
+    for sample in dataset:
         for i in range(args.num_trials):
             logged, f1, auroc, auprc = explain_sample(
                 wrapper=wrapper,
@@ -390,6 +380,8 @@ def main():
                 total_auroc += auroc
                 total_auprc += auprc
                 total_count += 1
+            progress.update(1)
+    progress.close()
 
     if total_count > 0:
         avg_f1 = total_f1 / total_count
