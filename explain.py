@@ -1,4 +1,5 @@
 import argparse
+import csv
 import os
 
 import torch
@@ -56,6 +57,11 @@ def build_args():
     )
     p.add_argument("--sample-idx", type=check_non_negative_int, default=None, help="Index of the sample to explain")
     p.add_argument("--num-trials", type=int, default=1, help="Number of trials for explaining each sample")
+    p.add_argument(
+        "--explain-pos-sample",
+        action="store_true",
+        help="If set, only explain positive samples (graphs containing house motifs).",
+    )
 
     args = p.parse_args()
 
@@ -66,6 +72,8 @@ def build_args():
         raise ValueError("`subset` argument is only applicable for GraphQA dataset.")
     if args.dataset == "GraphQA" and args.subset is None:
         raise ValueError("`subset` argument must be specified for GraphQA dataset.")
+    if args.explain_pos_sample and args.dataset != "MotifQA":
+        raise ValueError("`--explain-pos-sample` is only supported for the MotifQA dataset.")
 
     return args
 
@@ -200,14 +208,14 @@ def explain_sample(
     generated = [wrapper.set_input(sample["prompt"], pyg_batch, gen_cfg) for _ in range(num_trials)]
 
     # Compute accuracy
-    acc, _, _ = comp_accuracy(generated, [sample["completion"]] * len(generated), subset="house_check")
+    acc, _, correct_mask = comp_accuracy(generated, [sample["completion"]] * len(generated), subset="house_check")
     print(f"Generated outputs: {generated} (acc={acc:.2f})")
-    if acc == 0.0:
+    if not any(correct_mask):
         print(
             f"[WARN] Failed to generate the correct answer after {num_trials} "
             f"trials (correct answer: {sample['completion']})."
         )
-        return None, None
+        return None, None, acc
 
     # Generate explanation by GNNExplainer
     explainer = Explainer(
@@ -224,7 +232,7 @@ def explain_sample(
         ),
     )
     explanation = explainer(x=pyg_batch.x, edge_index=pyg_batch.edge_index, batch=pyg_batch.batch)
-    return explanation, generated[0]
+    return explanation, generated[0], acc
 
 
 def main():
@@ -240,19 +248,33 @@ def main():
     # Filter dataset samples to explain
     match args.dataset:
         case "MotifQA":
-            filtered_ds = dataset.select(range(args.num_samples)) if args.num_samples is not None else dataset
+            if args.explain_pos_sample:
+                dataset = dataset.filter(lambda x: len(x["motif_nodes"]) > 0)
+                print("Extracted positive samples: len(dataset) =", len(dataset))
+            if args.num_samples is not None:
+                num_to_select = min(args.num_samples, len(dataset))
+                dataset = dataset.select(range(num_to_select))
             OUT_DIR = os.path.join("explanations", "house_check")
         case "GraphQA":
             if args.target_value is not None:
-                filtered_ds = dataset.filter(lambda x: int(x["completion"].split(".")[0]) == args.target_value)
+                dataset = dataset.filter(lambda x: int(x["completion"].split(".")[0]) == args.target_value)
                 TARGET_VALUE = args.target_value
             elif args.sample_idx is not None:
-                filtered_ds = dataset.filter(lambda x: x["index"] == args.sample_idx)
-                TARGET_VALUE = int(filtered_ds[0]["completion"].split(".")[0])
+                dataset = dataset.filter(lambda x: x["index"] == args.sample_idx)
+                TARGET_VALUE = int(dataset[0]["completion"].split(".")[0])
             OUT_DIR = os.path.join("explanations", f"{args.subset}_{TARGET_VALUE}")
 
-    print("Dataset: ", filtered_ds)
+    print("Dataset: ", dataset)
     os.makedirs(OUT_DIR, exist_ok=True)
+    log_path = os.path.join(OUT_DIR, "explanation_metrics.csv")
+    fieldnames = ["sample_index", "trial", "normal_accuracy", "f1", "auroc", "auprc"]
+    with open(log_path, "w", newline="") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+    total_f1 = 0.0
+    total_auroc = 0.0
+    total_auprc = 0.0
+    total_count = 0
 
     # Create wrapper and generation config
     wrapper = GLMWrapper(model, tokenizer)
@@ -264,10 +286,10 @@ def main():
     )
 
     # Compute explanations for each sample
-    for sample in tqdm(filtered_ds):
+    for sample in tqdm(dataset):
         for i in range(args.num_trials):
             pyg_batch = create_pyg_batch(sample["graph"], device=model.device)
-            explanation, output_text = explain_sample(wrapper, sample, pyg_batch, gen_cfg)
+            explanation, output_text, acc = explain_sample(wrapper, sample, pyg_batch, gen_cfg)
 
             if explanation is None:
                 continue
@@ -284,12 +306,41 @@ def main():
             print(explanation)
             print(f"Explanation accuracy: F1={f1:.3f}, AUROC={auroc:.3f}, AUPRC={auprc:.3f}")
 
+            if args.dataset == "MotifQA" and len(sample.get("motif_nodes", [])) > 0:
+                record = {
+                    "sample_index": sample["index"],
+                    "trial": i,
+                    "normal_accuracy": float(acc),
+                    "f1": float(f1),
+                    "auroc": float(auroc),
+                    "auprc": float(auprc),
+                }
+                with open(log_path, "a", newline="") as csvfile:
+                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                    writer.writerow(record)
+                total_f1 += record["f1"]
+                total_auroc += record["auroc"]
+                total_auprc += record["auprc"]
+                total_count += 1
+
             # Save explanation graphs
             suffix = f"{sample['index']}_{i}" if args.num_trials > 1 else f"{sample['index']}"
             graph_path = os.path.join(OUT_DIR, f"graph_{suffix}.svg")
             explanation.visualize_graph(graph_path)
             explanation.visualize_feature_importance(os.path.join(OUT_DIR, f"node_feat_{suffix}.svg"))
             print(f"Saved explanation graphs to {graph_path}")
+
+    if total_count > 0:
+        avg_f1 = total_f1 / total_count
+        avg_auroc = total_auroc / total_count
+        avg_auprc = total_auprc / total_count
+        print(
+            "Average explanation accuracy across positive samples: "
+            f"F1={avg_f1:.3f}, AUROC={avg_auroc:.3f}, AUPRC={avg_auprc:.3f}"
+        )
+        print(f"Saved explanation metrics to {log_path}")
+    else:
+        print("No explanation metrics recorded for positive samples.")
 
 
 if __name__ == "__main__":
