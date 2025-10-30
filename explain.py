@@ -1,11 +1,9 @@
 import argparse
 import os
-from typing import Optional
 
 import torch
 from datasets import arrow_dataset, load_dataset
 from torch_geometric.data import Batch as PygBatch
-from torch_geometric.data import Data as PygData
 from torch_geometric.explain import Explainer, GNNExplainer
 from tqdm import tqdm
 from transformers import AutoTokenizer, GenerationConfig
@@ -13,7 +11,9 @@ from transformers.trainer_utils import set_seed
 
 from eval import create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
+from src.explanation import GLMWrapper
 from src.glm import GraphTokenLM
+from src.metrics import comp_accuracy
 from src.preprocess import add_graph_column
 
 
@@ -68,129 +68,6 @@ def build_args():
     return args
 
 
-class GLMWrapper(torch.nn.Module):
-    def __init__(self, model: GraphTokenLM, tokenizer: AutoTokenizer):
-        super().__init__()
-        self.model = model
-        self.tokenizer = tokenizer
-        self.input_text = None
-        self.generated_ids = None
-        self._graph_template: Optional[PygBatch] = None
-
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, batch: Optional[torch.Tensor] = None):
-        """Pseudo forward method for explainer compatibility."""
-        if self.input_text is None:
-            raise ValueError("Input text is not set. Please run `set_input` first.")
-        if self.generated_ids is None:
-            raise ValueError("No generated output available. Please run `set_input` first.")
-
-        # Text input
-        prompt_inputs = self.tokenizer(self.input_text, return_tensors="pt").to(self.model.device)
-        prompt_ids = prompt_inputs["input_ids"]
-        generated_ids = self.generated_ids.to(self.model.device).unsqueeze(0)
-        inputs = {"input_ids": torch.cat([prompt_ids, generated_ids], dim=1)}
-        if "attention_mask" in prompt_inputs:
-            gen_attention = torch.ones(
-                (generated_ids.size(0), generated_ids.size(1)),
-                dtype=prompt_inputs["attention_mask"].dtype,
-                device=self.model.device,
-            )
-            inputs["attention_mask"] = torch.cat([prompt_inputs["attention_mask"], gen_attention], dim=1)
-
-        # Graph input
-        if batch is None:
-            batch = torch.zeros(x.size(0), dtype=torch.long, device=x.device)
-
-        if self._graph_template is not None:
-            graph = self._graph_template.clone()
-            graph = graph.to(self.model.device)
-            graph.x = x.to(self.model.device)
-            graph.edge_index = edge_index.to(self.model.device)
-            graph.batch = batch.to(self.model.device)
-            graph.num_nodes = x.size(0)
-        else:
-            data = PygData(x=x, edge_index=edge_index)
-            data.num_nodes = x.size(0)
-            data.batch = batch
-            graph = PygBatch.from_data_list([data]).to(self.model.device)
-
-        # Labels for loss calculation
-        X_len = prompt_ids.size(1)
-        labels = inputs["input_ids"].clone()
-        labels[:, :X_len] = -100
-        prefix_labels = torch.full(
-            (1, self.model.config.num_graph_tokens), -100, dtype=labels.dtype, device=labels.device
-        )
-        labels = torch.cat([prefix_labels, labels], dim=1)
-
-        # Forward pass
-        outputs = self.model(**inputs, graph=graph, labels=labels)
-
-        # Compute log probs
-        log_probs = torch.log_softmax(outputs.logits, dim=-1)
-        shift_log_probs = log_probs[:, :-1, :]
-        shift_token_ids = inputs["input_ids"][:, 1:]
-        token_log_probs = shift_log_probs.gather(dim=-1, index=shift_token_ids.unsqueeze(-1)).squeeze(-1)
-
-        gen_len = generated_ids.size(1)
-        output_log_probs = token_log_probs[:, -gen_len:-1] if gen_len > 0 else token_log_probs[:, :0]
-
-        if output_log_probs.numel() == 0:
-            cumulative_log_likelihood = torch.zeros((), device=self.model.device)
-            # log_prob_values = []
-            # out_token_probs = []
-        else:
-            cumulative_log_likelihood = output_log_probs.sum()
-            # output_log_probs_flat = output_log_probs.squeeze(0)
-            # log_prob_values = output_log_probs_flat.detach().cpu().tolist()
-            # out_token_probs = output_log_probs_flat.exp().detach().cpu().tolist()
-
-        # generated_token_ids = self.generated_ids.detach().cpu().tolist()
-        # generated_tokens = self.tokenizer.convert_ids_to_tokens(generated_token_ids)
-        # print("Output tokens:", [t.replace("Ġ", " ") for t in generated_tokens])
-        # print("Sum of log probabilities:", cumulative_log_likelihood.item())
-        # for t, p, lp in zip(generated_tokens, out_token_probs, log_prob_values):
-        #     print(f"{t:>16s}: {p:.12f} (log={lp:.12f})")
-
-        return cumulative_log_likelihood
-
-    def set_input(self, input_text: str, graph: PygBatch, gen_cfg: GenerationConfig):
-        """Sets the input text and generates output text based on the graph.
-
-        Parameters
-        ----------
-        input_text : str
-            The input prompt text.
-        graph : torch_geometric.data.Batch
-            The graph data in PyG Batch format.
-        gen_cfg : GenerationConfig
-            Configuration for text generation.
-
-        Returns
-        -------
-        output_text : str
-            The generated output text.
-        """
-        if not isinstance(input_text, str):
-            raise ValueError("Input text must be a string.")
-        if input_text.strip() == "":
-            raise ValueError("Input text cannot be empty.")
-
-        self._graph_template = graph.clone()
-        self.input_text = input_text
-
-        input_ids = self.tokenizer(input_text, return_tensors="pt").to(self.model.device)
-        outputs = self.model.generate(**input_ids, graph=graph, generation_config=gen_cfg)
-        prompt_length = input_ids["input_ids"].shape[-1]
-        self.generated_ids = outputs[:, prompt_length:][0]
-
-        if self.generated_ids.numel() == 0:
-            output_text = ""
-        else:
-            output_text = self.tokenizer.decode(self.generated_ids, skip_special_tokens=True)
-        return output_text
-
-
 def build_dataset(subset: str, dataset: str, split: str, node_feat_dim: int) -> arrow_dataset.Dataset:
     """Builds and returns the specified dataset subset and split."""
     match dataset:
@@ -236,8 +113,64 @@ def load_model(model_path: str) -> tuple[GraphTokenLM, AutoTokenizer]:
     return model, tokenizer
 
 
+def get_gt_explanation(sample: dict[str, str]) -> torch.Tensor:
+    """
+    Build the binary ground-truth edge mask for a MotifQA sample.
+
+    The dataset stores graphs using the canonical node ordering employed
+    when constructing PyG objects. Edges that connect two nodes belonging
+    to the 5-node house motif are marked with ``1``; all other edges are
+    labeled ``0``. Because the explainer produces a bidirectional edge
+    mask, both directions of each motif edge receive the positive label.
+
+    Parameters
+    ----------
+    sample : dict[str, str]
+        Dataset sample containing at least ``graph``, ``nodes``, ``edges``,
+        and ``motif_nodes`` fields. ``graph`` must hold a PyG-compatible
+        dictionary whose ``edge_index`` encodes the bidirectional edge list.
+
+    Returns
+    -------
+    torch.Tensor
+        One-dimensional tensor of length ``num_edges`` with binary entries
+        indicating whether each edge in ``edge_index`` belongs to the motif.
+    """
+    graph_dict = sample["graph"]
+    edge_index = torch.as_tensor(graph_dict["edge_index"], dtype=torch.long)
+    num_edges = edge_index.size(1)
+    gt_mask = torch.zeros(num_edges, dtype=torch.float)
+
+    motif_nodes = sample["motif_nodes"]
+    if len(motif_nodes) == 0 or num_edges == 0:
+        return gt_mask
+
+    nodes = sample["nodes"]
+    edges = sample["edges"]
+    node_to_idx = {nid: idx for idx, nid in enumerate(nodes)}
+
+    # Build the undirected motif edge set using consecutive node indices.
+    motif_edge_set: set[tuple[int, int]] = set()
+    motif_node_set = set(motif_nodes)
+    for u, v in edges:
+        if u in motif_node_set and v in motif_node_set:
+            if u not in node_to_idx or v not in node_to_idx:
+                continue
+            ui, vi = node_to_idx[u], node_to_idx[v]
+            motif_edge_set.add(tuple(sorted((ui, vi))))
+
+    if not motif_edge_set:
+        return gt_mask
+
+    for idx, (src, dst) in enumerate(edge_index.t().tolist()):
+        if tuple(sorted((src, dst))) in motif_edge_set:
+            gt_mask[idx] = 1.0
+
+    return gt_mask
+
+
 def explain_sample(
-    wrapper: GLMWrapper, sample: dict[str, str], pyg_batch: PygBatch, gen_cfg: GenerationConfig, MAX_TRIALS=10
+    wrapper: GLMWrapper, sample: dict[str, str], pyg_batch: PygBatch, gen_cfg: GenerationConfig, num_trials=10
 ):
     """Generates output for the given sample and explains it using GNNExplainer.
 
@@ -251,7 +184,7 @@ def explain_sample(
         The graph data in PyG Batch format.
     gen_cfg : GenerationConfig
         Configuration for text generation.
-    MAX_TRIALS : int, optional
+    num_trials : int, optional
         Maximum number of trials to generate the correct answer, by default 10.
 
     Returns
@@ -262,17 +195,16 @@ def explain_sample(
         The generated output text.
     """
     # Generate output and verify correctness
-    generated = []
-    for _ in range(MAX_TRIALS):
-        output_text = wrapper.set_input(sample["prompt"], pyg_batch, gen_cfg)
-        generated.append(output_text)
+    generated = [wrapper.set_input(sample["prompt"], pyg_batch, gen_cfg) for _ in range(num_trials)]
 
     # Compute accuracy
-    ans_val = sample["completion"].split(".")[0].strip()
-    acc = sum(ans_val in out_text for out_text in generated) / len(generated)
+    acc, _ = comp_accuracy(generated, [sample["completion"]] * len(generated), subset="house_check")
     print(f"Generated outputs: {generated} (acc={acc:.2f})")
     if acc < 1.0:
-        print(f"[WARN] Failed to generate the correct answer after {MAX_TRIALS} trials (correct answer: {ans_val}).")
+        print(
+            f"[WARN] Failed to generate the correct answer after {num_trials} "
+            f"trials (correct answer: {sample['completion']})."
+        )
         return None, None
 
     # Generate explanation by GNNExplainer
@@ -290,7 +222,7 @@ def explain_sample(
         ),
     )
     explanation = explainer(x=pyg_batch.x, edge_index=pyg_batch.edge_index, batch=pyg_batch.batch)
-    return explanation, output_text
+    return explanation, generated[0]
 
 
 def main():
@@ -303,11 +235,10 @@ def main():
 
     # Load dataset
     dataset = build_dataset(args.subset, args.dataset, args.split, node_feat_dim=model.config.node_feat_dim)
-
     # Filter dataset samples to explain
     match args.dataset:
         case "MotifQA":
-            filtered_ds = dataset.select(range(5))
+            filtered_ds = dataset.select(range(2))
             OUT_DIR = os.path.join("explanations", "house_check")
         case "GraphQA":
             if args.target_value is not None:
@@ -330,11 +261,15 @@ def main():
         pad_token_id=tokenizer.eos_token_id,
     )
 
-    for i in range(args.num_trials):
-        # Compute explanations for each sample
-        for sample in tqdm(filtered_ds):
+    # Compute explanations for each sample
+    for sample in tqdm(filtered_ds):
+        for i in range(args.num_trials):
             pyg_batch = create_pyg_batch(sample["graph"], device=model.device)
             explanation, output_text = explain_sample(wrapper, sample, pyg_batch, gen_cfg)
+
+            # Compute explanation accuracy
+            gt_edge_mask = get_gt_explanation(sample)
+            print(gt_edge_mask)
 
             if explanation is not None:
                 print(f"Question: `{sample['prompt']}`")

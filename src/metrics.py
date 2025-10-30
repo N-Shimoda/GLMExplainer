@@ -1,5 +1,5 @@
 import re
-from typing import List, Literal
+from typing import Literal
 
 
 def _normalize_text(s: str) -> str:
@@ -11,8 +11,8 @@ def _normalize_text(s: str) -> str:
 
 
 def comp_accuracy(
-    preds: List[str],
-    refs: List[str],
+    preds: list[str],
+    refs: list[str],
     subset: Literal["cycle_check", "node_count", "edge_count", "triangle_counting", "house_check"],
     exact_match: bool = False,
 ) -> tuple[float, int]:
@@ -21,9 +21,9 @@ def comp_accuracy(
 
     Parameters
     ----------
-    preds : List[str]
+    preds : list[str]
         The list of model predictions.
-    refs : List[str]
+    refs : list[str]
         The list of reference answers.
     subset : Literal["cycle_check", "node_count", "edge_count", "triangle_counting", "house_check"]
         The subset of the GraphQA dataset.
