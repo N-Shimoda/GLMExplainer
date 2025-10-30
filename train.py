@@ -169,9 +169,7 @@ def build_dataset(
     """
 
     def modify_dataset(example):
-        return add_graph_column(example, k=node_feat_dim)
-
-    cols = ["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"]
+        return add_graph_column(example, k=node_feat_dim, ds_name="GraphQA")
 
     splits = {"train": "zero_shot_train", "validation": "zero_shot_validation"}
     if do_eval:
@@ -180,7 +178,7 @@ def build_dataset(
     raw_ds = load_dataset("baharef/GraphQA", subset, split=splits)
     processed_ds = raw_ds.map(
         modify_dataset,
-        remove_columns=cols,
+        remove_columns=["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"],
         load_from_cache_file=load_from_cache_file,
         desc="Preprocessing dataset",
     )
@@ -228,9 +226,14 @@ def build_motif_dataset(
     splits = {"train": "train", "validation": "validation"}
     if do_eval:
         splits["test"] = "test"
-    raw_ds = load_dataset("naos-ku/motif-qa", split=splits)
+    raw_ds = load_dataset("naos-ku/motif-qa", "yes_no", split=splits)
 
-    processed_ds = raw_ds.map(modify_dataset, load_from_cache_file=load_from_cache_file)
+    processed_ds = raw_ds.map(
+        modify_dataset,
+        load_from_cache_file=load_from_cache_file,
+        remove_columns=["response", "nodes", "edges", "nnodes", "nedges"],
+        desc="Preprocessing dataset",
+    )
 
     train_ds = processed_ds["train"]
     eval_ds = processed_ds["validation"]
@@ -343,6 +346,18 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
     glm_cfg = GraphTokenLMConfig(**glm_args)
     model = GraphTokenLM(glm_cfg)
     tokenizer = AutoTokenizer.from_pretrained(glm_cfg.base_model, trust_remote_code=True)
+    print(
+        "IDs from tokenizer:\n"
+        f"eos_token: {tokenizer.eos_token}, "
+        f"bos_token: {tokenizer.bos_token}, "
+        f"pad_token: {tokenizer.pad_token}"
+    )
+    print(
+        "IDs from GraphTokenLMConfig:\n"
+        f"eos_token_id: {glm_cfg.eos_token_id}, "
+        f"bos_token_id: {glm_cfg.bos_token_id}, "
+        f"pad_token_id: {glm_cfg.pad_token_id}"
+    )
     if tokenizer.pad_token is None:
         print("[INFO] Explicitly setting pad_token to eos_token")
         tokenizer.pad_token = tokenizer.eos_token
