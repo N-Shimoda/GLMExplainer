@@ -30,11 +30,17 @@ def build_args():
     p = argparse.ArgumentParser()
     p.add_argument("--model-path", type=str, required=True, help="Path to the model checkpoint")
     p.add_argument(
+        "--dataset",
+        type=str,
+        choices=["MotifQA", "GraphQA"],
+        default="MotifQA",
+        help="Dataset name (default: MotifQA)",
+    )
+    p.add_argument(
         "--subset",
         type=str,
         choices=["node_count", "edge_count", "cycle_check", "triangle_counting"],
-        default="node_count",
-        help="Dataset subset to use",
+        help="Dataset subset to use. Only applicable for GraphQA.",
     )
     p.add_argument(
         "--split",
@@ -50,8 +56,15 @@ def build_args():
     p.add_argument("--num-trials", type=int, default=1, help="Number of trials for explaining each sample")
 
     args = p.parse_args()
+
+    # Validate arguments
     if args.target_value is not None and args.sample_idx is not None:
         raise ValueError("Only one of `target_value` or `sample_idx` should be specified.")
+    if args.dataset == "MotifQA" and args.subset is not None:
+        raise ValueError("`subset` argument is only applicable for GraphQA dataset.")
+    if args.dataset == "GraphQA" and args.subset is None:
+        raise ValueError("`subset` argument must be specified for GraphQA dataset.")
+
     return args
 
 
@@ -178,16 +191,24 @@ class GLMWrapper(torch.nn.Module):
         return output_text
 
 
-def build_dataset(subset: str, split: str, node_feat_dim: int) -> arrow_dataset.Dataset:
+def build_dataset(subset: str, dataset: str, split: str, node_feat_dim: int) -> arrow_dataset.Dataset:
     """Builds and returns the specified dataset subset and split."""
-    ds = load_dataset("baharef/GraphQA", subset, split=f"zero_shot_{split}")
-    ds = ds.map(
-        lambda x: add_graph_column(x, k=node_feat_dim),
-        remove_columns=["algorithm", "answer", "nedges", "nnodes", "task_description", "text_encoding"],
-        load_from_cache_file=False,
-    )
-    ds = ds.add_column("index", list(range(len(ds))))
-    return ds
+    match dataset:
+        case "GraphQA":
+            ds_raw = load_dataset("baharef/GraphQA", subset, split=f"zero_shot_{split}")
+            ds = ds_raw.map(
+                lambda x: add_graph_column(x, k=node_feat_dim, ds_name="GraphQA"),
+                remove_columns=["algorithm", "answer", "nedges", "nnodes", "task_description", "text_encoding"],
+                load_from_cache_file=False,
+            )
+        case "MotifQA":
+            ds_raw = load_dataset("naos-ku/motif-qa", "yes_no", split=split)
+            ds = ds_raw.map(
+                lambda x: add_graph_column(x, k=node_feat_dim, ds_name="motif-qa"),
+                remove_columns=["response", "nedges", "nnodes"],
+                load_from_cache_file=False,
+            )
+    return ds.add_column("index", list(range(len(ds))))
 
 
 def load_model(model_path: str) -> tuple[GraphTokenLM, AutoTokenizer]:
@@ -241,19 +262,16 @@ def explain_sample(
         The generated output text.
     """
     # Generate output and verify correctness
-    ans_val = sample["completion"].split(".")[0].strip()
-    correct = False
     generated = []
-
     for _ in range(MAX_TRIALS):
         output_text = wrapper.set_input(sample["prompt"], pyg_batch, gen_cfg)
         generated.append(output_text)
-        if ans_val in output_text:
-            correct = True
-            break
 
-    print("Generated outputs:", generated)
-    if not correct:
+    # Compute accuracy
+    ans_val = sample["completion"].split(".")[0].strip()
+    acc = sum(ans_val in out_text for out_text in generated) / len(generated)
+    print(f"Generated outputs: {generated} (acc={acc:.2f})")
+    if acc < 1.0:
         print(f"[WARN] Failed to generate the correct answer after {MAX_TRIALS} trials (correct answer: {ans_val}).")
         return None, None
 
@@ -284,14 +302,24 @@ def main():
     model.eval()
 
     # Load dataset
-    dataset = build_dataset(args.subset, args.split, node_feat_dim=model.config.node_feat_dim)
-    if args.target_value is not None:
-        filtered_ds = dataset.filter(lambda x: int(x["completion"].split(".")[0]) == args.target_value)
-        TARGET_VALUE = args.target_value
-    elif args.sample_idx is not None:
-        filtered_ds = dataset.filter(lambda x: x["index"] == args.sample_idx)
-        TARGET_VALUE = int(filtered_ds[0]["completion"].split(".")[0])
+    dataset = build_dataset(args.subset, args.dataset, args.split, node_feat_dim=model.config.node_feat_dim)
+
+    # Filter dataset samples to explain
+    match args.dataset:
+        case "MotifQA":
+            filtered_ds = dataset.select(range(5))
+            OUT_DIR = os.path.join("explanations", "house_check")
+        case "GraphQA":
+            if args.target_value is not None:
+                filtered_ds = dataset.filter(lambda x: int(x["completion"].split(".")[0]) == args.target_value)
+                TARGET_VALUE = args.target_value
+            elif args.sample_idx is not None:
+                filtered_ds = dataset.filter(lambda x: x["index"] == args.sample_idx)
+                TARGET_VALUE = int(filtered_ds[0]["completion"].split(".")[0])
+            OUT_DIR = os.path.join("explanations", f"{args.subset}_{TARGET_VALUE}")
+
     print("Dataset: ", filtered_ds)
+    os.makedirs(OUT_DIR, exist_ok=True)
 
     # Create wrapper and generation config
     wrapper = GLMWrapper(model, tokenizer)
@@ -302,10 +330,6 @@ def main():
         pad_token_id=tokenizer.eos_token_id,
     )
 
-    # Directory to save explanations
-    OUT_DIR = os.path.join("explanations", f"{args.subset}_{TARGET_VALUE}")
-    os.makedirs(OUT_DIR, exist_ok=True)
-
     for i in range(args.num_trials):
         # Compute explanations for each sample
         for sample in tqdm(filtered_ds):
@@ -313,7 +337,7 @@ def main():
             explanation, output_text = explain_sample(wrapper, sample, pyg_batch, gen_cfg)
 
             if explanation is not None:
-                print(f"Question: `{sample['question']}`")
+                print(f"Question: `{sample['prompt']}`")
                 print(f"Generated answer: `{output_text}`")
                 print(f"Correct answer: `{sample['completion']}`")
                 print(f"Explanation: {explanation}")
