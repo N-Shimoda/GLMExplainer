@@ -50,6 +50,7 @@ def build_args():
         default="test",
         help="Dataset split to use",
     )
+    p.add_argument("--num-samples", type=check_non_negative_int, default=None, help="Number of samples to explain")
     p.add_argument(
         "--target-value", type=check_non_negative_int, default=None, help="Targeted answer value to explain"
     )
@@ -199,9 +200,9 @@ def explain_sample(
     generated = [wrapper.set_input(sample["prompt"], pyg_batch, gen_cfg) for _ in range(num_trials)]
 
     # Compute accuracy
-    acc, _ = comp_accuracy(generated, [sample["completion"]] * len(generated), subset="house_check")
+    acc, _, _ = comp_accuracy(generated, [sample["completion"]] * len(generated), subset="house_check")
     print(f"Generated outputs: {generated} (acc={acc:.2f})")
-    if acc < 1.0:
+    if acc == 0.0:
         print(
             f"[WARN] Failed to generate the correct answer after {num_trials} "
             f"trials (correct answer: {sample['completion']})."
@@ -239,7 +240,7 @@ def main():
     # Filter dataset samples to explain
     match args.dataset:
         case "MotifQA":
-            filtered_ds = dataset.select(range(2))
+            filtered_ds = dataset.select(range(args.num_samples)) if args.num_samples is not None else dataset
             OUT_DIR = os.path.join("explanations", "house_check")
         case "GraphQA":
             if args.target_value is not None:
