@@ -17,6 +17,7 @@ from src.explanation import GLMWrapper
 from src.glm import GraphTokenLM
 from src.metrics import comp_accuracy
 from src.preprocess import add_graph_column
+from src.utils import visualize_motif_explanation
 
 
 def build_args():
@@ -51,17 +52,17 @@ def build_args():
         default="test",
         help="Dataset split to use",
     )
+    p.add_argument(
+        "--explain-pos-samples",
+        action="store_true",
+        help="If set, only explain positive samples (graphs containing house motifs).",
+    )
     p.add_argument("--num-samples", type=check_non_negative_int, default=None, help="Number of samples to explain")
     p.add_argument(
         "--target-value", type=check_non_negative_int, default=None, help="Targeted answer value to explain"
     )
     p.add_argument("--sample-idx", type=check_non_negative_int, default=None, help="Index of the sample to explain")
     p.add_argument("--num-trials", type=int, default=1, help="Number of trials for explaining each sample")
-    p.add_argument(
-        "--explain-pos-sample",
-        action="store_true",
-        help="If set, only explain positive samples (graphs containing house motifs).",
-    )
 
     args = p.parse_args()
 
@@ -72,7 +73,7 @@ def build_args():
         raise ValueError("`subset` argument is only applicable for GraphQA dataset.")
     if args.dataset == "GraphQA" and args.subset is None:
         raise ValueError("`subset` argument must be specified for GraphQA dataset.")
-    if args.explain_pos_sample and args.dataset != "MotifQA":
+    if args.explain_pos_samples and args.dataset != "MotifQA":
         raise ValueError("`--explain-pos-sample` is only supported for the MotifQA dataset.")
 
     return args
@@ -104,7 +105,7 @@ def filter_dataset(
 ) -> tuple[arrow_dataset.Dataset, str]:
     match args.dataset:
         case "MotifQA":
-            if args.explain_pos_sample:
+            if args.explain_pos_samples:
                 dataset = dataset.filter(lambda x: len(x["motif_nodes"]) > 0)
                 print("Extracted positive samples: len(dataset) =", len(dataset))
             if args.num_samples is not None:
@@ -224,23 +225,29 @@ def _generate_explanation(
 
     Returns
     -------
-    explanation : torch_geometric.explain.Explanation
-        The explanation object containing the results.
-    output_text : str
-        The generated output text.
+    explanation : torch_geometric.explain.Explanation | None
+        The explanation object containing the results, or ``None`` when no
+        correct answer was produced within the allotted trials.
+    output_text : str | None
+        The generated output text when available.
+    accuracy : float
+        Ratio of correct generations within ``num_trials``.
+    correct_count : int
+        Number of correct generations observed.
     """
     # Generate output and verify correctness
     generated = [wrapper.set_input(sample["prompt"], pyg_batch, gen_cfg) for _ in range(num_trials)]
 
     # Compute accuracy
     acc, _, correct_mask = comp_accuracy(generated, [sample["completion"]] * len(generated), subset="house_check")
+    correct_count = sum(1 for flag in correct_mask if flag)
     print(f"Generated outputs: {generated} (acc={acc:.2f})")
     if not any(correct_mask):
         print(
             f"[WARN] Failed to generate the correct answer after {num_trials} "
             f"trials (correct answer: {sample['completion']})."
         )
-        return None, None, acc
+        return None, None, acc, correct_count
 
     # Generate explanation by GNNExplainer
     explainer = Explainer(
@@ -257,7 +264,7 @@ def _generate_explanation(
         ),
     )
     explanation = explainer(x=pyg_batch.x, edge_index=pyg_batch.edge_index, batch=pyg_batch.batch)
-    return explanation, generated[0], acc
+    return explanation, generated[0], acc, correct_count
 
 
 def explain_sample(
@@ -271,9 +278,11 @@ def explain_sample(
     dataset_name: str,
 ) -> tuple[bool, float, float, float]:
     """Explain a single sample, log metrics, and emit per-trial artifacts."""
-    model_device = wrapper.model.device
+    model_device = getattr(wrapper.model, "device", None)
+    if model_device is None:
+        model_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     pyg_batch = create_pyg_batch(sample["graph"], device=model_device)
-    explanation, output_text, acc = _generate_explanation(wrapper, sample, pyg_batch, gen_cfg)
+    explanation, output_text, acc, correct_count = _generate_explanation(wrapper, sample, pyg_batch, gen_cfg)
 
     if explanation is None:
         return False, 0.0, 0.0, 0.0
@@ -283,6 +292,13 @@ def explain_sample(
     pred_edge_mask = explanation.edge_mask.detach().cpu()
     auroc, f1 = groundtruth_metrics(pred_edge_mask, gt_edge_mask, metrics=["auroc", "f1_score"])
     auprc = average_precision(pred_edge_mask, gt_edge_mask.int(), task="binary").item()
+    normal_acc_display = f"{correct_count}/{num_trials}"
+
+    print(f"Question: `{sample['prompt']}`")
+    print(f"Generated answer: `{output_text}`")
+    print(f"Correct answer: `{sample['completion']}`")
+    print(explanation)
+    print(f"Explanation accuracy: F1={f1:.3f}, AUROC={auroc:.3f}, AUPRC={auprc:.3f}")
 
     metrics_logged = False
     if dataset_name == "MotifQA" and len(sample.get("motif_nodes", [])) > 0:
@@ -303,8 +319,21 @@ def explain_sample(
     suffix = f"{sample['index']}_{trial_idx}" if num_trials > 1 else f"{sample['index']}"
     out_dir = os.path.dirname(log_path)
     graph_path = os.path.join(out_dir, f"graph_{suffix}.svg")
-    explanation.visualize_graph(graph_path)
-    explanation.visualize_feature_importance(os.path.join(out_dir, f"node_feat_{suffix}.svg"))
+    if dataset_name == "MotifQA":
+        visualize_motif_explanation(
+            sample=sample,
+            explanation=explanation,
+            graph_path=graph_path,
+            f1=float(f1),
+            auroc=float(auroc),
+            auprc=float(auprc),
+            normal_accuracy_display=normal_acc_display,
+        )
+    else:
+        explanation.visualize_graph(graph_path)
+    feature_path = os.path.join(out_dir, f"node_feat_{suffix}.svg")
+    explanation.visualize_feature_importance(feature_path)
+    print(f"Saved explanation graphs to {graph_path}")
 
     return metrics_logged, float(f1), float(auroc), float(auprc)
 
@@ -320,8 +349,8 @@ def main():
     # Load dataset
     dataset = build_dataset(args.subset, args.dataset, args.split, node_feat_dim=model.config.node_feat_dim)
     dataset, OUT_DIR = filter_dataset(dataset, args)
-
     print("Dataset: ", dataset)
+
     os.makedirs(OUT_DIR, exist_ok=True)
     log_path = os.path.join(OUT_DIR, "explanation_metrics.csv")
     fieldnames = ["sample_index", "trial", "normal_accuracy", "f1", "auroc", "auprc"]
