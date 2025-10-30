@@ -57,7 +57,7 @@ def visualize_motif_explanation(
 
     # Aggregate bidirectional edge weights into undirected edges.
     edge_mask = explanation.edge_mask.detach().cpu().tolist()
-    undirected_weights: dict[tuple[int, int], float] = {}
+    undirected_weights: dict[tuple[int, int], tuple[float, int]] = {}
     layout_graph = nx.Graph()
     layout_graph.add_nodes_from(range(num_nodes))
     for src, dst in edge_index.t().tolist():
@@ -67,11 +67,13 @@ def visualize_motif_explanation(
         key = tuple(sorted((src, dst)))
         weight = float(edge_mask[idx])
         if key in undirected_weights:
-            undirected_weights[key] = max(undirected_weights[key], weight)
+            total, count = undirected_weights[key]
+            undirected_weights[key] = (total + weight, count + 1)
         else:
-            undirected_weights[key] = weight
-    for (src, dst), weight in undirected_weights.items():
-        G.add_edge(src, dst, weight=weight)
+            undirected_weights[key] = (weight, 1)
+    for (src, dst), (total, count) in undirected_weights.items():
+        avg_weight = total / max(count, 1)
+        G.add_edge(src, dst, weight=avg_weight)
 
     pos = nx.spring_layout(layout_graph, seed=42) if len(layout_graph) > 0 else {}
 
