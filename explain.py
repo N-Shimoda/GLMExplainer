@@ -98,6 +98,31 @@ def build_dataset(subset: str, dataset: str, split: str, node_feat_dim: int) -> 
     return ds.add_column("index", list(range(len(ds))))
 
 
+def filter_dataset(
+    dataset: arrow_dataset.Dataset,
+    args: argparse.Namespace,
+) -> tuple[arrow_dataset.Dataset, str]:
+    match args.dataset:
+        case "MotifQA":
+            if args.explain_pos_sample:
+                dataset = dataset.filter(lambda x: len(x["motif_nodes"]) > 0)
+                print("Extracted positive samples: len(dataset) =", len(dataset))
+            if args.num_samples is not None:
+                num_to_select = min(args.num_samples, len(dataset))
+                dataset = dataset.select(range(num_to_select))
+            OUT_DIR = os.path.join("explanations", "house_check")
+        case "GraphQA":
+            if args.target_value is not None:
+                dataset = dataset.filter(lambda x: int(x["completion"].split(".")[0]) == args.target_value)
+                TARGET_VALUE = args.target_value
+            elif args.sample_idx is not None:
+                dataset = dataset.filter(lambda x: x["index"] == args.sample_idx)
+                TARGET_VALUE = int(dataset[0]["completion"].split(".")[0])
+            OUT_DIR = os.path.join("explanations", f"{args.subset}_{TARGET_VALUE}")
+
+    return dataset, OUT_DIR
+
+
 def load_model(model_path: str) -> tuple[GraphTokenLM, AutoTokenizer]:
     """Loads the GraphTokenLM model and tokenizer from the specified checkpoint path.
 
@@ -123,7 +148,7 @@ def load_model(model_path: str) -> tuple[GraphTokenLM, AutoTokenizer]:
     return model, tokenizer
 
 
-def get_gt_explanation(sample: dict[str, str]) -> torch.Tensor:
+def _get_gt_explanation(sample: dict[str, str]) -> torch.Tensor:
     """
     Build the binary ground-truth edge mask for a MotifQA sample.
 
@@ -179,7 +204,7 @@ def get_gt_explanation(sample: dict[str, str]) -> torch.Tensor:
     return gt_mask
 
 
-def explain_sample(
+def _generate_explanation(
     wrapper: GLMWrapper, sample: dict[str, str], pyg_batch: PygBatch, gen_cfg: GenerationConfig, num_trials=10
 ):
     """Generates output for the given sample and explains it using GNNExplainer.
@@ -235,6 +260,55 @@ def explain_sample(
     return explanation, generated[0], acc
 
 
+def explain_sample(
+    wrapper: GLMWrapper,
+    sample: dict[str, str],
+    trial_idx: int,
+    num_trials: int,
+    gen_cfg: GenerationConfig,
+    log_path: str,
+    fieldnames: list[str],
+    dataset_name: str,
+) -> tuple[bool, float, float, float]:
+    """Explain a single sample, log metrics, and emit per-trial artifacts."""
+    model_device = wrapper.model.device
+    pyg_batch = create_pyg_batch(sample["graph"], device=model_device)
+    explanation, output_text, acc = _generate_explanation(wrapper, sample, pyg_batch, gen_cfg)
+
+    if explanation is None:
+        return False, 0.0, 0.0, 0.0
+
+    # Compute explanation accuracy
+    gt_edge_mask = _get_gt_explanation(sample)
+    pred_edge_mask = explanation.edge_mask.detach().cpu()
+    auroc, f1 = groundtruth_metrics(pred_edge_mask, gt_edge_mask, metrics=["auroc", "f1_score"])
+    auprc = average_precision(pred_edge_mask, gt_edge_mask.int(), task="binary").item()
+
+    metrics_logged = False
+    if dataset_name == "MotifQA" and len(sample.get("motif_nodes", [])) > 0:
+        record = {
+            "sample_index": sample["index"],
+            "trial": trial_idx,
+            "normal_accuracy": float(acc),
+            "f1": float(f1),
+            "auroc": float(auroc),
+            "auprc": float(auprc),
+        }
+        with open(log_path, "a", newline="") as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writerow(record)
+        metrics_logged = True
+
+    # Save explanation graphs
+    suffix = f"{sample['index']}_{trial_idx}" if num_trials > 1 else f"{sample['index']}"
+    out_dir = os.path.dirname(log_path)
+    graph_path = os.path.join(out_dir, f"graph_{suffix}.svg")
+    explanation.visualize_graph(graph_path)
+    explanation.visualize_feature_importance(os.path.join(out_dir, f"node_feat_{suffix}.svg"))
+
+    return metrics_logged, float(f1), float(auroc), float(auprc)
+
+
 def main():
     set_seed(42)
     args = build_args()
@@ -245,24 +319,7 @@ def main():
 
     # Load dataset
     dataset = build_dataset(args.subset, args.dataset, args.split, node_feat_dim=model.config.node_feat_dim)
-    # Filter dataset samples to explain
-    match args.dataset:
-        case "MotifQA":
-            if args.explain_pos_sample:
-                dataset = dataset.filter(lambda x: len(x["motif_nodes"]) > 0)
-                print("Extracted positive samples: len(dataset) =", len(dataset))
-            if args.num_samples is not None:
-                num_to_select = min(args.num_samples, len(dataset))
-                dataset = dataset.select(range(num_to_select))
-            OUT_DIR = os.path.join("explanations", "house_check")
-        case "GraphQA":
-            if args.target_value is not None:
-                dataset = dataset.filter(lambda x: int(x["completion"].split(".")[0]) == args.target_value)
-                TARGET_VALUE = args.target_value
-            elif args.sample_idx is not None:
-                dataset = dataset.filter(lambda x: x["index"] == args.sample_idx)
-                TARGET_VALUE = int(dataset[0]["completion"].split(".")[0])
-            OUT_DIR = os.path.join("explanations", f"{args.subset}_{TARGET_VALUE}")
+    dataset, OUT_DIR = filter_dataset(dataset, args)
 
     print("Dataset: ", dataset)
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -288,47 +345,22 @@ def main():
     # Compute explanations for each sample
     for sample in tqdm(dataset):
         for i in range(args.num_trials):
-            pyg_batch = create_pyg_batch(sample["graph"], device=model.device)
-            explanation, output_text, acc = explain_sample(wrapper, sample, pyg_batch, gen_cfg)
+            logged, f1, auroc, auprc = explain_sample(
+                wrapper=wrapper,
+                sample=sample,
+                trial_idx=i,
+                num_trials=args.num_trials,
+                gen_cfg=gen_cfg,
+                log_path=log_path,
+                fieldnames=fieldnames,
+                dataset_name=args.dataset,
+            )
 
-            if explanation is None:
-                continue
-
-            # Compute explanation accuracy
-            gt_edge_mask = get_gt_explanation(sample)
-            pred_edge_mask = explanation.edge_mask.detach().cpu()
-            auroc, f1 = groundtruth_metrics(pred_edge_mask, gt_edge_mask, metrics=["auroc", "f1_score"])
-            auprc = average_precision(pred_edge_mask, gt_edge_mask.int(), task="binary").item()
-
-            print(f"Question: `{sample['prompt']}`")
-            print(f"Generated answer: `{output_text}`")
-            print(f"Correct answer: `{sample['completion']}`")
-            print(explanation)
-            print(f"Explanation accuracy: F1={f1:.3f}, AUROC={auroc:.3f}, AUPRC={auprc:.3f}")
-
-            if args.dataset == "MotifQA" and len(sample.get("motif_nodes", [])) > 0:
-                record = {
-                    "sample_index": sample["index"],
-                    "trial": i,
-                    "normal_accuracy": float(acc),
-                    "f1": float(f1),
-                    "auroc": float(auroc),
-                    "auprc": float(auprc),
-                }
-                with open(log_path, "a", newline="") as csvfile:
-                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                    writer.writerow(record)
-                total_f1 += record["f1"]
-                total_auroc += record["auroc"]
-                total_auprc += record["auprc"]
+            if logged:
+                total_f1 += f1
+                total_auroc += auroc
+                total_auprc += auprc
                 total_count += 1
-
-            # Save explanation graphs
-            suffix = f"{sample['index']}_{i}" if args.num_trials > 1 else f"{sample['index']}"
-            graph_path = os.path.join(OUT_DIR, f"graph_{suffix}.svg")
-            explanation.visualize_graph(graph_path)
-            explanation.visualize_feature_importance(os.path.join(OUT_DIR, f"node_feat_{suffix}.svg"))
-            print(f"Saved explanation graphs to {graph_path}")
 
     if total_count > 0:
         avg_f1 = total_f1 / total_count
