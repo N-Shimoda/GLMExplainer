@@ -4,7 +4,8 @@ import os
 import torch
 from datasets import arrow_dataset, load_dataset
 from torch_geometric.data import Batch as PygBatch
-from torch_geometric.explain import Explainer, GNNExplainer
+from torch_geometric.explain import Explainer, GNNExplainer, groundtruth_metrics
+from torchmetrics.functional import average_precision
 from tqdm import tqdm
 from transformers import AutoTokenizer, GenerationConfig
 from transformers.trainer_utils import set_seed
@@ -267,21 +268,27 @@ def main():
             pyg_batch = create_pyg_batch(sample["graph"], device=model.device)
             explanation, output_text = explain_sample(wrapper, sample, pyg_batch, gen_cfg)
 
+            if explanation is None:
+                continue
+
             # Compute explanation accuracy
             gt_edge_mask = get_gt_explanation(sample)
-            print(gt_edge_mask)
+            pred_edge_mask = explanation.edge_mask.detach().cpu()
+            auroc, f1 = groundtruth_metrics(pred_edge_mask, gt_edge_mask, metrics=["auroc", "f1_score"])
+            auprc = average_precision(pred_edge_mask, gt_edge_mask.int(), task="binary").item()
 
-            if explanation is not None:
-                print(f"Question: `{sample['prompt']}`")
-                print(f"Generated answer: `{output_text}`")
-                print(f"Correct answer: `{sample['completion']}`")
-                print(f"Explanation: {explanation}")
-                # Save explanation graphs
-                suffix = f"{sample['index']}_{i}" if args.num_trials > 1 else f"{sample['index']}"
-                graph_path = os.path.join(OUT_DIR, f"graph_{suffix}.svg")
-                explanation.visualize_graph(graph_path)
-                explanation.visualize_feature_importance(os.path.join(OUT_DIR, f"node_feat_{suffix}.svg"))
-                print(f"Saved explanation graphs to {graph_path}")
+            print(f"Question: `{sample['prompt']}`")
+            print(f"Generated answer: `{output_text}`")
+            print(f"Correct answer: `{sample['completion']}`")
+            print(explanation)
+            print(f"Explanation accuracy: F1={f1:.3f}, AUROC={auroc:.3f}, AUPRC={auprc:.3f}")
+
+            # Save explanation graphs
+            suffix = f"{sample['index']}_{i}" if args.num_trials > 1 else f"{sample['index']}"
+            graph_path = os.path.join(OUT_DIR, f"graph_{suffix}.svg")
+            explanation.visualize_graph(graph_path)
+            explanation.visualize_feature_importance(os.path.join(OUT_DIR, f"node_feat_{suffix}.svg"))
+            print(f"Saved explanation graphs to {graph_path}")
 
 
 if __name__ == "__main__":
