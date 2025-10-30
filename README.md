@@ -17,8 +17,18 @@ Choice of the subsets are "node_count", "edge_count", "cycle_check", "triangle_c
 
 ## Apply explainer
 
+Single GPU:
+
 ```shell
 python explain.py --model-path MODEL_PATH --subset SUBSET
+```
+
+Multi-GPU with `torchrun` (shards the dataset across ranks and merges metrics automatically):
+
+```shell
+CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 explain.py \
+    --model-path MODEL_PATH \
+    --subset SUBSET
 ```
 
 ## Environment setup

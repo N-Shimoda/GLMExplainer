@@ -1,8 +1,10 @@
 import argparse
 import csv
 import os
+from typing import Iterable
 
 import torch
+import torch.distributed as dist
 from datasets import arrow_dataset, load_dataset
 from torch_geometric.data import Batch as PygBatch
 from torch_geometric.explain import Explainer, GNNExplainer, groundtruth_metrics
@@ -18,6 +20,29 @@ from src.glm import GraphTokenLM
 from src.metrics import comp_accuracy
 from src.preprocess import add_graph_column
 from src.utils import visualize_motif_explanation
+
+
+def _write_metrics_header(log_path: str, fieldnames: list[str]) -> None:
+    with open(log_path, "w", newline="") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+
+
+def _init_distributed_if_needed() -> tuple[int, int, int, bool]:
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    if world_size <= 1:
+        return 0, 1, 0, False
+
+    backend = "nccl" if torch.cuda.is_available() else "gloo"
+    dist.init_process_group(backend=backend)
+    rank = dist.get_rank()
+    local_rank = int(os.environ.get("LOCAL_RANK", rank))
+    return rank, world_size, local_rank, True
+
+
+def _cleanup_distributed() -> None:
+    if dist.is_available() and dist.is_initialized():
+        dist.destroy_process_group()
 
 
 def build_args():
@@ -126,7 +151,9 @@ def filter_dataset(
     return dataset, OUT_DIR
 
 
-def load_model(model_path: str) -> tuple[GraphTokenLM, AutoTokenizer]:
+def load_model(
+    model_path: str, device: torch.device | str | None = None, verbose: bool = True
+) -> tuple[GraphTokenLM, AutoTokenizer]:
     """Loads the GraphTokenLM model and tokenizer from the specified checkpoint path.
 
     Parameters
@@ -143,9 +170,19 @@ def load_model(model_path: str) -> tuple[GraphTokenLM, AutoTokenizer]:
     """
     ckpt_path, run_name = _resolve_ckpt_path(model_path)
 
+    if device is None:
+        target_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        target_device = torch.device(device)
+        if target_device.type == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError("CUDA device requested but CUDA is not available.")
+        if target_device.type == "cuda" and target_device.index is not None:
+            torch.cuda.set_device(target_device.index)
+
     model = GraphTokenLM.from_pretrained(ckpt_path, load_llm_weights=False)
-    model.to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
-    print(f"Loaded model from {ckpt_path} (run name: {run_name})")
+    model.to(target_device)
+    if verbose:
+        print(f"Loaded model from {ckpt_path} (run name: {run_name})")
 
     tokenizer = AutoTokenizer.from_pretrained(model.config.llm_name, trust_remote_code=True)
     return model, tokenizer
@@ -238,13 +275,12 @@ def _generate_explanation(
 
     # Compute accuracy
     acc, _, correct_mask = comp_accuracy(generated, [sample["completion"]] * len(generated), subset="house_check")
-    correct_count = sum(1 for flag in correct_mask if flag)
     if not any(correct_mask):
         print(
-            f"[WARN] Failed to generate the correct answer after {num_trials} "
-            f"trials (correct answer: {sample['completion']})."
+            f"[WARN] Failed to generate the correct answer after {num_trials} trials "
+            f"(correct answer: {sample['completion']})."
         )
-        return None, None, acc, correct_count
+        return None, acc
 
     # Generate explanation by GNNExplainer
     explainer = Explainer(
@@ -326,31 +362,20 @@ def explain_sample(
     return metrics_logged, float(f1), float(auroc), float(auprc)
 
 
-def main():
-    set_seed(42)
-    args = build_args()
-
-    # Load model and tokenizer
-    model, tokenizer = load_model(args.model_path)
+def _process_dataset(
+    dataset: Iterable[dict[str, str]],
+    args: argparse.Namespace,
+    device: torch.device,
+    log_path: str,
+    fieldnames: list[str],
+    show_progress: bool,
+    model: GraphTokenLM,
+    tokenizer: AutoTokenizer,
+) -> tuple[float, float, float, int]:
+    if model.device != device:
+        model = model.to(device)
     model.eval()
 
-    # Load dataset
-    dataset = build_dataset(args.subset, args.dataset, args.split, node_feat_dim=model.config.node_feat_dim)
-    dataset, OUT_DIR = filter_dataset(dataset, args)
-    print("Dataset: ", dataset)
-
-    os.makedirs(OUT_DIR, exist_ok=True)
-    log_path = os.path.join(OUT_DIR, "explanation_metrics.csv")
-    fieldnames = ["sample_index", "trial", "answer_accuracy", "f1", "auroc", "auprc"]
-    with open(log_path, "w", newline="") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-    total_f1 = 0.0
-    total_auroc = 0.0
-    total_auprc = 0.0
-    total_count = 0
-
-    # Create wrapper and generation config
     wrapper = GLMWrapper(model, tokenizer)
     gen_cfg = GenerationConfig(
         max_new_tokens=10,
@@ -359,9 +384,18 @@ def main():
         pad_token_id=tokenizer.eos_token_id,
     )
 
-    total_steps = len(dataset) * max(1, args.num_trials)
-    progress = tqdm(total=total_steps)
-    # Compute explanations for each sample
+    total_f1 = 0.0
+    total_auroc = 0.0
+    total_auprc = 0.0
+    total_count = 0
+    try:
+        dataset_length = len(dataset)  # type: ignore[arg-type]
+    except TypeError:
+        dataset = list(dataset)
+        dataset_length = len(dataset)
+    total_steps = dataset_length * max(1, args.num_trials)
+    progress = tqdm(total=total_steps) if show_progress and total_steps > 0 else None
+
     for sample in dataset:
         for i in range(args.num_trials):
             logged, f1, auroc, auprc = explain_sample(
@@ -374,26 +408,110 @@ def main():
                 fieldnames=fieldnames,
                 dataset_name=args.dataset,
             )
-
             if logged:
                 total_f1 += f1
                 total_auroc += auroc
                 total_auprc += auprc
                 total_count += 1
-            progress.update(1)
-    progress.close()
+            if progress is not None:
+                progress.update(1)
 
-    if total_count > 0:
-        avg_f1 = total_f1 / total_count
-        avg_auroc = total_auroc / total_count
-        avg_auprc = total_auprc / total_count
-        print(
-            "Average explanation accuracy across positive samples: "
-            f"F1={avg_f1:.3f}, AUROC={avg_auroc:.3f}, AUPRC={avg_auprc:.3f}"
-        )
-        print(f"Saved explanation metrics to {log_path}")
+    if progress is not None:
+        progress.close()
+
+    return total_f1, total_auroc, total_auprc, total_count
+
+
+def main():
+    set_seed(42)
+    args = build_args()
+
+    rank, world_size, local_rank, is_distributed = _init_distributed_if_needed()
+    set_seed(42 + rank)
+
+    if is_distributed and not torch.cuda.is_available():
+        raise RuntimeError("Distributed execution requires CUDA devices.")
+
+    if is_distributed:
+        device = torch.device(f"cuda:{local_rank}")
+        torch.cuda.set_device(device)
     else:
-        print("No explanation metrics recorded for positive samples.")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    is_rank0 = rank == 0
+
+    model, tokenizer = load_model(args.model_path, device=device, verbose=is_rank0)
+    model.eval()
+
+    node_feat_dim = model.config.node_feat_dim
+    dataset = build_dataset(args.subset, args.dataset, args.split, node_feat_dim=node_feat_dim)
+    dataset, OUT_DIR = filter_dataset(dataset, args)
+    if is_rank0:
+        print("Dataset: ", dataset)
+
+    if is_distributed:
+        dataset = dataset.shard(num_shards=world_size, index=rank)
+
+    os.makedirs(OUT_DIR, exist_ok=True)
+    base_log_path = os.path.join(OUT_DIR, "explanation_metrics.csv")
+    shard_log_path = base_log_path if world_size == 1 else os.path.join(OUT_DIR, f"explanation_metrics_rank{rank}.csv")
+
+    fieldnames = ["sample_index", "trial", "answer_accuracy", "f1", "auroc", "auprc"]
+    _write_metrics_header(shard_log_path, fieldnames)
+
+    show_progress = is_rank0 and len(dataset) > 0
+    total_f1, total_auroc, total_auprc, total_count = _process_dataset(
+        dataset=dataset,
+        args=args,
+        device=device,
+        log_path=shard_log_path,
+        fieldnames=fieldnames,
+        show_progress=show_progress,
+        model=model,
+        tokenizer=tokenizer,
+    )
+
+    metrics_tensor = torch.tensor(
+        [total_f1, total_auroc, total_auprc, float(total_count)],
+        device=device,
+    )
+    if is_distributed:
+        dist.all_reduce(metrics_tensor, op=dist.ReduceOp.SUM)
+    total_f1, total_auroc, total_auprc, total_count = metrics_tensor.tolist()
+    total_count = int(total_count)
+
+    if is_distributed:
+        dist.barrier()
+        if is_rank0:
+            with open(base_log_path, "w", newline="") as outfile:
+                writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+                writer.writeheader()
+                for idx in range(world_size):
+                    part_path = os.path.join(OUT_DIR, f"explanation_metrics_rank{idx}.csv")
+                    if not os.path.exists(part_path):
+                        continue
+                    with open(part_path, newline="") as part_file:
+                        reader = csv.DictReader(part_file)
+                        for row in reader:
+                            writer.writerow(row)
+                    os.remove(part_path)
+        dist.barrier()
+
+    if is_rank0:
+        if total_count > 0:
+            avg_f1 = total_f1 / total_count
+            avg_auroc = total_auroc / total_count
+            avg_auprc = total_auprc / total_count
+            print(
+                "Average explanation accuracy across positive samples: "
+                f"F1={avg_f1:.3f}, AUROC={avg_auroc:.3f}, AUPRC={avg_auprc:.3f}"
+            )
+            print(f"Saved explanation metrics to {base_log_path}")
+        else:
+            print("No explanation metrics recorded for positive samples.")
+
+    if is_distributed:
+        _cleanup_distributed()
 
 
 if __name__ == "__main__":
