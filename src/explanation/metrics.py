@@ -7,6 +7,17 @@ from typing import Dict, List
 import torch
 import torch.nn.functional as F
 
+EDGE_MASK_STABILITY_KEYS = (
+    "edge_mask_jaccard",
+    "edge_mask_spearman",
+    "edge_mask_mean_std",
+    "edge_mask_cosine",
+)
+
+
+def _default_stability_metrics() -> Dict[str, float]:
+    return {key: 0.0 for key in EDGE_MASK_STABILITY_KEYS}
+
 
 def _rankdata(values: torch.Tensor) -> torch.Tensor:
     if values.numel() == 0:
@@ -77,48 +88,69 @@ def _safe_mean(values: List[float]) -> float:
     return float(sum(values) / len(values)) if values else 0.0
 
 
+def _compute_single_sample_metrics(masks: List[torch.Tensor]) -> Dict[str, float]:
+    metrics = _default_stability_metrics()
+    if not masks:
+        return metrics
+
+    lengths = {mask.numel() for mask in masks}
+    if not lengths:
+        return metrics
+    if len(lengths) > 1:
+        min_len = min(lengths)
+        if min_len == 0:
+            return metrics
+        masks = [mask[:min_len] for mask in masks]
+
+    mask_stack = torch.stack([mask.float() for mask in masks], dim=0)
+    if mask_stack.size(0) > 1:
+        std_per_edge = mask_stack.std(dim=0, unbiased=False)
+    else:
+        std_per_edge = torch.zeros_like(mask_stack[0])
+    metrics["edge_mask_mean_std"] = float(std_per_edge.mean().item())
+
+    if len(masks) < 2:
+        return metrics
+
+    jaccard_scores: List[float] = []
+    spearman_scores: List[float] = []
+    cosine_scores: List[float] = []
+    for i, j in combinations(range(len(masks)), 2):
+        jaccard = _topk_jaccard(masks[i], masks[j])
+        if jaccard is not None:
+            jaccard_scores.append(jaccard)
+        spearman = _spearman_rank_correlation(masks[i], masks[j])
+        if not math.isnan(spearman):
+            spearman_scores.append(spearman)
+        cosine_scores.append(_cosine_similarity(masks[i], masks[j]))
+
+    metrics["edge_mask_jaccard"] = _safe_mean(jaccard_scores)
+    metrics["edge_mask_spearman"] = _safe_mean(spearman_scores)
+    metrics["edge_mask_cosine"] = _safe_mean(cosine_scores)
+    return metrics
+
+
+def compute_edge_mask_stability_metrics_per_sample(
+    sample_edge_masks: Dict[int, List[torch.Tensor]]
+) -> Dict[int, Dict[str, float]]:
+    per_sample: Dict[int, Dict[str, float]] = {}
+    for sample_idx, masks in sample_edge_masks.items():
+        per_sample[sample_idx] = _compute_single_sample_metrics(masks)
+    return per_sample
+
+
 def compute_edge_mask_stability_metrics(sample_edge_masks: Dict[int, List[torch.Tensor]]) -> Dict[str, float]:
-    jaccard_scores: list[float] = []
-    spearman_scores: list[float] = []
-    cosine_scores: list[float] = []
-    mean_std_values: list[float] = []
-
-    for masks in sample_edge_masks.values():
-        if not masks:
-            continue
-        lengths = {mask.numel() for mask in masks}
-        if not lengths:
-            continue
-        if len(lengths) > 1:
-            min_len = min(lengths)
-            if min_len == 0:
-                continue
-            masks = [mask[:min_len] for mask in masks]
-        mask_stack = torch.stack([mask.float() for mask in masks], dim=0)
-        if mask_stack.size(0) > 1:
-            std_per_edge = mask_stack.std(dim=0, unbiased=False)
-        else:
-            std_per_edge = torch.zeros_like(mask_stack[0])
-        mean_std_values.append(std_per_edge.mean().item())
-
-        if len(masks) < 2:
-            continue
-
-        for i, j in combinations(range(len(masks)), 2):
-            jaccard = _topk_jaccard(masks[i], masks[j])
-            if jaccard is not None:
-                jaccard_scores.append(jaccard)
-            spearman = _spearman_rank_correlation(masks[i], masks[j])
-            if not math.isnan(spearman):
-                spearman_scores.append(spearman)
-            cosine_scores.append(_cosine_similarity(masks[i], masks[j]))
-
-    return {
-        "edge_mask_jaccard": _safe_mean(jaccard_scores),
-        "edge_mask_spearman": _safe_mean(spearman_scores),
-        "edge_mask_mean_std": _safe_mean(mean_std_values),
-        "edge_mask_cosine": _safe_mean(cosine_scores),
-    }
+    per_sample = compute_edge_mask_stability_metrics_per_sample(sample_edge_masks)
+    aggregated = _default_stability_metrics()
+    if not per_sample:
+        return aggregated
+    for key in EDGE_MASK_STABILITY_KEYS:
+        aggregated[key] = _safe_mean([metrics[key] for metrics in per_sample.values()])
+    return aggregated
 
 
-__all__ = ["compute_edge_mask_stability_metrics"]
+__all__ = [
+    "EDGE_MASK_STABILITY_KEYS",
+    "compute_edge_mask_stability_metrics",
+    "compute_edge_mask_stability_metrics_per_sample",
+]

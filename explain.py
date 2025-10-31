@@ -17,7 +17,10 @@ from transformers.trainer_utils import set_seed
 
 from eval import create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
-from src.explanation.metrics import compute_edge_mask_stability_metrics
+from src.explanation.metrics import (
+    EDGE_MASK_STABILITY_KEYS,
+    compute_edge_mask_stability_metrics_per_sample,
+)
 from src.explanation.wrapper import GLMWrapper
 from src.glm import GraphTokenLM
 from src.metrics import comp_accuracy
@@ -188,7 +191,15 @@ def _process_dataset(
     show_progress: bool,
     model: GraphTokenLM,
     tokenizer: AutoTokenizer,
-) -> tuple[float, float, float, float, int, dict[int, list[torch.Tensor]]]:
+) -> tuple[
+    float,
+    float,
+    float,
+    float,
+    int,
+    dict[int, list[torch.Tensor]],
+    dict[int, dict[str, float]],
+]:
     if model.device != device:
         model = model.to(device)
     model.eval()
@@ -206,6 +217,15 @@ def _process_dataset(
     total_answer_accuracy = 0.0
     total_count = 0
     sample_edge_masks: defaultdict[int, list[torch.Tensor]] = defaultdict(list)
+    sample_metrics: defaultdict[int, dict[str, float]] = defaultdict(
+        lambda: {
+            "answer_accuracy_sum": 0.0,
+            "f1_sum": 0.0,
+            "auroc_sum": 0.0,
+            "auprc_sum": 0.0,
+            "count": 0,
+        }
+    )
     try:
         dataset_length = len(dataset)  # type: ignore[arg-type]
     except TypeError:
@@ -225,6 +245,7 @@ def _process_dataset(
     wrapper = GLMWrapper(model, tokenizer)
 
     for sample in dataset:
+        sample_idx = sample["index"]
         override_value = sample.get(TRIAL_OVERRIDE_COLUMN) if has_trial_override else None
         if override_value is not None:
             trial_indices = [int(override_value)]
@@ -250,20 +271,34 @@ def _process_dataset(
                 dataset_name=args.dataset,
             )
             if edge_mask is not None:
-                sample_edge_masks[sample["index"]].append(edge_mask)
+                sample_edge_masks[sample_idx].append(edge_mask)
             if logged:
                 total_f1 += f1
                 total_auroc += auroc
                 total_auprc += auprc
                 total_answer_accuracy += ans_accuracy_single
                 total_count += 1
+                stats = sample_metrics[sample_idx]
+                stats["answer_accuracy_sum"] += ans_accuracy_single
+                stats["f1_sum"] += f1
+                stats["auroc_sum"] += auroc
+                stats["auprc_sum"] += auprc
+                stats["count"] += 1
             if progress is not None:
                 progress.update(1)
 
     if progress is not None:
         progress.close()
 
-    return total_f1, total_auroc, total_auprc, total_answer_accuracy, total_count, dict(sample_edge_masks)
+    return (
+        total_f1,
+        total_auroc,
+        total_auprc,
+        total_answer_accuracy,
+        total_count,
+        dict(sample_edge_masks),
+        {idx: dict(stats) for idx, stats in sample_metrics.items()},
+    )
 
 
 def load_model(
@@ -419,6 +454,8 @@ def _generate_explanation(
     )
     explanation = explainer(x=pyg_batch.x, edge_index=pyg_batch.edge_index, batch=pyg_batch.batch)
     return explanation, acc
+
+
 def explain_sample(
     wrapper: GLMWrapper,
     sample: dict[str, str],
@@ -553,6 +590,7 @@ def main():
         total_answer_accuracy,
         total_count,
         sample_edge_masks,
+        sample_metrics,
     ) = _process_dataset(
         dataset=dataset,
         args=args,
@@ -591,11 +629,23 @@ def main():
         dist.barrier()
 
     merged_edge_masks: dict[int, list[torch.Tensor]] | None
+    merged_sample_metrics: dict[int, dict[str, float]] | None
     if is_distributed:
         gathered_masks = [None] * world_size if is_rank0 else None
         dist.gather_object(sample_edge_masks, gathered_masks, dst=0)
+        gathered_metrics = [None] * world_size if is_rank0 else None
+        dist.gather_object(sample_metrics, gathered_metrics, dst=0)
         if is_rank0:
             merged = defaultdict(list)
+            merged_metrics_accum = defaultdict(
+                lambda: {
+                    "answer_accuracy_sum": 0.0,
+                    "f1_sum": 0.0,
+                    "auroc_sum": 0.0,
+                    "auprc_sum": 0.0,
+                    "count": 0,
+                }
+            )
             assert gathered_masks is not None
             for partial in gathered_masks:
                 if not partial:
@@ -603,10 +653,24 @@ def main():
                 for idx, masks in partial.items():
                     merged[idx].extend(masks)
             merged_edge_masks = dict(merged)
+            assert gathered_metrics is not None
+            for partial_metrics in gathered_metrics:
+                if not partial_metrics:
+                    continue
+                for idx, stats in partial_metrics.items():
+                    acc = merged_metrics_accum[idx]
+                    acc["answer_accuracy_sum"] += stats.get("answer_accuracy_sum", 0.0)
+                    acc["f1_sum"] += stats.get("f1_sum", 0.0)
+                    acc["auroc_sum"] += stats.get("auroc_sum", 0.0)
+                    acc["auprc_sum"] += stats.get("auprc_sum", 0.0)
+                    acc["count"] += stats.get("count", 0)
+            merged_sample_metrics = {idx: dict(vals) for idx, vals in merged_metrics_accum.items()}
         else:
             merged_edge_masks = None
+            merged_sample_metrics = None
     else:
         merged_edge_masks = sample_edge_masks
+        merged_sample_metrics = sample_metrics
 
     if is_rank0:
         if total_count > 0:
@@ -624,38 +688,43 @@ def main():
             avg_answer_accuracy = 0.0
             print("No explanation metrics recorded for positive samples.")
 
-        stability_metrics = (
-            compute_edge_mask_stability_metrics(merged_edge_masks or {})
-            if merged_edge_masks is not None
-            else {
-                "edge_mask_jaccard": 0.0,
-                "edge_mask_spearman": 0.0,
-                "edge_mask_mean_std": 0.0,
-                "edge_mask_cosine": 0.0,
-            }
-        )
         avg_metrics_path = os.path.join(OUT_DIR, f"average_metrics_{run_name}.csv")
         average_fieldnames = [
+            "sample_index",
             "answer_accuracy",
             "f1",
             "auroc",
             "auprc",
-            "edge_mask_jaccard",
-            "edge_mask_spearman",
-            "edge_mask_mean_std",
-            "edge_mask_cosine",
+            *EDGE_MASK_STABILITY_KEYS,
         ]
-        avg_metrics_row = {
-            "answer_accuracy": avg_answer_accuracy,
-            "f1": total_f1 / total_count if total_count > 0 else 0.0,
-            "auroc": total_auroc / total_count if total_count > 0 else 0.0,
-            "auprc": total_auprc / total_count if total_count > 0 else 0.0,
-            **stability_metrics,
-        }
+        per_sample_stability = (
+            compute_edge_mask_stability_metrics_per_sample(merged_edge_masks or {})
+            if merged_edge_masks is not None
+            else {}
+        )
+        sample_metrics_for_logging = merged_sample_metrics or {}
+        zero_stability = {key: 0.0 for key in EDGE_MASK_STABILITY_KEYS}
         with open(avg_metrics_path, "w", newline="") as avg_file:
             writer = csv.DictWriter(avg_file, fieldnames=average_fieldnames)
             writer.writeheader()
-            writer.writerow(avg_metrics_row)
+            for sample_idx in sorted(sample_metrics_for_logging.keys()):
+                stats = sample_metrics_for_logging[sample_idx]
+                count = int(stats.get("count", 0))
+                answer_acc_sum = stats.get("answer_accuracy_sum", 0.0)
+                f1_sum = stats.get("f1_sum", 0.0)
+                auroc_sum = stats.get("auroc_sum", 0.0)
+                auprc_sum = stats.get("auprc_sum", 0.0)
+                row = {
+                    "sample_index": sample_idx,
+                    "answer_accuracy": answer_acc_sum / count if count > 0 else 0.0,
+                    "f1": f1_sum / count if count > 0 else 0.0,
+                    "auroc": auroc_sum / count if count > 0 else 0.0,
+                    "auprc": auprc_sum / count if count > 0 else 0.0,
+                }
+                stability = per_sample_stability.get(sample_idx, zero_stability)
+                for key in EDGE_MASK_STABILITY_KEYS:
+                    row[key] = stability.get(key, 0.0)
+                writer.writerow(row)
         print(f"Saved average metrics to {avg_metrics_path}")
 
     if is_distributed:
