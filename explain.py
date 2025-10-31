@@ -466,6 +466,7 @@ def explain_sample(
 
     return metrics_logged, float(f1), float(auroc), float(auprc)
 
+
 def main():
     set_seed(42)
     args = build_args()
@@ -498,13 +499,8 @@ def main():
             _cleanup_distributed()
         return
 
-    duplicate_single_sample = (
-        args.explain_pos_samples
-        and args.sample_idx is not None
-        and args.num_trials > 1
-        and len(dataset) == 1
-    )
-    if duplicate_single_sample:
+    # Duplicate a sample for multiple trials if len(dataset) == 1
+    if args.num_trials > 1 and len(dataset) == 1:
         duplicate_indices = [0] * args.num_trials
         dataset = dataset.select(duplicate_indices)
         dataset = dataset.add_column(TRIAL_OVERRIDE_COLUMN, list(range(args.num_trials)))
