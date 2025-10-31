@@ -1,6 +1,7 @@
 import argparse
 import csv
 import os
+from collections import defaultdict
 from datetime import datetime
 from typing import Iterable
 
@@ -16,7 +17,8 @@ from transformers.trainer_utils import set_seed
 
 from eval import create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
-from src.explanation import GLMWrapper
+from src.explanation.metrics import compute_edge_mask_stability_metrics
+from src.explanation.wrapper import GLMWrapper
 from src.glm import GraphTokenLM
 from src.metrics import comp_accuracy
 from src.preprocess import add_graph_column
@@ -186,7 +188,7 @@ def _process_dataset(
     show_progress: bool,
     model: GraphTokenLM,
     tokenizer: AutoTokenizer,
-) -> tuple[float, float, float, int]:
+) -> tuple[float, float, float, float, int, dict[int, list[torch.Tensor]]]:
     if model.device != device:
         model = model.to(device)
     model.eval()
@@ -201,7 +203,9 @@ def _process_dataset(
     total_f1 = 0.0
     total_auroc = 0.0
     total_auprc = 0.0
+    total_answer_accuracy = 0.0
     total_count = 0
+    sample_edge_masks: defaultdict[int, list[torch.Tensor]] = defaultdict(list)
     try:
         dataset_length = len(dataset)  # type: ignore[arg-type]
     except TypeError:
@@ -228,7 +232,14 @@ def _process_dataset(
             trial_indices = range(args.num_trials)
 
         for i in trial_indices:
-            logged, f1, auroc, auprc = explain_sample(
+            (
+                logged,
+                f1,
+                auroc,
+                auprc,
+                ans_accuracy_single,
+                edge_mask,
+            ) = explain_sample(
                 wrapper=wrapper,
                 sample=sample,
                 trial_idx=i,
@@ -238,10 +249,13 @@ def _process_dataset(
                 fieldnames=fieldnames,
                 dataset_name=args.dataset,
             )
+            if edge_mask is not None:
+                sample_edge_masks[sample["index"]].append(edge_mask)
             if logged:
                 total_f1 += f1
                 total_auroc += auroc
                 total_auprc += auprc
+                total_answer_accuracy += ans_accuracy_single
                 total_count += 1
             if progress is not None:
                 progress.update(1)
@@ -249,7 +263,7 @@ def _process_dataset(
     if progress is not None:
         progress.close()
 
-    return total_f1, total_auroc, total_auprc, total_count
+    return total_f1, total_auroc, total_auprc, total_answer_accuracy, total_count, dict(sample_edge_masks)
 
 
 def load_model(
@@ -386,7 +400,13 @@ def _generate_explanation(
     # Generate explanation by GNNExplainer
     explainer = Explainer(
         model=wrapper,
-        algorithm=GNNExplainer(epochs=200),
+        algorithm=GNNExplainer(
+            epochs=200,
+            lr=0.01,
+            edge_size=24,
+            edge_ent=2.0,
+            num_hops=wrapper.model.config.num_gnn_layers,
+        ),
         # algorithm=CaptumExplainer("IntegratedGradients"),
         explanation_type="model",
         node_mask_type="attributes",
@@ -399,8 +419,6 @@ def _generate_explanation(
     )
     explanation = explainer(x=pyg_batch.x, edge_index=pyg_batch.edge_index, batch=pyg_batch.batch)
     return explanation, acc
-
-
 def explain_sample(
     wrapper: GLMWrapper,
     sample: dict[str, str],
@@ -411,18 +429,18 @@ def explain_sample(
     fieldnames: list[str],
     dataset_name: str,
     NUM_GEN_TRIALS: int = 10,
-) -> tuple[bool, float, float, float]:
+) -> tuple[bool, float, float, float, float, torch.Tensor | None]:
     """Explain a single sample, log metrics, and emit per-trial artifacts."""
     model_device = wrapper.model.device
     pyg_batch = create_pyg_batch(sample["graph"], device=model_device)
     explanation, ans_accuracy = _generate_explanation(wrapper, sample, pyg_batch, gen_cfg, num_trials=NUM_GEN_TRIALS)
 
     if explanation is None:
-        return False, 0.0, 0.0, 0.0
+        return False, 0.0, 0.0, 0.0, 0.0, None
 
     # Compute explanation accuracy
     gt_edge_mask = _get_gt_explanation(sample)
-    pred_edge_mask = explanation.edge_mask.detach().cpu()
+    pred_edge_mask = explanation.edge_mask.detach().cpu().float()
     auroc, f1 = groundtruth_metrics(pred_edge_mask, gt_edge_mask, metrics=["auroc", "f1_score"])
     auprc = average_precision(pred_edge_mask, gt_edge_mask.int(), task="binary").item()
 
@@ -444,11 +462,11 @@ def explain_sample(
     # Save explanation graphs
     suffix = f"{sample['index']}_{trial_idx}" if num_trials > 1 else f"{sample['index']}"
     out_dir = os.path.dirname(log_path)
-    graph_dir = os.path.join(out_dir, GRAPH_SVG_SUBDIR)
-    node_feat_dir = os.path.join(out_dir, NODE_FEAT_SVG_SUBDIR)
+    graph_dir = os.path.join(out_dir, GRAPH_SVG_SUBDIR, f"graph_{sample['index']}")
+    node_feat_dir = os.path.join(out_dir, NODE_FEAT_SVG_SUBDIR, f"node_feat_{sample['index']}")
     os.makedirs(graph_dir, exist_ok=True)
     os.makedirs(node_feat_dir, exist_ok=True)
-    graph_path = os.path.join(graph_dir, f"graph_{suffix}.svg")
+    graph_path = os.path.join(graph_dir, f"{suffix}.svg")
     if dataset_name == "MotifQA":
         visualize_motif_explanation(
             sample=sample,
@@ -464,7 +482,7 @@ def explain_sample(
     feature_path = os.path.join(node_feat_dir, f"node_feat_{suffix}.svg")
     explanation.visualize_feature_importance(feature_path)
 
-    return metrics_logged, float(f1), float(auroc), float(auprc)
+    return metrics_logged, float(f1), float(auroc), float(auprc), float(ans_accuracy), pred_edge_mask
 
 
 def main():
@@ -522,13 +540,20 @@ def main():
 
     os.makedirs(OUT_DIR, exist_ok=True)
     base_log_path = os.path.join(OUT_DIR, f"metrics_{run_name}.csv")
-    shard_log_path = base_log_path if world_size == 1 else os.path.join(OUT_DIR, f"explanation_metrics_rank{rank}.csv")
+    shard_log_path = base_log_path if world_size == 1 else os.path.join(OUT_DIR, f"metrics_rank{rank}.csv")
 
     fieldnames = ["sample_index", "trial", "answer_accuracy", "f1", "auroc", "auprc"]
     _write_metrics_header(shard_log_path, fieldnames)
 
     show_progress = is_rank0 and len(dataset) > 0
-    total_f1, total_auroc, total_auprc, total_count = _process_dataset(
+    (
+        total_f1,
+        total_auroc,
+        total_auprc,
+        total_answer_accuracy,
+        total_count,
+        sample_edge_masks,
+    ) = _process_dataset(
         dataset=dataset,
         args=args,
         device=device,
@@ -540,12 +565,12 @@ def main():
     )
 
     metrics_tensor = torch.tensor(
-        [total_f1, total_auroc, total_auprc, float(total_count)],
+        [total_f1, total_auroc, total_auprc, total_answer_accuracy, float(total_count)],
         device=device,
     )
     if is_distributed:
         dist.all_reduce(metrics_tensor, op=dist.ReduceOp.SUM)
-    total_f1, total_auroc, total_auprc, total_count = metrics_tensor.tolist()
+    total_f1, total_auroc, total_auprc, total_answer_accuracy, total_count = metrics_tensor.tolist()
     total_count = int(total_count)
 
     if is_distributed:
@@ -555,7 +580,7 @@ def main():
                 writer = csv.DictWriter(outfile, fieldnames=fieldnames)
                 writer.writeheader()
                 for idx in range(world_size):
-                    part_path = os.path.join(OUT_DIR, f"explanation_metrics_rank{idx}.csv")
+                    part_path = os.path.join(OUT_DIR, f"metrics_rank{idx}.csv")
                     if not os.path.exists(part_path):
                         continue
                     with open(part_path, newline="") as part_file:
@@ -565,18 +590,73 @@ def main():
                     os.remove(part_path)
         dist.barrier()
 
+    merged_edge_masks: dict[int, list[torch.Tensor]] | None
+    if is_distributed:
+        gathered_masks = [None] * world_size if is_rank0 else None
+        dist.gather_object(sample_edge_masks, gathered_masks, dst=0)
+        if is_rank0:
+            merged = defaultdict(list)
+            assert gathered_masks is not None
+            for partial in gathered_masks:
+                if not partial:
+                    continue
+                for idx, masks in partial.items():
+                    merged[idx].extend(masks)
+            merged_edge_masks = dict(merged)
+        else:
+            merged_edge_masks = None
+    else:
+        merged_edge_masks = sample_edge_masks
+
     if is_rank0:
         if total_count > 0:
+            avg_answer_accuracy = total_answer_accuracy / total_count
             avg_f1 = total_f1 / total_count
             avg_auroc = total_auroc / total_count
             avg_auprc = total_auprc / total_count
             print(
                 "Average explanation accuracy across positive samples: "
+                f"AnswerAcc={avg_answer_accuracy:.3f}, "
                 f"F1={avg_f1:.3f}, AUROC={avg_auroc:.3f}, AUPRC={avg_auprc:.3f}"
             )
             print(f"Saved explanation metrics to {base_log_path}")
         else:
+            avg_answer_accuracy = 0.0
             print("No explanation metrics recorded for positive samples.")
+
+        stability_metrics = (
+            compute_edge_mask_stability_metrics(merged_edge_masks or {})
+            if merged_edge_masks is not None
+            else {
+                "edge_mask_jaccard": 0.0,
+                "edge_mask_spearman": 0.0,
+                "edge_mask_mean_std": 0.0,
+                "edge_mask_cosine": 0.0,
+            }
+        )
+        avg_metrics_path = os.path.join(OUT_DIR, f"average_metrics_{run_name}.csv")
+        average_fieldnames = [
+            "answer_accuracy",
+            "f1",
+            "auroc",
+            "auprc",
+            "edge_mask_jaccard",
+            "edge_mask_spearman",
+            "edge_mask_mean_std",
+            "edge_mask_cosine",
+        ]
+        avg_metrics_row = {
+            "answer_accuracy": avg_answer_accuracy,
+            "f1": total_f1 / total_count if total_count > 0 else 0.0,
+            "auroc": total_auroc / total_count if total_count > 0 else 0.0,
+            "auprc": total_auprc / total_count if total_count > 0 else 0.0,
+            **stability_metrics,
+        }
+        with open(avg_metrics_path, "w", newline="") as avg_file:
+            writer = csv.DictWriter(avg_file, fieldnames=average_fieldnames)
+            writer.writeheader()
+            writer.writerow(avg_metrics_row)
+        print(f"Saved average metrics to {avg_metrics_path}")
 
     if is_distributed:
         _cleanup_distributed()
