@@ -16,10 +16,29 @@ EDGE_MASK_STABILITY_KEYS = (
 
 
 def _default_stability_metrics() -> Dict[str, float]:
+    """Return a zero-initialized stability metrics dictionary.
+
+    Returns
+    -------
+    dict[str, float]
+        Mapping from stability metric names to zero.
+    """
     return {key: 0.0 for key in EDGE_MASK_STABILITY_KEYS}
 
 
 def _rankdata(values: torch.Tensor) -> torch.Tensor:
+    """Assign ranks to tensor entries handling ties.
+
+    Parameters
+    ----------
+    values : torch.Tensor
+        One-dimensional tensor of scores to rank.
+
+    Returns
+    -------
+    torch.Tensor
+        Tensor of floating-point ranks where ties receive their average rank.
+    """
     if values.numel() == 0:
         return values.clone().float()
     sorted_vals, sorted_idx = torch.sort(values)
@@ -39,6 +58,20 @@ def _rankdata(values: torch.Tensor) -> torch.Tensor:
 
 
 def _spearman_rank_correlation(mask_a: torch.Tensor, mask_b: torch.Tensor) -> float:
+    """Compute Spearman's rank correlation between two edge masks.
+
+    Parameters
+    ----------
+    mask_a : torch.Tensor
+        First mask vector.
+    mask_b : torch.Tensor
+        Second mask vector.
+
+    Returns
+    -------
+    float
+        Spearman correlation coefficient. Returns ``nan`` when correlation is undefined.
+    """
     if mask_a.numel() == 0 or mask_b.numel() == 0:
         return float("nan")
     ranks_a = _rankdata(mask_a)
@@ -52,6 +85,22 @@ def _spearman_rank_correlation(mask_a: torch.Tensor, mask_b: torch.Tensor) -> fl
 
 
 def _topk_jaccard(mask_a: torch.Tensor, mask_b: torch.Tensor, top_k: int = 6) -> float | None:
+    """Compute Jaccard index of top-k edges between two masks.
+
+    Parameters
+    ----------
+    mask_a : torch.Tensor
+        First mask vector.
+    mask_b : torch.Tensor
+        Second mask vector.
+    top_k : int, default=6
+        Number of top edges to consider as positive class.
+
+    Returns
+    -------
+    float or None
+        Jaccard index in ``[0, 1]`` if the union is non-empty; ``None`` otherwise.
+    """
     if mask_a.numel() == 0 or mask_b.numel() == 0 or top_k <= 0:
         return None
     k_a = min(top_k, mask_a.numel())
@@ -71,6 +120,20 @@ def _topk_jaccard(mask_a: torch.Tensor, mask_b: torch.Tensor, top_k: int = 6) ->
 
 
 def _cosine_similarity(mask_a: torch.Tensor, mask_b: torch.Tensor) -> float:
+    """Compute cosine similarity between two mask vectors.
+
+    Parameters
+    ----------
+    mask_a : torch.Tensor
+        First mask vector.
+    mask_b : torch.Tensor
+        Second mask vector.
+
+    Returns
+    -------
+    float
+        Cosine similarity in ``[-1, 1]``. Returns ``0.0`` when inputs are empty.
+    """
     if mask_a.numel() == 0 or mask_b.numel() == 0:
         return 0.0
     if mask_a.numel() != mask_b.numel():
@@ -85,10 +148,34 @@ def _cosine_similarity(mask_a: torch.Tensor, mask_b: torch.Tensor) -> float:
 
 
 def _safe_mean(values: List[float]) -> float:
+    """Compute the arithmetic mean with empty-list handling.
+
+    Parameters
+    ----------
+    values : list[float]
+        Sequence of numeric values.
+
+    Returns
+    -------
+    float
+        Mean of ``values`` or ``0.0`` when the input list is empty.
+    """
     return float(sum(values) / len(values)) if values else 0.0
 
 
 def _compute_single_sample_metrics(masks: List[torch.Tensor]) -> Dict[str, float]:
+    """Compute edge-mask stability metrics for a single sample.
+
+    Parameters
+    ----------
+    masks : list[torch.Tensor]
+        List of edge masks belonging to the same sample.
+
+    Returns
+    -------
+    dict[str, float]
+        Dictionary containing per-sample Jaccard, Spearman, mean STD, and cosine scores.
+    """
     metrics = _default_stability_metrics()
     if not masks:
         return metrics
@@ -133,6 +220,18 @@ def _compute_single_sample_metrics(masks: List[torch.Tensor]) -> Dict[str, float
 def compute_edge_mask_stability_metrics_per_sample(
     sample_edge_masks: Dict[int, List[torch.Tensor]]
 ) -> Dict[int, Dict[str, float]]:
+    """Compute per-sample edge-mask stability metrics.
+
+    Parameters
+    ----------
+    sample_edge_masks : dict[int, list[torch.Tensor]]
+        Mapping from sample index to a list of per-trial edge masks.
+
+    Returns
+    -------
+    dict[int, dict[str, float]]
+        Mapping from sample index to its stability metrics.
+    """
     per_sample: Dict[int, Dict[str, float]] = {}
     for sample_idx, masks in sample_edge_masks.items():
         per_sample[sample_idx] = _compute_single_sample_metrics(masks)
@@ -140,6 +239,18 @@ def compute_edge_mask_stability_metrics_per_sample(
 
 
 def compute_edge_mask_stability_metrics(sample_edge_masks: Dict[int, List[torch.Tensor]]) -> Dict[str, float]:
+    """Compute aggregated edge-mask stability metrics over all samples.
+
+    Parameters
+    ----------
+    sample_edge_masks : dict[int, list[torch.Tensor]]
+        Mapping from sample index to its list of edge masks.
+
+    Returns
+    -------
+    dict[str, float]
+        Dictionary containing dataset-level averages for each stability metric.
+    """
     per_sample = compute_edge_mask_stability_metrics_per_sample(sample_edge_masks)
     aggregated = _default_stability_metrics()
     if not per_sample:

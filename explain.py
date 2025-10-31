@@ -481,6 +481,7 @@ def explain_sample(
     auroc, f1 = groundtruth_metrics(pred_edge_mask, gt_edge_mask, metrics=["auroc", "f1_score"])
     auprc = average_precision(pred_edge_mask, gt_edge_mask.int(), task="binary").item()
 
+    # Log explanation accuracy for positive samples
     metrics_logged = False
     if dataset_name == "MotifQA" and len(sample.get("motif_nodes", [])) > 0:
         record = {
@@ -496,13 +497,15 @@ def explain_sample(
             writer.writerow(record)
         metrics_logged = True
 
-    # Save explanation graphs
+    # Directories to save figures
     suffix = f"{sample['index']}_{trial_idx}" if num_trials > 1 else f"{sample['index']}"
     out_dir = os.path.dirname(log_path)
     graph_dir = os.path.join(out_dir, GRAPH_SVG_SUBDIR, f"graph_{sample['index']}")
     node_feat_dir = os.path.join(out_dir, NODE_FEAT_SVG_SUBDIR, f"node_feat_{sample['index']}")
     os.makedirs(graph_dir, exist_ok=True)
     os.makedirs(node_feat_dir, exist_ok=True)
+
+    # Save visualizations
     graph_path = os.path.join(graph_dir, f"{suffix}.svg")
     if dataset_name == "MotifQA":
         visualize_motif_explanation(
