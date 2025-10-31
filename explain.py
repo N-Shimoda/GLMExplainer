@@ -518,7 +518,7 @@ def main():
             # Assign at most one sample per rank when the filtered dataset is
             # smaller than the world size to avoid out-of-range shard errors.
             indices = list(range(rank, dataset_len, world_size))
-            dataset = dataset.select(indices) if indices else dataset.select([])
+            dataset = dataset.select(indices if indices else [])
 
     os.makedirs(OUT_DIR, exist_ok=True)
     base_log_path = os.path.join(OUT_DIR, f"metrics_{run_name}.csv")
