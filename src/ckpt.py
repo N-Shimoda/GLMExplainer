@@ -13,9 +13,7 @@ def _checkpoint_step(path: str) -> int:
 def _get_dir_type(path: str) -> Literal["task", "model", "checkpoint"]:
     """Classify directory type."""
     dir_name = os.path.basename(path.rstrip(os.sep))
-    if any(
-        entry.startswith("checkpoint") and os.path.isdir(os.path.join(path, entry)) for entry in os.listdir(path)
-    ):
+    if any(entry.startswith("checkpoint") and os.path.isdir(os.path.join(path, entry)) for entry in os.listdir(path)):
         return "model"
     elif dir_name.startswith("checkpoint-"):
         return "checkpoint"
@@ -77,7 +75,7 @@ def _resolve_ckpt_path(model_path: str, version_index: int = -1) -> Tuple[str, s
             return _resolve_ckpt_path(latest_dir)
         case "model":
             # This directory already contains the model (config.json present)
-            run_name = os.path.basename(os.path.dirname(model_path.rstrip(os.sep)))
+            run_name = os.path.basename(model_path.rstrip(os.sep))
             checkpoint_dirs = [
                 os.path.join(model_path, entry)
                 for entry in os.listdir(model_path)
@@ -90,5 +88,4 @@ def _resolve_ckpt_path(model_path: str, version_index: int = -1) -> Tuple[str, s
             run_name = os.path.basename(os.path.dirname(model_path.rstrip(os.sep)))
             return model_path, run_name
         case _:
-            # Fallback (should not reach here due to Literal constraint)
-            return model_path, ""
+            raise RuntimeError(f"Unrecognized directory type for path '{model_path}'.")
