@@ -200,6 +200,56 @@ def _process_dataset(
     dict[int, list[torch.Tensor]],
     dict[int, dict[str, float]],
 ]:
+    """Run explanations across the dataset and accumulate trial-level metrics.
+
+    Parameters
+    ----------
+    dataset : Iterable[dict[str, str]]
+        Iterable of dataset samples. Each sample must at least expose the
+        ``index`` key and any fields required by :func:`explain_sample`,
+        including ``graph`` and model inputs.
+    args : argparse.Namespace
+        Parsed CLI arguments controlling trial repetition, dataset name, and
+        optional per-sample overrides such as ``num_trials`` and ``dataset``.
+    device : torch.device
+        Target device on which the ``model`` should execute.
+    log_path : str
+        CSV path forwarded to :func:`explain_sample` for appending per-trial
+        metrics.
+    fieldnames : list[str]
+        Ordered column names used by the CSV logger.
+    show_progress : bool
+        If ``True``, render a ``tqdm`` progress bar while processing samples.
+    model : GraphTokenLM
+        Pretrained GraphToken language model whose predictions are explained.
+    tokenizer : AutoTokenizer
+        Tokenizer paired with ``model`` and used to build prompts.
+
+    Returns
+    -------
+    total_f1 : float
+        Sum of F1 values over all trials that were successfully logged.
+    total_auroc : float
+        Sum of AUROC scores over the logged trials.
+    total_auprc : float
+        Sum of AUPRC scores over the logged trials.
+    total_answer_accuracy : float
+        Sum of answer accuracy scores over the logged trials.
+    total_count : int
+        Number of trials that produced metrics (i.e., were logged).
+    sample_edge_masks : dict[int, list[torch.Tensor]]
+        Mapping from sample index to the list of edge masks returned across its
+        trials.
+    sample_metrics : dict[int, dict[str, float]]
+        Per-sample aggregates storing the sums of recorded metrics along with a
+        ``count`` field.
+
+    Notes
+    -----
+    If the dataset length is unknown, it is materialized into a list to enable
+    progress reporting. When the dataset carries a ``_trial_override`` column,
+    those overrides supersede ``args.num_trials`` for the affected samples.
+    """
     if model.device != device:
         model = model.to(device)
     model.eval()
