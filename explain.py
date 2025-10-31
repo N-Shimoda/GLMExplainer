@@ -1,6 +1,7 @@
 import argparse
 import csv
 import os
+from datetime import datetime
 from typing import Iterable
 
 import torch
@@ -20,6 +21,9 @@ from src.glm import GraphTokenLM
 from src.metrics import comp_accuracy
 from src.preprocess import add_graph_column
 from src.utils import visualize_motif_explanation
+
+GRAPH_SVG_SUBDIR = "graphs"
+NODE_FEAT_SVG_SUBDIR = "node_feat"
 
 
 def _write_metrics_header(log_path: str, fieldnames: list[str]) -> None:
@@ -55,7 +59,7 @@ def build_args():
             raise argparse.ArgumentTypeError("Value must be non-negative.")
         return ivalue
 
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser(description="Explain GraphTokenLM predictions using GNNExplainer")
     p.add_argument("--model-path", type=str, required=True, help="Path to the model checkpoint")
     p.add_argument(
         "--dataset",
@@ -75,19 +79,31 @@ def build_args():
         type=str,
         choices=["train", "validation", "test"],
         default="test",
-        help="Dataset split to use",
+        help="Dataset split to use (default: test)",
     )
     p.add_argument(
         "--explain-pos-samples",
         action="store_true",
         help="If set, only explain positive samples (graphs containing house motifs).",
     )
-    p.add_argument("--num-samples", type=check_non_negative_int, default=None, help="Number of samples to explain")
     p.add_argument(
-        "--target-value", type=check_non_negative_int, default=None, help="Targeted answer value to explain"
+        "--num-samples", type=check_non_negative_int, default=None, help="Number of samples to explain (default: None)"
     )
-    p.add_argument("--sample-idx", type=check_non_negative_int, default=None, help="Index of the sample to explain")
-    p.add_argument("--num-trials", type=int, default=1, help="Number of trials for explaining each sample")
+    p.add_argument(
+        "--target-value",
+        type=check_non_negative_int,
+        default=None,
+        help="Targeted answer value to explain (default: None)",
+    )
+    p.add_argument(
+        "--sample-idx",
+        type=check_non_negative_int,
+        default=None,
+        help="Specify the index of the sample to explain (default: None)",
+    )
+    p.add_argument(
+        "--num-trials", type=int, default=1, help="Number of trials for explaining each sample (default: 1)"
+    )
 
     args = p.parse_args()
 
@@ -100,6 +116,8 @@ def build_args():
         raise ValueError("`subset` argument must be specified for GraphQA dataset.")
     if args.explain_pos_samples and args.dataset != "MotifQA":
         raise ValueError("`--explain-pos-sample` is only supported for the MotifQA dataset.")
+    if args.num_samples is not None and args.sample_idx is not None:
+        raise ValueError("Only one of `num_samples` or `sample_idx` should be specified.")
     if args.num_trials < 1:
         raise ValueError("`num_trials` must be at least 1.")
 
@@ -130,23 +148,30 @@ def filter_dataset(
     dataset: arrow_dataset.Dataset,
     args: argparse.Namespace,
 ) -> tuple[arrow_dataset.Dataset, str]:
+    # Define output directory
+    subset = args.subset if args.subset is not None else "house_check"
+    OUT_DIR = os.path.join("explanations", subset)
+
+    # Filter dataset based on args
+    if args.sample_idx is not None:
+        dataset = dataset.filter(lambda x: x["index"] == args.sample_idx)
+
     match args.dataset:
         case "MotifQA":
             if args.explain_pos_samples:
                 dataset = dataset.filter(lambda x: len(x["motif_nodes"]) > 0)
                 print("Extracted positive samples: len(dataset) =", len(dataset))
-            if args.num_samples is not None:
-                num_to_select = min(args.num_samples, len(dataset))
-                dataset = dataset.select(range(num_to_select))
-            OUT_DIR = os.path.join("explanations", "house_check")
         case "GraphQA":
             if args.target_value is not None:
                 dataset = dataset.filter(lambda x: int(x["completion"].split(".")[0]) == args.target_value)
                 TARGET_VALUE = args.target_value
-            elif args.sample_idx is not None:
-                dataset = dataset.filter(lambda x: x["index"] == args.sample_idx)
+            else:
                 TARGET_VALUE = int(dataset[0]["completion"].split(".")[0])
             OUT_DIR = os.path.join("explanations", f"{args.subset}_{TARGET_VALUE}")
+
+    if args.num_samples is not None:
+        num_to_select = min(args.num_samples, len(dataset))
+        dataset = dataset.select(range(num_to_select))
 
     return dataset, OUT_DIR
 
@@ -342,8 +367,9 @@ def explain_sample(
 
     # Save explanation graphs
     suffix = f"{sample['index']}_{trial_idx}" if num_trials > 1 else f"{sample['index']}"
-    out_dir = os.path.dirname(log_path)
-    graph_path = os.path.join(out_dir, f"graph_{suffix}.svg")
+    os.makedirs(GRAPH_SVG_DIR, exist_ok=True)
+    os.makedirs(NODE_FEAT_SVG_DIR, exist_ok=True)
+    graph_path = os.path.join(GRAPH_SVG_DIR, f"graph_{suffix}.svg")
     if dataset_name == "MotifQA":
         visualize_motif_explanation(
             sample=sample,
@@ -356,7 +382,7 @@ def explain_sample(
         )
     else:
         explanation.visualize_graph(graph_path)
-    feature_path = os.path.join(out_dir, f"node_feat_{suffix}.svg")
+    feature_path = os.path.join(NODE_FEAT_SVG_DIR, f"node_feat_{suffix}.svg")
     explanation.visualize_feature_importance(feature_path)
 
     return metrics_logged, float(f1), float(auroc), float(auprc)
@@ -425,6 +451,7 @@ def _process_dataset(
 def main():
     set_seed(42)
     args = build_args()
+    run_name = datetime.now().strftime("%m%d-%H%M")
 
     rank, world_size, local_rank, is_distributed = _init_distributed_if_needed()
     set_seed(42 + rank)
@@ -446,14 +473,20 @@ def main():
     node_feat_dim = model.config.node_feat_dim
     dataset = build_dataset(args.subset, args.dataset, args.split, node_feat_dim=node_feat_dim)
     dataset, OUT_DIR = filter_dataset(dataset, args)
+    if len(dataset) == 0:
+        if is_rank0:
+            print("[INFO] No samples to explain after filtering. Exiting.")
+        if is_distributed:
+            _cleanup_distributed()
+        return
     if is_rank0:
-        print("Dataset: ", dataset)
+        print("[INFO] Dataset: ", dataset)
 
     if is_distributed:
         dataset = dataset.shard(num_shards=world_size, index=rank)
 
     os.makedirs(OUT_DIR, exist_ok=True)
-    base_log_path = os.path.join(OUT_DIR, "explanation_metrics.csv")
+    base_log_path = os.path.join(OUT_DIR, f"metrics_{run_name}.csv")
     shard_log_path = base_log_path if world_size == 1 else os.path.join(OUT_DIR, f"explanation_metrics_rank{rank}.csv")
 
     fieldnames = ["sample_index", "trial", "answer_accuracy", "f1", "auroc", "auprc"]
