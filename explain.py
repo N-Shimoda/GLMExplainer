@@ -24,6 +24,7 @@ from src.utils import visualize_motif_explanation
 
 GRAPH_SVG_SUBDIR = "graphs"
 NODE_FEAT_SVG_SUBDIR = "node_feat"
+TRIAL_OVERRIDE_COLUMN = "_trial_override"
 
 
 def _write_metrics_header(log_path: str, fieldnames: list[str]) -> None:
@@ -174,6 +175,81 @@ def filter_dataset(
         dataset = dataset.select(range(num_to_select))
 
     return dataset, OUT_DIR
+
+
+def _process_dataset(
+    dataset: Iterable[dict[str, str]],
+    args: argparse.Namespace,
+    device: torch.device,
+    log_path: str,
+    fieldnames: list[str],
+    show_progress: bool,
+    model: GraphTokenLM,
+    tokenizer: AutoTokenizer,
+) -> tuple[float, float, float, int]:
+    if model.device != device:
+        model = model.to(device)
+    model.eval()
+
+    gen_cfg = GenerationConfig(
+        max_new_tokens=10,
+        do_sample=True,
+        eos_token_id=tokenizer.eos_token_id,
+        pad_token_id=tokenizer.eos_token_id,
+    )
+
+    total_f1 = 0.0
+    total_auroc = 0.0
+    total_auprc = 0.0
+    total_count = 0
+    try:
+        dataset_length = len(dataset)  # type: ignore[arg-type]
+    except TypeError:
+        dataset = list(dataset)
+        dataset_length = len(dataset)
+
+    has_trial_override = False
+    if hasattr(dataset, "column_names") and TRIAL_OVERRIDE_COLUMN in dataset.column_names:
+        # Ensure at least one sample carries an override before switching modes.
+        if dataset_length > 0 and dataset[0].get(TRIAL_OVERRIDE_COLUMN) is not None:
+            has_trial_override = True
+
+    per_sample_trials = 1 if has_trial_override else max(1, args.num_trials)
+    total_steps = dataset_length * per_sample_trials
+    progress = tqdm(total=total_steps) if show_progress and total_steps > 0 else None
+
+    wrapper = GLMWrapper(model, tokenizer)
+
+    for sample in dataset:
+        override_value = sample.get(TRIAL_OVERRIDE_COLUMN) if has_trial_override else None
+        if override_value is not None:
+            trial_indices = [int(override_value)]
+        else:
+            trial_indices = range(args.num_trials)
+
+        for i in trial_indices:
+            logged, f1, auroc, auprc = explain_sample(
+                wrapper=wrapper,
+                sample=sample,
+                trial_idx=i,
+                num_trials=args.num_trials,
+                gen_cfg=gen_cfg,
+                log_path=log_path,
+                fieldnames=fieldnames,
+                dataset_name=args.dataset,
+            )
+            if logged:
+                total_f1 += f1
+                total_auroc += auroc
+                total_auprc += auprc
+                total_count += 1
+            if progress is not None:
+                progress.update(1)
+
+    if progress is not None:
+        progress.close()
+
+    return total_f1, total_auroc, total_auprc, total_count
 
 
 def load_model(
@@ -367,9 +443,12 @@ def explain_sample(
 
     # Save explanation graphs
     suffix = f"{sample['index']}_{trial_idx}" if num_trials > 1 else f"{sample['index']}"
-    os.makedirs(GRAPH_SVG_DIR, exist_ok=True)
-    os.makedirs(NODE_FEAT_SVG_DIR, exist_ok=True)
-    graph_path = os.path.join(GRAPH_SVG_DIR, f"graph_{suffix}.svg")
+    out_dir = os.path.dirname(log_path)
+    graph_dir = os.path.join(out_dir, GRAPH_SVG_SUBDIR)
+    node_feat_dir = os.path.join(out_dir, NODE_FEAT_SVG_SUBDIR)
+    os.makedirs(graph_dir, exist_ok=True)
+    os.makedirs(node_feat_dir, exist_ok=True)
+    graph_path = os.path.join(graph_dir, f"graph_{suffix}.svg")
     if dataset_name == "MotifQA":
         visualize_motif_explanation(
             sample=sample,
@@ -382,70 +461,10 @@ def explain_sample(
         )
     else:
         explanation.visualize_graph(graph_path)
-    feature_path = os.path.join(NODE_FEAT_SVG_DIR, f"node_feat_{suffix}.svg")
+    feature_path = os.path.join(node_feat_dir, f"node_feat_{suffix}.svg")
     explanation.visualize_feature_importance(feature_path)
 
     return metrics_logged, float(f1), float(auroc), float(auprc)
-
-
-def _process_dataset(
-    dataset: Iterable[dict[str, str]],
-    args: argparse.Namespace,
-    device: torch.device,
-    log_path: str,
-    fieldnames: list[str],
-    show_progress: bool,
-    model: GraphTokenLM,
-    tokenizer: AutoTokenizer,
-) -> tuple[float, float, float, int]:
-    if model.device != device:
-        model = model.to(device)
-    model.eval()
-
-    wrapper = GLMWrapper(model, tokenizer)
-    gen_cfg = GenerationConfig(
-        max_new_tokens=10,
-        do_sample=True,
-        eos_token_id=tokenizer.eos_token_id,
-        pad_token_id=tokenizer.eos_token_id,
-    )
-
-    total_f1 = 0.0
-    total_auroc = 0.0
-    total_auprc = 0.0
-    total_count = 0
-    try:
-        dataset_length = len(dataset)  # type: ignore[arg-type]
-    except TypeError:
-        dataset = list(dataset)
-        dataset_length = len(dataset)
-    total_steps = dataset_length * max(1, args.num_trials)
-    progress = tqdm(total=total_steps) if show_progress and total_steps > 0 else None
-
-    for sample in dataset:
-        for i in range(args.num_trials):
-            logged, f1, auroc, auprc = explain_sample(
-                wrapper=wrapper,
-                sample=sample,
-                trial_idx=i,
-                num_trials=args.num_trials,
-                gen_cfg=gen_cfg,
-                log_path=log_path,
-                fieldnames=fieldnames,
-                dataset_name=args.dataset,
-            )
-            if logged:
-                total_f1 += f1
-                total_auroc += auroc
-                total_auprc += auprc
-                total_count += 1
-            if progress is not None:
-                progress.update(1)
-
-    if progress is not None:
-        progress.close()
-
-    return total_f1, total_auroc, total_auprc, total_count
 
 
 def main():
@@ -479,11 +498,27 @@ def main():
         if is_distributed:
             _cleanup_distributed()
         return
+
+    # Duplicate a sample for multiple trials if len(dataset) == 1
+    if args.num_trials > 1 and len(dataset) == 1:
+        duplicate_indices = [0] * args.num_trials
+        dataset = dataset.select(duplicate_indices)
+        dataset = dataset.add_column(TRIAL_OVERRIDE_COLUMN, list(range(args.num_trials)))
+    elif hasattr(dataset, "column_names") and TRIAL_OVERRIDE_COLUMN in dataset.column_names:
+        dataset = dataset.remove_columns([TRIAL_OVERRIDE_COLUMN])
+
     if is_rank0:
         print("[INFO] Dataset: ", dataset)
 
     if is_distributed:
-        dataset = dataset.shard(num_shards=world_size, index=rank)
+        dataset_len = len(dataset)
+        if dataset_len >= world_size:
+            dataset = dataset.shard(num_shards=world_size, index=rank)
+        else:
+            # Assign at most one sample per rank when the filtered dataset is
+            # smaller than the world size to avoid out-of-range shard errors.
+            indices = list(range(rank, dataset_len, world_size))
+            dataset = dataset.select(indices if indices else [])
 
     os.makedirs(OUT_DIR, exist_ok=True)
     base_log_path = os.path.join(OUT_DIR, f"metrics_{run_name}.csv")
