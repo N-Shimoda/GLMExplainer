@@ -7,7 +7,6 @@ from typing import Iterable
 
 import torch
 import torch.distributed as dist
-from datasets import arrow_dataset, load_dataset
 from torch_geometric.data import Batch as PygBatch
 from torch_geometric.explain import Explainer, GNNExplainer, groundtruth_metrics
 from torchmetrics.functional import average_precision
@@ -21,10 +20,10 @@ from src.explanation.metrics import (
     EDGE_MASK_STABILITY_KEYS,
     compute_edge_mask_stability_metrics_per_sample,
 )
+from src.explanation.preprocess import build_dataset, filter_dataset
 from src.explanation.wrapper import GLMWrapper
 from src.glm import GraphTokenLM
 from src.metrics import comp_accuracy
-from src.preprocess import add_graph_column
 from src.utils import visualize_motif_explanation
 
 GRAPH_SVG_SUBDIR = "graphs"
@@ -39,6 +38,11 @@ def _write_metrics_header(log_path: str, fieldnames: list[str]) -> None:
 
 
 def _init_distributed_if_needed() -> tuple[int, int, int, bool]:
+    """Initialize torch.distributed and return rank metadata if WORLD_SIZE > 1.
+
+    Returns:
+        A tuple of (rank, world_size, local_rank, initialized).
+    """
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     if world_size <= 1:
         return 0, 1, 0, False
@@ -51,6 +55,7 @@ def _init_distributed_if_needed() -> tuple[int, int, int, bool]:
 
 
 def _cleanup_distributed() -> None:
+    """Destroy the torch.distributed process group if it is currently active."""
     if dist.is_available() and dist.is_initialized():
         dist.destroy_process_group()
 
@@ -128,58 +133,6 @@ def build_args():
         raise ValueError("`num_trials` must be at least 1.")
 
     return args
-
-
-def build_dataset(subset: str, dataset: str, split: str, node_feat_dim: int) -> arrow_dataset.Dataset:
-    """Builds and returns the specified dataset subset and split."""
-    match dataset:
-        case "GraphQA":
-            ds_raw = load_dataset("baharef/GraphQA", subset, split=f"zero_shot_{split}")
-            ds = ds_raw.map(
-                lambda x: add_graph_column(x, k=node_feat_dim, ds_name="GraphQA"),
-                remove_columns=["algorithm", "answer", "nedges", "nnodes", "task_description", "text_encoding"],
-                load_from_cache_file=False,
-            )
-        case "MotifQA":
-            ds_raw = load_dataset("naos-ku/motif-qa", "yes_no", split=split)
-            ds = ds_raw.map(
-                lambda x: add_graph_column(x, k=node_feat_dim, ds_name="motif-qa"),
-                remove_columns=["response", "nedges", "nnodes"],
-                load_from_cache_file=False,
-            )
-    return ds.add_column("index", list(range(len(ds))))
-
-
-def filter_dataset(
-    dataset: arrow_dataset.Dataset,
-    args: argparse.Namespace,
-) -> tuple[arrow_dataset.Dataset, str]:
-    # Define output directory
-    subset = args.subset if args.subset is not None else "house_check"
-    OUT_DIR = os.path.join("explanations", subset)
-
-    # Filter dataset based on args
-    if args.sample_idx is not None:
-        dataset = dataset.filter(lambda x: x["index"] == args.sample_idx)
-
-    match args.dataset:
-        case "MotifQA":
-            if args.explain_pos_samples:
-                dataset = dataset.filter(lambda x: len(x["motif_nodes"]) > 0)
-                print("Extracted positive samples: len(dataset) =", len(dataset))
-        case "GraphQA":
-            if args.target_value is not None:
-                dataset = dataset.filter(lambda x: int(x["completion"].split(".")[0]) == args.target_value)
-                TARGET_VALUE = args.target_value
-            else:
-                TARGET_VALUE = int(dataset[0]["completion"].split(".")[0])
-            OUT_DIR = os.path.join("explanations", f"{args.subset}_{TARGET_VALUE}")
-
-    if args.num_samples is not None:
-        num_to_select = min(args.num_samples, len(dataset))
-        dataset = dataset.select(range(num_to_select))
-
-    return dataset, OUT_DIR
 
 
 def _process_dataset(
@@ -580,6 +533,7 @@ def main():
     args = build_args()
     run_name = datetime.now().strftime("%m%d-%H%M")
 
+    # Setup DDP, random seed, and device
     rank, world_size, local_rank, is_distributed = _init_distributed_if_needed()
     set_seed(42 + rank)
 
@@ -594,12 +548,14 @@ def main():
 
     is_rank0 = rank == 0
 
+    # Load model and tokenizer
     model, tokenizer = load_model(args.model_path, device=device, verbose=is_rank0)
     model.eval()
 
+    # Load dataset and apply filtering
     node_feat_dim = model.config.node_feat_dim
     dataset = build_dataset(args.subset, args.dataset, args.split, node_feat_dim=node_feat_dim)
-    dataset, OUT_DIR = filter_dataset(dataset, args)
+    dataset, OUT_DIR = filter_dataset(dataset, args, run_name)
     if len(dataset) == 0:
         if is_rank0:
             print("[INFO] No samples to explain after filtering. Exiting.")
