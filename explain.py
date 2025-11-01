@@ -14,6 +14,7 @@ from tqdm import tqdm
 from transformers import AutoTokenizer, GenerationConfig
 from transformers.trainer_utils import set_seed
 
+import wandb
 from eval import create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
 from src.explanation.logging import write_average_metrics_csv
@@ -45,9 +46,24 @@ def _init_distributed_if_needed() -> tuple[int, int, int, bool]:
         return 0, 1, 0, False
 
     backend = "nccl" if torch.cuda.is_available() else "gloo"
-    dist.init_process_group(backend=backend)
+    local_rank_env = os.environ.get("LOCAL_RANK")
+    device_id: int | None = None
+    if torch.cuda.is_available():
+        try:
+            device_id = int(local_rank_env) if local_rank_env is not None else torch.cuda.current_device()
+        except ValueError:
+            device_id = torch.cuda.current_device()
+
+    init_kwargs: dict[str, object] = {"backend": backend}
+    if backend == "nccl" and device_id is not None:
+        init_kwargs["device_id"] = device_id
+
+    dist.init_process_group(**init_kwargs)
     rank = dist.get_rank()
-    local_rank = int(os.environ.get("LOCAL_RANK", rank))
+    try:
+        local_rank = int(local_rank_env) if local_rank_env is not None else rank
+    except ValueError:
+        local_rank = rank
     return rank, world_size, local_rank, True
 
 
@@ -112,6 +128,11 @@ def build_args():
     p.add_argument(
         "--num-trials", type=int, default=1, help="Number of trials for explaining each sample (default: 1)"
     )
+    p.add_argument(
+        "--wandb",
+        action="store_true",
+        help="Log per-sample explanation metrics to Weights & Biases.",
+    )
 
     args = p.parse_args()
 
@@ -166,7 +187,6 @@ def _process_dataset(
         Pretrained GraphToken language model whose predictions are explained.
     tokenizer : AutoTokenizer
         Tokenizer paired with ``model`` and used to build prompts.
-
     Returns
     -------
     total_f1 : float
@@ -266,6 +286,30 @@ def _process_dataset(
                 stats["count"] += 1
             if progress is not None:
                 progress.update(1)
+
+        stats = sample_metrics.get(sample_idx)
+        if stats and stats["count"] > 0:
+            should_emit = not has_trial_override or override_value is None
+            if not should_emit:
+                try:
+                    override_int = int(override_value)
+                except (TypeError, ValueError):
+                    override_int = None
+                should_emit = override_int is not None and override_int == args.num_trials - 1
+            if should_emit:
+                avg_ans_accuracy = stats["answer_accuracy_sum"] / stats["count"]
+                avg_f1 = stats["f1_sum"] / stats["count"]
+                avg_auroc = stats["auroc_sum"] / stats["count"]
+                avg_auprc = stats["auprc_sum"] / stats["count"]
+                message = (
+                    f"[Sample {sample_idx}] trials={stats['count']} "
+                    f"AnswerAcc={avg_ans_accuracy:.3f}, "
+                    f"F1={avg_f1:.3f}, AUROC={avg_auroc:.3f}, AUPRC={avg_auprc:.3f}"
+                )
+                if progress is not None:
+                    progress.write(message)
+                else:
+                    print(message)
 
     if progress is not None:
         progress.close()
@@ -561,9 +605,13 @@ def main():
             indices = list(range(rank, dataset_len, world_size))
             dataset = dataset.select(indices if indices else [])
 
-    # Logging setup
+    # Setup wandb logging (rank 0 only)
+    if args.wandb and is_rank0:
+        wandb.init(project="MotifQA-Explainer", name=run_name, dir=OUT_DIR)
+
+    # Setup CSV logging
     os.makedirs(OUT_DIR, exist_ok=True)
-    base_log_path = os.path.join(OUT_DIR, "metrics_.csv")
+    base_log_path = os.path.join(OUT_DIR, "sample_metrics.csv")
     shard_log_path = base_log_path if world_size == 1 else os.path.join(OUT_DIR, f"metrics_rank{rank}.csv")
 
     fieldnames = ["sample_index", "trial", "answer_accuracy", "auroc", "auprc", "f1"]
@@ -583,6 +631,7 @@ def main():
         )
     )
 
+    # Aggregate metrics across ranks
     metrics_tensor = torch.tensor(
         [total_f1, total_auroc, total_auprc, total_answer_accuracy, float(total_count)],
         device=device,
@@ -593,7 +642,10 @@ def main():
     total_count = int(total_count)
 
     if is_distributed:
-        dist.barrier()
+        barrier_kwargs: dict[str, object] = {}
+        if device.type == "cuda" and device.index is not None:
+            barrier_kwargs["device_ids"] = [device.index]
+        dist.barrier(**barrier_kwargs)
         if is_rank0:
             with open(base_log_path, "w", newline="") as outfile:
                 writer = csv.DictWriter(outfile, fieldnames=fieldnames)
@@ -607,8 +659,9 @@ def main():
                         for row in reader:
                             writer.writerow(row)
                     os.remove(part_path)
-        dist.barrier()
+        dist.barrier(**barrier_kwargs)
 
+    # Merge per-sample edge masks and metrics across ranks
     merged_edge_masks: dict[int, list[torch.Tensor]] | None
     merged_sample_metrics: dict[int, dict[str, float]] | None
     if is_distributed:
@@ -653,6 +706,7 @@ def main():
         merged_edge_masks = sample_edge_masks
         merged_sample_metrics = sample_metrics
 
+    # Compute and log average metrics across all positive samples
     if is_rank0:
         if total_count > 0:
             avg_answer_accuracy = total_answer_accuracy / total_count
@@ -676,7 +730,19 @@ def main():
             merged_sample_metrics,
             merged_edge_masks,
         )
+        if args.wandb and total_count > 0:
+            wandb.log(
+                {
+                    "avg_answer_accuracy": avg_answer_accuracy,
+                    "avg_f1": avg_f1,
+                    "avg_auroc": avg_auroc,
+                    "avg_auprc": avg_auprc,
+                }
+            )
         print(f"Saved average metrics to {avg_metrics_path}")
+
+    if args.wandb:
+        wandb.finish()
 
     if is_distributed:
         _cleanup_distributed()
