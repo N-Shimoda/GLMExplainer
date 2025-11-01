@@ -144,15 +144,7 @@ def _process_dataset(
     show_progress: bool,
     model: GraphTokenLM,
     tokenizer: AutoTokenizer,
-) -> tuple[
-    float,
-    float,
-    float,
-    float,
-    int,
-    dict[int, list[torch.Tensor]],
-    dict[int, dict[str, float]],
-]:
+) -> tuple[float, float, float, float, int, dict[int, list[torch.Tensor]], dict[int, dict[str, float]]]:
     """Run explanations across the dataset and accumulate trial-level metrics.
 
     Parameters
@@ -229,20 +221,15 @@ def _process_dataset(
             "count": 0,
         }
     )
-    try:
-        dataset_length = len(dataset)  # type: ignore[arg-type]
-    except TypeError:
-        dataset = list(dataset)
-        dataset_length = len(dataset)
 
     has_trial_override = False
     if hasattr(dataset, "column_names") and TRIAL_OVERRIDE_COLUMN in dataset.column_names:
         # Ensure at least one sample carries an override before switching modes.
-        if dataset_length > 0 and dataset[0].get(TRIAL_OVERRIDE_COLUMN) is not None:
+        if len(dataset) > 0 and dataset[0].get(TRIAL_OVERRIDE_COLUMN) is not None:
             has_trial_override = True
 
-    per_sample_trials = 1 if has_trial_override else max(1, args.num_trials)
-    total_steps = dataset_length * per_sample_trials
+    per_sample_trials = 1 if has_trial_override else args.num_trials
+    total_steps = len(dataset) * per_sample_trials
     progress = tqdm(total=total_steps) if show_progress and total_steps > 0 else None
 
     wrapper = GLMWrapper(model, tokenizer)
@@ -256,14 +243,7 @@ def _process_dataset(
             trial_indices = range(args.num_trials)
 
         for i in trial_indices:
-            (
-                logged,
-                f1,
-                auroc,
-                auprc,
-                ans_accuracy_single,
-                edge_mask,
-            ) = explain_sample(
+            logged, auroc, auprc, f1, ans_accuracy_single, edge_mask = explain_sample(
                 wrapper=wrapper,
                 sample=sample,
                 trial_idx=i,
@@ -525,7 +505,7 @@ def explain_sample(
     feature_path = os.path.join(node_feat_dir, f"node_feat_{suffix}.svg")
     explanation.visualize_feature_importance(feature_path)
 
-    return metrics_logged, float(f1), float(auroc), float(auprc), float(ans_accuracy), pred_edge_mask
+    return metrics_logged, float(auroc), float(auprc), float(f1), float(ans_accuracy), pred_edge_mask
 
 
 def main():
@@ -584,11 +564,12 @@ def main():
             indices = list(range(rank, dataset_len, world_size))
             dataset = dataset.select(indices if indices else [])
 
+    # Logging setup
     os.makedirs(OUT_DIR, exist_ok=True)
-    base_log_path = os.path.join(OUT_DIR, f"metrics_{run_name}.csv")
+    base_log_path = os.path.join(OUT_DIR, "metrics_.csv")
     shard_log_path = base_log_path if world_size == 1 else os.path.join(OUT_DIR, f"metrics_rank{rank}.csv")
 
-    fieldnames = ["sample_index", "trial", "answer_accuracy", "f1", "auroc", "auprc"]
+    fieldnames = ["sample_index", "trial", "answer_accuracy", "auroc", "auprc", "f1"]
     _write_metrics_header(shard_log_path, fieldnames)
 
     show_progress = is_rank0 and len(dataset) > 0
@@ -697,7 +678,7 @@ def main():
             avg_answer_accuracy = 0.0
             print("No explanation metrics recorded for positive samples.")
 
-        avg_metrics_path = os.path.join(OUT_DIR, f"average_metrics_{run_name}.csv")
+        avg_metrics_path = os.path.join(OUT_DIR, "average_metrics.csv")
         average_fieldnames = [
             "sample_index",
             "answer_accuracy",
