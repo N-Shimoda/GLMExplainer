@@ -16,10 +16,7 @@ from transformers.trainer_utils import set_seed
 
 from eval import create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
-from src.explanation.metrics import (
-    EDGE_MASK_STABILITY_KEYS,
-    compute_edge_mask_stability_metrics_per_sample,
-)
+from src.explanation.logging import write_average_metrics_csv
 from src.explanation.preprocess import build_dataset, filter_dataset
 from src.explanation.wrapper import GLMWrapper
 from src.glm import GraphTokenLM
@@ -256,16 +253,16 @@ def _process_dataset(
             if edge_mask is not None:
                 sample_edge_masks[sample_idx].append(edge_mask)
             if logged:
-                total_f1 += f1
                 total_auroc += auroc
                 total_auprc += auprc
+                total_f1 += f1
                 total_answer_accuracy += ans_accuracy_single
                 total_count += 1
                 stats = sample_metrics[sample_idx]
                 stats["answer_accuracy_sum"] += ans_accuracy_single
-                stats["f1_sum"] += f1
                 stats["auroc_sum"] += auroc
                 stats["auprc_sum"] += auprc
+                stats["f1_sum"] += f1
                 stats["count"] += 1
             if progress is not None:
                 progress.update(1)
@@ -471,9 +468,9 @@ def explain_sample(
             "sample_index": sample["index"],
             "trial": trial_idx,
             "answer_accuracy": float(ans_accuracy),
-            "f1": float(f1),
             "auroc": float(auroc),
             "auprc": float(auprc),
+            "f1": float(f1),
         }
         with open(log_path, "a", newline="") as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -495,9 +492,9 @@ def explain_sample(
             sample=sample,
             explanation=explanation,
             graph_path=graph_path,
-            f1=float(f1),
             auroc=float(auroc),
             auprc=float(auprc),
+            f1=float(f1),
             ans_accuracy=float(ans_accuracy),
         )
     else:
@@ -573,23 +570,17 @@ def main():
     _write_metrics_header(shard_log_path, fieldnames)
 
     show_progress = is_rank0 and len(dataset) > 0
-    (
-        total_f1,
-        total_auroc,
-        total_auprc,
-        total_answer_accuracy,
-        total_count,
-        sample_edge_masks,
-        sample_metrics,
-    ) = _process_dataset(
-        dataset=dataset,
-        args=args,
-        device=device,
-        log_path=shard_log_path,
-        fieldnames=fieldnames,
-        show_progress=show_progress,
-        model=model,
-        tokenizer=tokenizer,
+    total_f1, total_auroc, total_auprc, total_answer_accuracy, total_count, sample_edge_masks, sample_metrics = (
+        _process_dataset(
+            dataset=dataset,
+            args=args,
+            device=device,
+            log_path=shard_log_path,
+            fieldnames=fieldnames,
+            show_progress=show_progress,
+            model=model,
+            tokenizer=tokenizer,
+        )
     )
 
     metrics_tensor = torch.tensor(
@@ -678,43 +669,13 @@ def main():
             avg_answer_accuracy = 0.0
             print("No explanation metrics recorded for positive samples.")
 
+        # Save average metrics per sample
         avg_metrics_path = os.path.join(OUT_DIR, "average_metrics.csv")
-        average_fieldnames = [
-            "sample_index",
-            "answer_accuracy",
-            "f1",
-            "auroc",
-            "auprc",
-            *EDGE_MASK_STABILITY_KEYS,
-        ]
-        per_sample_stability = (
-            compute_edge_mask_stability_metrics_per_sample(merged_edge_masks or {})
-            if merged_edge_masks is not None
-            else {}
+        write_average_metrics_csv(
+            avg_metrics_path,
+            merged_sample_metrics,
+            merged_edge_masks,
         )
-        sample_metrics_for_logging = merged_sample_metrics or {}
-        zero_stability = {key: 0.0 for key in EDGE_MASK_STABILITY_KEYS}
-        with open(avg_metrics_path, "w", newline="") as avg_file:
-            writer = csv.DictWriter(avg_file, fieldnames=average_fieldnames)
-            writer.writeheader()
-            for sample_idx in sorted(sample_metrics_for_logging.keys()):
-                stats = sample_metrics_for_logging[sample_idx]
-                count = int(stats.get("count", 0))
-                answer_acc_sum = stats.get("answer_accuracy_sum", 0.0)
-                f1_sum = stats.get("f1_sum", 0.0)
-                auroc_sum = stats.get("auroc_sum", 0.0)
-                auprc_sum = stats.get("auprc_sum", 0.0)
-                row = {
-                    "sample_index": sample_idx,
-                    "answer_accuracy": answer_acc_sum / count if count > 0 else 0.0,
-                    "f1": f1_sum / count if count > 0 else 0.0,
-                    "auroc": auroc_sum / count if count > 0 else 0.0,
-                    "auprc": auprc_sum / count if count > 0 else 0.0,
-                }
-                stability = per_sample_stability.get(sample_idx, zero_stability)
-                for key in EDGE_MASK_STABILITY_KEYS:
-                    row[key] = stability.get(key, 0.0)
-                writer.writerow(row)
         print(f"Saved average metrics to {avg_metrics_path}")
 
     if is_distributed:

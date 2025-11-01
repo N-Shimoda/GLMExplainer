@@ -31,7 +31,7 @@ def filter_dataset(
 ) -> tuple[arrow_dataset.Dataset, str]:
     """Filter dataset based on CLI args and return the filtered dataset and output directory."""
     subset = args.subset if args.subset is not None else "house_check"
-    out_dir = os.path.join("explanations", f"{subset}_{run_name}")
+    out_dir = os.path.join("explanations", subset, run_name)
 
     if args.sample_idx is not None:
         dataset = dataset.filter(lambda x: x["index"] == args.sample_idx)
@@ -44,10 +44,6 @@ def filter_dataset(
         case "GraphQA":
             if args.target_value is not None:
                 dataset = dataset.filter(lambda x: int(x["completion"].split(".")[0]) == args.target_value)
-                target_value = args.target_value
-            else:
-                target_value = int(dataset[0]["completion"].split(".")[0])
-            out_dir = os.path.join("explanations", f"{args.subset}_{target_value}")
 
     if args.num_samples is not None:
         num_to_select = min(args.num_samples, len(dataset))

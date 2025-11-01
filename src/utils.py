@@ -12,9 +12,9 @@ def visualize_motif_explanation(
     sample: Dict[str, object],
     explanation: Explanation,
     graph_path: str,
-    f1: float,
     auroc: float,
     auprc: float,
+    f1: float,
     ans_accuracy: float,
 ) -> None:
     """Visualize edge attributions for a MotifQA sample with motif highlights.
@@ -29,12 +29,12 @@ def visualize_motif_explanation(
         Explanation object whose ``edge_mask`` scores are rendered as edge intensities.
     graph_path : str
         Destination path for the rendered SVG figure. Parent directories are created if missing.
-    f1 : float
-        F1 score of the explanation that is reported in the annotation textbox.
     auroc : float
         AUROC metric for the explanation shown in the annotation textbox.
     auprc : float
         AUPRC metric for the explanation shown in the annotation textbox.
+    f1 : float
+        F1 score of the explanation that is reported in the annotation textbox.
     ans_accuracy : float
         Fraction of successful generations across trials, expected within ``[0, 1]``.
 
