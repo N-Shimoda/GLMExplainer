@@ -9,6 +9,12 @@ from .metrics import (
 )
 
 
+def _write_metrics_header(log_path: str, fieldnames: list[str]) -> None:
+    with open(log_path, "w", newline="") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+
+
 def write_average_metrics_csv(
     output_path: str | Path,
     sample_metrics: Mapping[int, Mapping[str, float]] | None,
@@ -65,3 +71,6 @@ def write_average_metrics_csv(
             for key in EDGE_MASK_STABILITY_KEYS:
                 row[key] = stability.get(key, 0.0)
             writer.writerow(row)
+
+
+__all__ = ["_write_metrics_header", "write_average_metrics_csv"]

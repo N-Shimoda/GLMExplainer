@@ -23,7 +23,7 @@ from transformers.trainer_utils import set_seed
 import wandb
 from eval import create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
-from src.explanation.logging import write_average_metrics_csv
+from src.explanation.logging import _write_metrics_header, write_average_metrics_csv
 from src.explanation.preprocess import build_dataset, filter_dataset
 from src.explanation.wrapper import GLMWrapper
 from src.glm import GraphTokenLM
@@ -35,12 +35,6 @@ NODE_FEAT_SVG_SUBDIR = "node_feat"
 TRIAL_OVERRIDE_COLUMN = "_trial_override"
 
 logger = logging.getLogger(__name__)
-
-
-def _write_metrics_header(log_path: str, fieldnames: list[str]) -> None:
-    with open(log_path, "w", newline="") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
 
 
 def _init_distributed_if_needed() -> tuple[int, int, int, bool]:
