@@ -12,9 +12,7 @@ def visualize_motif_explanation(
     sample: Dict[str, object],
     explanation: Explanation,
     graph_path: str,
-    auroc: float,
-    auprc: float,
-    f1: float,
+    exp_accuracy: Dict[str, float],
     ans_accuracy: float,
 ) -> None:
     """Visualize edge attributions for a MotifQA sample with motif highlights.
@@ -29,12 +27,9 @@ def visualize_motif_explanation(
         Explanation object whose ``edge_mask`` scores are rendered as edge intensities.
     graph_path : str
         Destination path for the rendered SVG figure. Parent directories are created if missing.
-    auroc : float
-        AUROC metric for the explanation shown in the annotation textbox.
-    auprc : float
-        AUPRC metric for the explanation shown in the annotation textbox.
-    f1 : float
-        F1 score of the explanation that is reported in the annotation textbox.
+    exp_accuracy : dict[str, float]
+        Mapping that bundles explanation accuracy metrics; must contain ``f1``,
+        ``auroc``, and ``auprc`` keys.
     ans_accuracy : float
         Fraction of successful generations across trials, expected within ``[0, 1]``.
 
@@ -136,12 +131,16 @@ def visualize_motif_explanation(
     else:
         ax_graph.text(0.5, 0.5, "Empty graph", ha="center", va="center", fontsize=12)
 
+    f1_score = float(exp_accuracy["f1"])
+    auroc_score = float(exp_accuracy["auroc"])
+    auprc_score = float(exp_accuracy["auprc"])
+
     textbox_lines = [
         f"Sample #{sample.get('index', 'N/A')}",
         f"Answer Accuracy: {ans_accuracy:.3f}",
-        f"F1: {f1:.3f}",
-        f"AUROC: {auroc:.3f}",
-        f"AUPRC: {auprc:.3f}",
+        f"F1: {f1_score:.3f}",
+        f"AUROC: {auroc_score:.3f}",
+        f"AUPRC: {auprc_score:.3f}",
     ]
     ax_graph.text(
         0.98,

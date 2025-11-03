@@ -1,6 +1,5 @@
 import argparse
 import csv
-import logging
 import os
 from collections import defaultdict
 from datetime import datetime
@@ -33,8 +32,6 @@ from src.utils import visualize_motif_explanation
 GRAPH_SVG_SUBDIR = "graphs"
 NODE_FEAT_SVG_SUBDIR = "node_feat"
 TRIAL_OVERRIDE_COLUMN = "_trial_override"
-
-logger = logging.getLogger(__name__)
 
 
 def _init_distributed_if_needed() -> tuple[int, int, int, bool]:
@@ -192,14 +189,8 @@ def load_model(
     ckpt_path, run_name = _resolve_ckpt_path(model_path)
 
     # Load model onto the specified device
-    target_device = torch.device(device)
-    # if target_device.type == "cuda" and not torch.cuda.is_available():
-    #     raise RuntimeError("CUDA device requested but CUDA is not available.")
-    # if target_device.type == "cuda" and target_device.index is not None:
-    #     torch.cuda.set_device(target_device.index)
-
     model = GraphTokenLM.from_pretrained(ckpt_path, load_llm_weights=False)
-    model.to(target_device)
+    model.to(torch.device(device))
     if verbose:
         print(f"Loaded model from {ckpt_path} (run name: {run_name})")
 
@@ -334,13 +325,53 @@ def explain_sample(
     fieldnames: list[str],
     dataset_name: str,
     explainer_args: dict[str, float | int],
-    NUM_GEN_TRIALS: int = 10,
-) -> tuple[bool, float, float, float, float, torch.Tensor | None]:
-    """Explain a single sample, log metrics, and emit per-trial artifacts."""
+    num_gen_trials: int = 10,
+) -> tuple[bool, dict[str, float], float, torch.Tensor | None]:
+    """Explain a single dataset sample and collect per-trial artifacts.
+
+    Parameters
+    ----------
+    wrapper : GLMWrapper
+        Wrapper around the GraphToken language model that exposes convenience
+        methods for generation and explanation.
+    sample : dict[str, str]
+        Dataset entry that must contain the graph structure as well as fields
+        required by :func:`create_pyg_batch` and :func:`_generate_explanation`.
+    trial_idx : int
+        Index of the current trial for the given ``sample``.
+    num_trials : int
+        Total number of trials that will be executed for the ``sample``.
+    gen_cfg : GenerationConfig
+        Configuration controlling the language-model generation step.
+    log_path : str
+        CSV destination to which per-trial metrics are appended.
+    fieldnames : list[str]
+        Column ordering used when writing to ``log_path``.
+    dataset_name : str
+        Name of the dataset being processed (e.g., ``"MotifQA"``).
+    explainer_args : dict[str, float | int]
+        Keyword arguments forwarded to the explainer factory.
+    num_gen_trials : int, default=10
+        Maximum number of explanation generation trials passed to
+        :func:`_generate_explanation`.
+
+    Returns
+    -------
+    metrics_logged : bool
+        ``True`` when explanation metrics were logged for the current trial.
+    exp_accuracy : dict[str, float]
+        Dictionary containing explanation accuracy metrics with keys
+        ``"auroc"``, ``"auprc"``, and ``"f1"``.
+    ans_accuracy_val : float
+        Answer accuracy for the trial.
+    pred_edge_mask : torch.Tensor | None
+        Predicted edge mask from the explanation, or ``None`` if no explanation
+        was generated.
+    """
     model_device = wrapper.model.device
     pyg_batch = create_pyg_batch(sample["graph"], device=model_device)
     explanation, ans_accuracy = _generate_explanation(
-        wrapper, sample, pyg_batch, gen_cfg, explainer_args=explainer_args, num_trials=NUM_GEN_TRIALS
+        wrapper, sample, pyg_batch, gen_cfg, explainer_args=explainer_args, num_trials=num_gen_trials
     )
 
     if explanation is None:
@@ -351,6 +382,8 @@ def explain_sample(
     pred_edge_mask = explanation.edge_mask.detach().cpu().float()
     auroc, f1 = groundtruth_metrics(pred_edge_mask, gt_edge_mask, metrics=["auroc", "f1_score"])
     auprc = average_precision(pred_edge_mask, gt_edge_mask.int(), task="binary").item()
+    exp_accuracy = {"auroc": float(auroc), "auprc": float(auprc), "f1": float(f1)}
+    ans_accuracy_val = float(ans_accuracy)
 
     # Log explanation accuracy for positive samples
     metrics_logged = False
@@ -358,10 +391,8 @@ def explain_sample(
         record = {
             "sample_index": sample["index"],
             "trial": trial_idx,
-            "answer_accuracy": float(ans_accuracy),
-            "auroc": float(auroc),
-            "auprc": float(auprc),
-            "f1": float(f1),
+            "answer_accuracy": ans_accuracy_val,
+            **exp_accuracy,
         }
         with open(log_path, "a", newline="") as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -383,23 +414,20 @@ def explain_sample(
             sample=sample,
             explanation=explanation,
             graph_path=graph_path,
-            auroc=float(auroc),
-            auprc=float(auprc),
-            f1=float(f1),
-            ans_accuracy=float(ans_accuracy),
+            exp_accuracy=exp_accuracy,
+            ans_accuracy=ans_accuracy_val,
         )
     else:
         explanation.visualize_graph(graph_path)
     feature_path = os.path.join(node_feat_dir, f"node_feat_{suffix}.svg")
     explanation.visualize_feature_importance(feature_path)
 
-    return metrics_logged, float(auroc), float(auprc), float(f1), float(ans_accuracy), pred_edge_mask
+    return metrics_logged, exp_accuracy, ans_accuracy_val, pred_edge_mask
 
 
 def process_dataset(
     dataset: Iterable[dict[str, str]],
     args: argparse.Namespace,
-    device: torch.device,
     log_path: str,
     fieldnames: list[str],
     show_progress: bool,
@@ -417,8 +445,6 @@ def process_dataset(
     args : argparse.Namespace
         Parsed CLI arguments controlling trial repetition, dataset name, and
         optional per-sample overrides such as ``num_trials`` and ``dataset``.
-    device : torch.device
-        Target device on which the ``model`` should execute.
     log_path : str
         CSV path forwarded to :func:`explain_sample` for appending per-trial
         metrics.
@@ -455,10 +481,6 @@ def process_dataset(
     progress reporting. When the dataset carries a ``_trial_override`` column,
     those overrides supersede ``args.num_trials`` for the affected samples.
     """
-    # if model.device != device:
-    #     model = model.to(device)
-    # model.eval()
-
     gen_cfg = GenerationConfig(
         max_new_tokens=10,
         do_sample=True,
@@ -506,7 +528,7 @@ def process_dataset(
             trial_indices = range(args.num_trials)
 
         for i in trial_indices:
-            logged, auroc, auprc, f1, ans_accuracy_single, edge_mask = explain_sample(
+            logged, exp_accuracy, ans_accuracy_single, edge_mask = explain_sample(
                 wrapper=wrapper,
                 sample=sample,
                 trial_idx=i,
@@ -520,16 +542,16 @@ def process_dataset(
             if edge_mask is not None:
                 sample_edge_masks[sample_idx].append(edge_mask)
             if logged:
-                total_auroc += auroc
-                total_auprc += auprc
-                total_f1 += f1
+                total_auroc += exp_accuracy["auroc"]
+                total_auprc += exp_accuracy["auprc"]
+                total_f1 += exp_accuracy["f1"]
                 total_answer_accuracy += ans_accuracy_single
                 total_count += 1
                 stats = sample_metrics[sample_idx]
                 stats["answer_accuracy_sum"] += ans_accuracy_single
-                stats["auroc_sum"] += auroc
-                stats["auprc_sum"] += auprc
-                stats["f1_sum"] += f1
+                stats["auroc_sum"] += exp_accuracy["auroc"]
+                stats["auprc_sum"] += exp_accuracy["auprc"]
+                stats["f1_sum"] += exp_accuracy["f1"]
                 stats["count"] += 1
             if progress is not None:
                 progress.update(1)
@@ -625,7 +647,6 @@ def main():
             tokenizer=tokenizer,
             log_path=shard_log_path,
             fieldnames=fieldnames,
-            device=device,
             show_progress=(is_rank0 and len(dataset) > 0),
             args=args,
         )
@@ -641,6 +662,7 @@ def main():
     total_f1, total_auroc, total_auprc, total_answer_accuracy, total_count = metrics_tensor.tolist()
     total_count = int(total_count)
 
+    # Merge per-trial metrics CSVs across ranks
     if is_distributed:
         barrier_kwargs: dict[str, object] = {}
         if device.type == "cuda" and device.index is not None:
@@ -661,7 +683,7 @@ def main():
                     os.remove(part_path)
         dist.barrier(**barrier_kwargs)
 
-    # Merge per-sample edge masks and metrics across ranks
+    # Merge per-trial edge masks and metrics across ranks
     merged_edge_masks: dict[int, list[torch.Tensor]] | None
     merged_sample_metrics: dict[int, dict[str, float]] | None
     if is_distributed:
@@ -706,7 +728,7 @@ def main():
         merged_edge_masks = sample_edge_masks
         merged_sample_metrics = sample_metrics
 
-    # Compute and log average metrics across all positive samples
+    # Compute and record average metrics across all positive samples
     if is_rank0:
         if total_count > 0:
             avg_answer_accuracy = total_answer_accuracy / total_count
@@ -730,6 +752,7 @@ def main():
             merged_sample_metrics,
             merged_edge_masks,
         )
+        print(f"[INFO] Saved average metrics to {avg_metrics_path}")
         if args.wandb and total_count > 0:
             wandb.log(
                 {
@@ -739,7 +762,6 @@ def main():
                     "avg_auprc": avg_auprc,
                 }
             )
-        print(f"Saved average metrics to {avg_metrics_path}")
 
     if args.wandb:
         wandb.finish()
