@@ -199,10 +199,10 @@ def load_model(
 
     # Load model onto the specified device
     target_device = torch.device(device)
-    if target_device.type == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA device requested but CUDA is not available.")
-    if target_device.type == "cuda" and target_device.index is not None:
-        torch.cuda.set_device(target_device.index)
+    # if target_device.type == "cuda" and not torch.cuda.is_available():
+    #     raise RuntimeError("CUDA device requested but CUDA is not available.")
+    # if target_device.type == "cuda" and target_device.index is not None:
+    #     torch.cuda.set_device(target_device.index)
 
     model = GraphTokenLM.from_pretrained(ckpt_path, load_llm_weights=False)
     model.to(target_device)
@@ -544,9 +544,9 @@ def process_dataset(
         progress.close()
 
     return (
-        total_f1,
         total_auroc,
         total_auprc,
+        total_f1,
         total_answer_accuracy,
         total_count,
         dict(sample_edge_masks),
@@ -563,9 +563,6 @@ def main():
     rank, world_size, local_rank, is_distributed = _init_distributed_if_needed()
     set_seed(42 + rank)
 
-    if is_distributed and not torch.cuda.is_available():
-        raise RuntimeError("Distributed execution requires CUDA devices.")
-
     if is_distributed:
         device = torch.device(f"cuda:{local_rank}")
         torch.cuda.set_device(device)
@@ -579,8 +576,12 @@ def main():
     model.eval()
 
     # Load dataset and apply filtering
-    node_feat_dim = model.config.node_feat_dim
-    dataset = build_dataset(args.subset, args.dataset, args.split, node_feat_dim=node_feat_dim)
+    dataset = build_dataset(
+        args.dataset,
+        args.subset,
+        args.split,
+        node_feat_dim=model.config.node_feat_dim,
+    )
     dataset, OUT_DIR = filter_dataset(dataset, args, run_name)
     if len(dataset) == 0:
         if is_rank0:
@@ -622,17 +623,17 @@ def main():
     fieldnames = ["sample_index", "trial", "answer_accuracy", "auroc", "auprc", "f1"]
     _write_metrics_header(shard_log_path, fieldnames)
 
-    show_progress = is_rank0 and len(dataset) > 0
-    total_f1, total_auroc, total_auprc, total_answer_accuracy, total_count, sample_edge_masks, sample_metrics = (
+    # Process dataset and collect metrics
+    total_auroc, total_auprc, total_f1, total_answer_accuracy, total_count, sample_edge_masks, sample_metrics = (
         process_dataset(
             dataset=dataset,
-            args=args,
-            device=device,
-            log_path=shard_log_path,
-            fieldnames=fieldnames,
-            show_progress=show_progress,
             model=model,
             tokenizer=tokenizer,
+            log_path=shard_log_path,
+            fieldnames=fieldnames,
+            device=device,
+            show_progress=(is_rank0 and len(dataset) > 0),
+            args=args,
         )
     )
 

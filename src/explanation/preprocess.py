@@ -6,7 +6,7 @@ from datasets import arrow_dataset, load_dataset
 from src.preprocess import add_graph_column
 
 
-def build_dataset(subset: str, dataset: str, split: str, node_feat_dim: int) -> arrow_dataset.Dataset:
+def build_dataset(dataset: str, subset: str, split: str, node_feat_dim: int) -> arrow_dataset.Dataset:
     """Build and return the specified dataset subset and split."""
     match dataset:
         case "GraphQA":
