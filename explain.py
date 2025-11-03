@@ -1,5 +1,6 @@
 import argparse
 import csv
+import logging
 import os
 from collections import defaultdict
 from datetime import datetime
@@ -27,6 +28,8 @@ from src.utils import visualize_motif_explanation
 GRAPH_SVG_SUBDIR = "graphs"
 NODE_FEAT_SVG_SUBDIR = "node_feat"
 TRIAL_OVERRIDE_COLUMN = "_trial_override"
+
+logger = logging.getLogger(__name__)
 
 
 def _write_metrics_header(log_path: str, fieldnames: list[str]) -> None:
@@ -301,15 +304,16 @@ def _process_dataset(
                 avg_f1 = stats["f1_sum"] / stats["count"]
                 avg_auroc = stats["auroc_sum"] / stats["count"]
                 avg_auprc = stats["auprc_sum"] / stats["count"]
-                message = (
-                    f"[Sample {sample_idx}] trials={stats['count']} "
-                    f"AnswerAcc={avg_ans_accuracy:.3f}, "
-                    f"F1={avg_f1:.3f}, AUROC={avg_auroc:.3f}, AUPRC={avg_auprc:.3f}"
+                logger.debug(
+                    "Per-sample metrics (deprecated): [Sample %s] trials=%s AnswerAcc=%.3f, "
+                    "AUROC=%.3f, AUPRC=%.3f, F1=%.3f",
+                    sample_idx,
+                    stats["count"],
+                    avg_ans_accuracy,
+                    avg_auroc,
+                    avg_auprc,
+                    avg_f1,
                 )
-                if progress is not None:
-                    progress.write(message)
-                else:
-                    print(message)
 
     if progress is not None:
         progress.close()
@@ -716,7 +720,7 @@ def main():
             print(
                 "Average explanation accuracy across positive samples: "
                 f"AnswerAcc={avg_answer_accuracy:.3f}, "
-                f"F1={avg_f1:.3f}, AUROC={avg_auroc:.3f}, AUPRC={avg_auprc:.3f}"
+                f"AUROC={avg_auroc:.3f}, AUPRC={avg_auprc:.3f}, F1={avg_f1:.3f}"
             )
             print(f"Saved explanation metrics to {base_log_path}")
         else:
