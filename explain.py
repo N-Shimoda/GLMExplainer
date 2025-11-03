@@ -9,7 +9,12 @@ from typing import Iterable
 import torch
 import torch.distributed as dist
 from torch_geometric.data import Batch as PygBatch
-from torch_geometric.explain import Explainer, GNNExplainer, groundtruth_metrics
+from torch_geometric.explain import (
+    Explainer,
+    Explanation,
+    GNNExplainer,
+    groundtruth_metrics,
+)
 from torchmetrics.functional import average_precision
 from tqdm import tqdm
 from transformers import AutoTokenizer, GenerationConfig
@@ -169,7 +174,7 @@ def build_args():
 
 
 def load_model(
-    model_path: str, device: torch.device | str | None = None, verbose: bool = True
+    model_path: str, device: torch.device | str, verbose: bool = True
 ) -> tuple[GraphTokenLM, AutoTokenizer]:
     """Loads the GraphTokenLM model and tokenizer from the specified checkpoint path.
 
@@ -177,6 +182,10 @@ def load_model(
     ----------
     model_path : str
         Path to the task directory, model directory or a specific checkpoint.
+    device : torch.device | str
+        Target device to which the model is moved after loading.
+    verbose : bool, optional
+        If ``True``, prints loading information, by default True.
 
     Returns
     -------
@@ -185,22 +194,22 @@ def load_model(
     tokenizer : AutoTokenizer
         Corresponding tokenizer used with the model.
     """
+    # Resolve checkpoint path
     ckpt_path, run_name = _resolve_ckpt_path(model_path)
 
-    if device is None:
-        target_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    else:
-        target_device = torch.device(device)
-        if target_device.type == "cuda" and not torch.cuda.is_available():
-            raise RuntimeError("CUDA device requested but CUDA is not available.")
-        if target_device.type == "cuda" and target_device.index is not None:
-            torch.cuda.set_device(target_device.index)
+    # Load model onto the specified device
+    target_device = torch.device(device)
+    if target_device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA device requested but CUDA is not available.")
+    if target_device.type == "cuda" and target_device.index is not None:
+        torch.cuda.set_device(target_device.index)
 
     model = GraphTokenLM.from_pretrained(ckpt_path, load_llm_weights=False)
     model.to(target_device)
     if verbose:
         print(f"Loaded model from {ckpt_path} (run name: {run_name})")
 
+    # Load pre-trained tokenizer
     tokenizer = AutoTokenizer.from_pretrained(model.config.llm_name, trust_remote_code=True)
     return model, tokenizer
 
@@ -237,14 +246,12 @@ def _get_gt_explanation(sample: dict[str, str]) -> torch.Tensor:
     if len(motif_nodes) == 0 or num_edges == 0:
         return gt_mask
 
-    nodes = sample["nodes"]
-    edges = sample["edges"]
-    node_to_idx = {nid: idx for idx, nid in enumerate(nodes)}
+    node_to_idx = {nid: idx for idx, nid in enumerate(sample["nodes"])}
 
     # Build the undirected motif edge set using consecutive node indices.
     motif_edge_set: set[tuple[int, int]] = set()
     motif_node_set = set(motif_nodes)
-    for u, v in edges:
+    for u, v in sample["edges"]:
         if u in motif_node_set and v in motif_node_set:
             if u not in node_to_idx or v not in node_to_idx:
                 continue
@@ -268,7 +275,7 @@ def _generate_explanation(
     gen_cfg: GenerationConfig,
     explainer_args: dict[str, float | int],
     num_trials: int = 10,
-) -> tuple[torch.Tensor | None, float]:
+) -> tuple[Explanation | None, float]:
     """Generates output for the given sample and explains it using GNNExplainer.
 
     Parameters
@@ -307,7 +314,6 @@ def _generate_explanation(
         return None, acc
 
     # Generate explanation by GNNExplainer
-    explainer_args = dict(explainer_args)
     explainer = Explainer(
         model=wrapper,
         algorithm=GNNExplainer(num_hops=wrapper.model.config.num_gnn_layers, **explainer_args),
@@ -455,9 +461,9 @@ def process_dataset(
     progress reporting. When the dataset carries a ``_trial_override`` column,
     those overrides supersede ``args.num_trials`` for the affected samples.
     """
-    if model.device != device:
-        model = model.to(device)
-    model.eval()
+    # if model.device != device:
+    #     model = model.to(device)
+    # model.eval()
 
     gen_cfg = GenerationConfig(
         max_new_tokens=10,
@@ -472,10 +478,7 @@ def process_dataset(
         "edge_ent": args.edge_ent,
     }
 
-    total_f1 = 0.0
-    total_auroc = 0.0
-    total_auprc = 0.0
-    total_answer_accuracy = 0.0
+    total_f1, total_auroc, total_auprc, total_answer_accuracy = 0.0, 0.0, 0.0, 0.0
     total_count = 0
     sample_edge_masks: defaultdict[int, list[torch.Tensor]] = defaultdict(list)
     sample_metrics: defaultdict[int, dict[str, float]] = defaultdict(
