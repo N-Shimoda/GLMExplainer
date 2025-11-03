@@ -327,7 +327,7 @@ def explain_sample(
     explainer_args: dict[str, float | int],
     num_gen_trials: int = 10,
 ) -> tuple[bool, dict[str, float], float, torch.Tensor | None]:
-    """Explain a single dataset sample and collect per-trial artifacts.
+    """Explain a single dataset sample, collect metrics, and persist trial artifacts.
 
     Parameters
     ----------
@@ -429,14 +429,14 @@ def explain_sample(
 
 def process_dataset(
     dataset: Iterable[dict[str, str]],
-    args: argparse.Namespace,
+    model: GraphTokenLM,
+    tokenizer: AutoTokenizer,
     log_path: str,
     fieldnames: list[str],
     show_progress: bool,
-    model: GraphTokenLM,
-    tokenizer: AutoTokenizer,
-) -> tuple[float, float, float, float, int, dict[int, list[torch.Tensor]], dict[int, dict[str, float]]]:
-    """Run explanations across the dataset and accumulate trial-level metrics.
+    args: argparse.Namespace,
+) -> tuple[dict[str, float], float, int, dict[int, list[torch.Tensor]], dict[int, dict[str, float]]]:
+    """Run explanations across the dataset, tracking trial artifacts and aggregates.
 
     Parameters
     ----------
@@ -444,9 +444,10 @@ def process_dataset(
         Iterable of dataset samples. Each sample must at least expose the
         ``index`` key and any fields required by :func:`explain_sample`,
         including ``graph`` and model inputs.
-    args : argparse.Namespace
-        Parsed CLI arguments controlling trial repetition, dataset name, and
-        optional per-sample overrides such as ``num_trials`` and ``dataset``.
+    model : GraphTokenLM
+        Pretrained GraphToken language model whose predictions are explained.
+    tokenizer : AutoTokenizer
+        Tokenizer paired with ``model`` and used to build prompts.
     log_path : str
         CSV path forwarded to :func:`explain_sample` for appending per-trial
         metrics.
@@ -454,28 +455,23 @@ def process_dataset(
         Ordered column names used by the CSV logger.
     show_progress : bool
         If ``True``, render a ``tqdm`` progress bar while processing samples.
-    model : GraphTokenLM
-        Pretrained GraphToken language model whose predictions are explained.
-    tokenizer : AutoTokenizer
-        Tokenizer paired with ``model`` and used to build prompts.
+    args : argparse.Namespace
+        Parsed CLI arguments controlling trial repetition, dataset name, and
+        optional per-sample overrides such as ``num_trials`` and ``dataset``.
+
     Returns
     -------
-    total_f1 : float
-        Sum of F1 values over all trials that were successfully logged.
-    total_auroc : float
-        Sum of AUROC scores over the logged trials.
-    total_auprc : float
-        Sum of AUPRC scores over the logged trials.
+    exp_metric_totals : dict[str, float]
+        Running sums of AUROC, AUPRC, and F1 computed over the logged trials.
     total_answer_accuracy : float
-        Sum of answer accuracy scores over the logged trials.
+        Sum of answer accuracies recorded alongside the explanation metrics.
     total_count : int
-        Number of trials that produced metrics (i.e., were logged).
+        Number of trials that yielded metrics (i.e., were appended to the CSV).
     sample_edge_masks : dict[int, list[torch.Tensor]]
-        Mapping from sample index to the list of edge masks returned across its
-        trials.
+        Mapping from each sample index to the edge masks produced across its trials.
     sample_metrics : dict[int, dict[str, float]]
-        Per-sample aggregates storing the sums of recorded metrics along with a
-        ``count`` field.
+        Per-sample aggregates containing running sums for AUROC, AUPRC, F1, and
+        answer accuracy along with a ``count`` describing how many trials contributed.
 
     Notes
     -----
@@ -496,7 +492,8 @@ def process_dataset(
         "edge_ent": args.edge_ent,
     }
 
-    total_f1, total_auroc, total_auprc, total_answer_accuracy = 0.0, 0.0, 0.0, 0.0
+    exp_metric_totals = {"auroc": 0.0, "auprc": 0.0, "f1": 0.0}
+    total_answer_accuracy = 0.0
     total_count = 0
     sample_edge_masks: defaultdict[int, list[torch.Tensor]] = defaultdict(list)
     sample_metrics: defaultdict[int, dict[str, float]] = defaultdict(
@@ -544,9 +541,9 @@ def process_dataset(
             if edge_mask is not None:
                 sample_edge_masks[sample_idx].append(edge_mask)
             if logged:
-                total_auroc += exp_accuracy["auroc"]
-                total_auprc += exp_accuracy["auprc"]
-                total_f1 += exp_accuracy["f1"]
+                exp_metric_totals["auroc"] += exp_accuracy["auroc"]
+                exp_metric_totals["auprc"] += exp_accuracy["auprc"]
+                exp_metric_totals["f1"] += exp_accuracy["f1"]
                 total_answer_accuracy += ans_accuracy_single
                 total_count += 1
                 stats = sample_metrics[sample_idx]
@@ -564,9 +561,7 @@ def process_dataset(
         progress.close()
 
     return (
-        total_auroc,
-        total_auprc,
-        total_f1,
+        dict(exp_metric_totals),
         total_answer_accuracy,
         total_count,
         dict(sample_edge_masks),
@@ -633,7 +628,7 @@ def main():
 
     # Setup wandb logging (rank 0 only)
     if args.wandb and is_rank0:
-        wandb.init(project="MotifQA-Explainer", name=run_name, dir=OUT_DIR)
+        wandb.init(project="MotifQA-Explainer", name=run_name, dir=OUT_DIR, config=vars(args))
 
     # Setup CSV logging
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -644,26 +639,31 @@ def main():
     _write_metrics_header(shard_log_path, fieldnames)
 
     # Process dataset and collect metrics
-    total_auroc, total_auprc, total_f1, total_answer_accuracy, total_count, sample_edge_masks, sample_metrics = (
-        process_dataset(
-            dataset=dataset,
-            model=model,
-            tokenizer=tokenizer,
-            log_path=shard_log_path,
-            fieldnames=fieldnames,
-            show_progress=(is_rank0 and len(dataset) > 0),
-            args=args,
-        )
+    exp_metric_totals, total_answer_accuracy, total_count, sample_edge_masks, sample_metrics = process_dataset(
+        dataset=dataset,
+        model=model,
+        tokenizer=tokenizer,
+        log_path=shard_log_path,
+        fieldnames=fieldnames,
+        show_progress=(is_rank0 and len(dataset) > 0),
+        args=args,
     )
 
     # Aggregate metrics across ranks
     metrics_tensor = torch.tensor(
-        [total_f1, total_auroc, total_auprc, total_answer_accuracy, float(total_count)],
+        [
+            exp_metric_totals["auroc"],
+            exp_metric_totals["auprc"],
+            exp_metric_totals["f1"],
+            total_answer_accuracy,
+            float(total_count),
+        ],
         device=device,
     )
     if is_distributed:
         dist.all_reduce(metrics_tensor, op=dist.ReduceOp.SUM)
-    total_f1, total_auroc, total_auprc, total_answer_accuracy, total_count = metrics_tensor.tolist()
+    auroc_sum, auprc_sum, f1_sum, total_answer_accuracy, total_count = metrics_tensor.tolist()
+    exp_metric_totals = {"auroc": auroc_sum, "auprc": auprc_sum, "f1": f1_sum}
     total_count = int(total_count)
 
     # Merge per-trial metrics CSVs across ranks
@@ -736,9 +736,9 @@ def main():
     if is_rank0:
         if total_count > 0:
             avg_answer_accuracy = total_answer_accuracy / total_count
-            avg_f1 = total_f1 / total_count
-            avg_auroc = total_auroc / total_count
-            avg_auprc = total_auprc / total_count
+            avg_f1 = exp_metric_totals["f1"] / total_count
+            avg_auroc = exp_metric_totals["auroc"] / total_count
+            avg_auprc = exp_metric_totals["auprc"] / total_count
             print(
                 "Average explanation accuracy across positive samples: "
                 f"AnswerAcc={avg_answer_accuracy:.3f}, "
@@ -751,11 +751,7 @@ def main():
 
         # Save average metrics per sample
         avg_metrics_path = os.path.join(OUT_DIR, "average_metrics.csv")
-        write_average_metrics_csv(
-            avg_metrics_path,
-            merged_sample_metrics,
-            merged_edge_masks,
-        )
+        write_average_metrics_csv(avg_metrics_path, merged_sample_metrics, merged_edge_masks)
         print(f"[INFO] Saved average metrics to {avg_metrics_path}")
         if args.wandb and total_count > 0:
             wandb.log(
