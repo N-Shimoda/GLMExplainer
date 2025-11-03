@@ -375,7 +375,9 @@ def explain_sample(
     )
 
     if explanation is None:
-        return False, 0.0, 0.0, 0.0, 0.0, None
+        exp_accuracy = {"auroc": 0.0, "auprc": 0.0, "f1": 0.0}
+        ans_accuracy_val = 0.0
+        return False, exp_accuracy, ans_accuracy_val, None
 
     # Compute explanation accuracy
     gt_edge_mask = _get_gt_explanation(sample)
@@ -554,6 +556,8 @@ def process_dataset(
                 stats["f1_sum"] += exp_accuracy["f1"]
                 stats["count"] += 1
             if progress is not None:
+                if args.wandb:
+                    wandb.log({"explanation/steps": progress.n})
                 progress.update(1)
 
     if progress is not None:
