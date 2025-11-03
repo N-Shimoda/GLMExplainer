@@ -1,6 +1,7 @@
 import argparse
 import csv
 import os
+import time
 from collections import defaultdict
 from datetime import datetime
 from typing import Iterable
@@ -518,6 +519,8 @@ def process_dataset(
 
     wrapper = GLMWrapper(model, tokenizer)
 
+    start_time = time.time()
+
     for sample in dataset:
         sample_idx = sample["index"]
         override_value = sample.get(TRIAL_OVERRIDE_COLUMN) if has_trial_override else None
@@ -554,7 +557,14 @@ def process_dataset(
                 stats["count"] += 1
             if progress is not None:
                 if args.wandb:
-                    wandb.log({"explanation/steps": progress.n})
+                    elapsed = time.time() - start_time
+                    wandb.log(
+                        {
+                            "explain/steps": progress.n,
+                            "explain/seconds_per_step": elapsed / (progress.n + 1),
+                            "explain/elapsed_time": elapsed,
+                        }
+                    )
                 progress.update(1)
 
     if progress is not None:
