@@ -88,6 +88,8 @@ def build_args():
 
     p = argparse.ArgumentParser(description="Explain GraphTokenLM predictions using GNNExplainer")
     p.add_argument("--model-path", type=str, required=True, help="Path to the model checkpoint")
+
+    # Dataset arguments
     p.add_argument(
         "--dataset",
         type=str,
@@ -108,6 +110,8 @@ def build_args():
         default="test",
         help="Dataset split to use (default: test)",
     )
+
+    # Dataset filtering arguments
     p.add_argument(
         "--explain-pos-samples",
         action="store_true",
@@ -131,6 +135,14 @@ def build_args():
     p.add_argument(
         "--num-trials", type=int, default=1, help="Number of trials for explaining each sample (default: 1)"
     )
+
+    # GNNExplainer arguments
+    p.add_argument("--edge-size", type=float, default=0.005, help="GNNExplainer edge size parameter (default: 0.005)")
+    p.add_argument("--edge-ent", type=float, default=1.0, help="GNNExplainer edge entropy parameter (default: 1.0)")
+    p.add_argument("--epochs", type=int, default=200, help="GNNExplainer optimization epochs (default: 200)")
+    p.add_argument("--lr", type=float, default=0.01, help="GNNExplainer learning rate (default: 0.01)")
+
+    # Logging arguments
     p.add_argument(
         "--wandb",
         action="store_true",
@@ -154,179 +166,6 @@ def build_args():
         raise ValueError("`num_trials` must be at least 1.")
 
     return args
-
-
-def _process_dataset(
-    dataset: Iterable[dict[str, str]],
-    args: argparse.Namespace,
-    device: torch.device,
-    log_path: str,
-    fieldnames: list[str],
-    show_progress: bool,
-    model: GraphTokenLM,
-    tokenizer: AutoTokenizer,
-) -> tuple[float, float, float, float, int, dict[int, list[torch.Tensor]], dict[int, dict[str, float]]]:
-    """Run explanations across the dataset and accumulate trial-level metrics.
-
-    Parameters
-    ----------
-    dataset : Iterable[dict[str, str]]
-        Iterable of dataset samples. Each sample must at least expose the
-        ``index`` key and any fields required by :func:`explain_sample`,
-        including ``graph`` and model inputs.
-    args : argparse.Namespace
-        Parsed CLI arguments controlling trial repetition, dataset name, and
-        optional per-sample overrides such as ``num_trials`` and ``dataset``.
-    device : torch.device
-        Target device on which the ``model`` should execute.
-    log_path : str
-        CSV path forwarded to :func:`explain_sample` for appending per-trial
-        metrics.
-    fieldnames : list[str]
-        Ordered column names used by the CSV logger.
-    show_progress : bool
-        If ``True``, render a ``tqdm`` progress bar while processing samples.
-    model : GraphTokenLM
-        Pretrained GraphToken language model whose predictions are explained.
-    tokenizer : AutoTokenizer
-        Tokenizer paired with ``model`` and used to build prompts.
-    Returns
-    -------
-    total_f1 : float
-        Sum of F1 values over all trials that were successfully logged.
-    total_auroc : float
-        Sum of AUROC scores over the logged trials.
-    total_auprc : float
-        Sum of AUPRC scores over the logged trials.
-    total_answer_accuracy : float
-        Sum of answer accuracy scores over the logged trials.
-    total_count : int
-        Number of trials that produced metrics (i.e., were logged).
-    sample_edge_masks : dict[int, list[torch.Tensor]]
-        Mapping from sample index to the list of edge masks returned across its
-        trials.
-    sample_metrics : dict[int, dict[str, float]]
-        Per-sample aggregates storing the sums of recorded metrics along with a
-        ``count`` field.
-
-    Notes
-    -----
-    If the dataset length is unknown, it is materialized into a list to enable
-    progress reporting. When the dataset carries a ``_trial_override`` column,
-    those overrides supersede ``args.num_trials`` for the affected samples.
-    """
-    if model.device != device:
-        model = model.to(device)
-    model.eval()
-
-    gen_cfg = GenerationConfig(
-        max_new_tokens=10,
-        do_sample=True,
-        eos_token_id=tokenizer.eos_token_id,
-        pad_token_id=tokenizer.eos_token_id,
-    )
-
-    total_f1 = 0.0
-    total_auroc = 0.0
-    total_auprc = 0.0
-    total_answer_accuracy = 0.0
-    total_count = 0
-    sample_edge_masks: defaultdict[int, list[torch.Tensor]] = defaultdict(list)
-    sample_metrics: defaultdict[int, dict[str, float]] = defaultdict(
-        lambda: {
-            "answer_accuracy_sum": 0.0,
-            "f1_sum": 0.0,
-            "auroc_sum": 0.0,
-            "auprc_sum": 0.0,
-            "count": 0,
-        }
-    )
-
-    has_trial_override = False
-    if hasattr(dataset, "column_names") and TRIAL_OVERRIDE_COLUMN in dataset.column_names:
-        # Ensure at least one sample carries an override before switching modes.
-        if len(dataset) > 0 and dataset[0].get(TRIAL_OVERRIDE_COLUMN) is not None:
-            has_trial_override = True
-
-    per_sample_trials = 1 if has_trial_override else args.num_trials
-    total_steps = len(dataset) * per_sample_trials
-    progress = tqdm(total=total_steps) if show_progress and total_steps > 0 else None
-
-    wrapper = GLMWrapper(model, tokenizer)
-
-    for sample in dataset:
-        sample_idx = sample["index"]
-        override_value = sample.get(TRIAL_OVERRIDE_COLUMN) if has_trial_override else None
-        if override_value is not None:
-            trial_indices = [int(override_value)]
-        else:
-            trial_indices = range(args.num_trials)
-
-        for i in trial_indices:
-            logged, auroc, auprc, f1, ans_accuracy_single, edge_mask = explain_sample(
-                wrapper=wrapper,
-                sample=sample,
-                trial_idx=i,
-                num_trials=args.num_trials,
-                gen_cfg=gen_cfg,
-                log_path=log_path,
-                fieldnames=fieldnames,
-                dataset_name=args.dataset,
-            )
-            if edge_mask is not None:
-                sample_edge_masks[sample_idx].append(edge_mask)
-            if logged:
-                total_auroc += auroc
-                total_auprc += auprc
-                total_f1 += f1
-                total_answer_accuracy += ans_accuracy_single
-                total_count += 1
-                stats = sample_metrics[sample_idx]
-                stats["answer_accuracy_sum"] += ans_accuracy_single
-                stats["auroc_sum"] += auroc
-                stats["auprc_sum"] += auprc
-                stats["f1_sum"] += f1
-                stats["count"] += 1
-            if progress is not None:
-                progress.update(1)
-
-        stats = sample_metrics.get(sample_idx)
-        if stats and stats["count"] > 0:
-            should_emit = not has_trial_override or override_value is None
-            if not should_emit:
-                try:
-                    override_int = int(override_value)
-                except (TypeError, ValueError):
-                    override_int = None
-                should_emit = override_int is not None and override_int == args.num_trials - 1
-            if should_emit:
-                avg_ans_accuracy = stats["answer_accuracy_sum"] / stats["count"]
-                avg_f1 = stats["f1_sum"] / stats["count"]
-                avg_auroc = stats["auroc_sum"] / stats["count"]
-                avg_auprc = stats["auprc_sum"] / stats["count"]
-                logger.debug(
-                    "Per-sample metrics (deprecated): [Sample %s] trials=%s AnswerAcc=%.3f, "
-                    "AUROC=%.3f, AUPRC=%.3f, F1=%.3f",
-                    sample_idx,
-                    stats["count"],
-                    avg_ans_accuracy,
-                    avg_auroc,
-                    avg_auprc,
-                    avg_f1,
-                )
-
-    if progress is not None:
-        progress.close()
-
-    return (
-        total_f1,
-        total_auroc,
-        total_auprc,
-        total_answer_accuracy,
-        total_count,
-        dict(sample_edge_masks),
-        {idx: dict(stats) for idx, stats in sample_metrics.items()},
-    )
 
 
 def load_model(
@@ -423,7 +262,12 @@ def _get_gt_explanation(sample: dict[str, str]) -> torch.Tensor:
 
 
 def _generate_explanation(
-    wrapper: GLMWrapper, sample: dict[str, str], pyg_batch: PygBatch, gen_cfg: GenerationConfig, num_trials=10
+    wrapper: GLMWrapper,
+    sample: dict[str, str],
+    pyg_batch: PygBatch,
+    gen_cfg: GenerationConfig,
+    explainer_args: dict[str, float | int],
+    num_trials: int = 10,
 ) -> tuple[torch.Tensor | None, float]:
     """Generates output for the given sample and explains it using GNNExplainer.
 
@@ -437,6 +281,8 @@ def _generate_explanation(
         The graph data in PyG Batch format.
     gen_cfg : GenerationConfig
         Configuration for text generation.
+    explainer_args : dict[str, float | int]
+        Keyword arguments forwarded to :class:`GNNExplainer` controlling its optimization.
     num_trials : int, optional
         Maximum number of trials to generate the correct answer, by default 10.
 
@@ -461,16 +307,10 @@ def _generate_explanation(
         return None, acc
 
     # Generate explanation by GNNExplainer
+    explainer_args = dict(explainer_args)
     explainer = Explainer(
         model=wrapper,
-        algorithm=GNNExplainer(
-            epochs=200,
-            lr=0.01,
-            edge_size=24,
-            edge_ent=2.0,
-            num_hops=wrapper.model.config.num_gnn_layers,
-        ),
-        # algorithm=CaptumExplainer("IntegratedGradients"),
+        algorithm=GNNExplainer(num_hops=wrapper.model.config.num_gnn_layers, **explainer_args),
         explanation_type="model",
         node_mask_type="attributes",
         edge_mask_type="object",
@@ -493,12 +333,15 @@ def explain_sample(
     log_path: str,
     fieldnames: list[str],
     dataset_name: str,
+    explainer_args: dict[str, float | int],
     NUM_GEN_TRIALS: int = 10,
 ) -> tuple[bool, float, float, float, float, torch.Tensor | None]:
     """Explain a single sample, log metrics, and emit per-trial artifacts."""
     model_device = wrapper.model.device
     pyg_batch = create_pyg_batch(sample["graph"], device=model_device)
-    explanation, ans_accuracy = _generate_explanation(wrapper, sample, pyg_batch, gen_cfg, num_trials=NUM_GEN_TRIALS)
+    explanation, ans_accuracy = _generate_explanation(
+        wrapper, sample, pyg_batch, gen_cfg, explainer_args=explainer_args, num_trials=NUM_GEN_TRIALS
+    )
 
     if explanation is None:
         return False, 0.0, 0.0, 0.0, 0.0, None
@@ -551,6 +394,186 @@ def explain_sample(
     explanation.visualize_feature_importance(feature_path)
 
     return metrics_logged, float(auroc), float(auprc), float(f1), float(ans_accuracy), pred_edge_mask
+
+
+def process_dataset(
+    dataset: Iterable[dict[str, str]],
+    args: argparse.Namespace,
+    device: torch.device,
+    log_path: str,
+    fieldnames: list[str],
+    show_progress: bool,
+    model: GraphTokenLM,
+    tokenizer: AutoTokenizer,
+) -> tuple[float, float, float, float, int, dict[int, list[torch.Tensor]], dict[int, dict[str, float]]]:
+    """Run explanations across the dataset and accumulate trial-level metrics.
+
+    Parameters
+    ----------
+    dataset : Iterable[dict[str, str]]
+        Iterable of dataset samples. Each sample must at least expose the
+        ``index`` key and any fields required by :func:`explain_sample`,
+        including ``graph`` and model inputs.
+    args : argparse.Namespace
+        Parsed CLI arguments controlling trial repetition, dataset name, and
+        optional per-sample overrides such as ``num_trials`` and ``dataset``.
+    device : torch.device
+        Target device on which the ``model`` should execute.
+    log_path : str
+        CSV path forwarded to :func:`explain_sample` for appending per-trial
+        metrics.
+    fieldnames : list[str]
+        Ordered column names used by the CSV logger.
+    show_progress : bool
+        If ``True``, render a ``tqdm`` progress bar while processing samples.
+    model : GraphTokenLM
+        Pretrained GraphToken language model whose predictions are explained.
+    tokenizer : AutoTokenizer
+        Tokenizer paired with ``model`` and used to build prompts.
+    Returns
+    -------
+    total_f1 : float
+        Sum of F1 values over all trials that were successfully logged.
+    total_auroc : float
+        Sum of AUROC scores over the logged trials.
+    total_auprc : float
+        Sum of AUPRC scores over the logged trials.
+    total_answer_accuracy : float
+        Sum of answer accuracy scores over the logged trials.
+    total_count : int
+        Number of trials that produced metrics (i.e., were logged).
+    sample_edge_masks : dict[int, list[torch.Tensor]]
+        Mapping from sample index to the list of edge masks returned across its
+        trials.
+    sample_metrics : dict[int, dict[str, float]]
+        Per-sample aggregates storing the sums of recorded metrics along with a
+        ``count`` field.
+
+    Notes
+    -----
+    If the dataset length is unknown, it is materialized into a list to enable
+    progress reporting. When the dataset carries a ``_trial_override`` column,
+    those overrides supersede ``args.num_trials`` for the affected samples.
+    """
+    if model.device != device:
+        model = model.to(device)
+    model.eval()
+
+    gen_cfg = GenerationConfig(
+        max_new_tokens=10,
+        do_sample=True,
+        eos_token_id=tokenizer.eos_token_id,
+        pad_token_id=tokenizer.eos_token_id,
+    )
+    explainer_args: dict[str, float | int] = {
+        "epochs": args.epochs,
+        "lr": args.lr,
+        "edge_size": args.edge_size,
+        "edge_ent": args.edge_ent,
+    }
+
+    total_f1 = 0.0
+    total_auroc = 0.0
+    total_auprc = 0.0
+    total_answer_accuracy = 0.0
+    total_count = 0
+    sample_edge_masks: defaultdict[int, list[torch.Tensor]] = defaultdict(list)
+    sample_metrics: defaultdict[int, dict[str, float]] = defaultdict(
+        lambda: {
+            "answer_accuracy_sum": 0.0,
+            "f1_sum": 0.0,
+            "auroc_sum": 0.0,
+            "auprc_sum": 0.0,
+            "count": 0,
+        }
+    )
+
+    has_trial_override = False
+    if hasattr(dataset, "column_names") and TRIAL_OVERRIDE_COLUMN in dataset.column_names:
+        # Ensure at least one sample carries an override before switching modes.
+        if len(dataset) > 0 and dataset[0].get(TRIAL_OVERRIDE_COLUMN) is not None:
+            has_trial_override = True
+
+    per_sample_trials = 1 if has_trial_override else args.num_trials
+    total_steps = len(dataset) * per_sample_trials
+    progress = tqdm(total=total_steps) if show_progress and total_steps > 0 else None
+
+    wrapper = GLMWrapper(model, tokenizer)
+
+    for sample in dataset:
+        sample_idx = sample["index"]
+        override_value = sample.get(TRIAL_OVERRIDE_COLUMN) if has_trial_override else None
+        if override_value is not None:
+            trial_indices = [int(override_value)]
+        else:
+            trial_indices = range(args.num_trials)
+
+        for i in trial_indices:
+            logged, auroc, auprc, f1, ans_accuracy_single, edge_mask = explain_sample(
+                wrapper=wrapper,
+                sample=sample,
+                trial_idx=i,
+                num_trials=args.num_trials,
+                gen_cfg=gen_cfg,
+                log_path=log_path,
+                fieldnames=fieldnames,
+                dataset_name=args.dataset,
+                explainer_args=explainer_args,
+            )
+            if edge_mask is not None:
+                sample_edge_masks[sample_idx].append(edge_mask)
+            if logged:
+                total_auroc += auroc
+                total_auprc += auprc
+                total_f1 += f1
+                total_answer_accuracy += ans_accuracy_single
+                total_count += 1
+                stats = sample_metrics[sample_idx]
+                stats["answer_accuracy_sum"] += ans_accuracy_single
+                stats["auroc_sum"] += auroc
+                stats["auprc_sum"] += auprc
+                stats["f1_sum"] += f1
+                stats["count"] += 1
+            if progress is not None:
+                progress.update(1)
+
+        stats = sample_metrics.get(sample_idx)
+        if stats and stats["count"] > 0:
+            should_emit = not has_trial_override or override_value is None
+            if not should_emit:
+                try:
+                    override_int = int(override_value)
+                except (TypeError, ValueError):
+                    override_int = None
+                should_emit = override_int is not None and override_int == args.num_trials - 1
+            if should_emit:
+                avg_ans_accuracy = stats["answer_accuracy_sum"] / stats["count"]
+                avg_f1 = stats["f1_sum"] / stats["count"]
+                avg_auroc = stats["auroc_sum"] / stats["count"]
+                avg_auprc = stats["auprc_sum"] / stats["count"]
+                logger.debug(
+                    "Per-sample metrics (deprecated): [Sample %s] trials=%s AnswerAcc=%.3f, "
+                    "AUROC=%.3f, AUPRC=%.3f, F1=%.3f",
+                    sample_idx,
+                    stats["count"],
+                    avg_ans_accuracy,
+                    avg_auroc,
+                    avg_auprc,
+                    avg_f1,
+                )
+
+    if progress is not None:
+        progress.close()
+
+    return (
+        total_f1,
+        total_auroc,
+        total_auprc,
+        total_answer_accuracy,
+        total_count,
+        dict(sample_edge_masks),
+        {idx: dict(stats) for idx, stats in sample_metrics.items()},
+    )
 
 
 def main():
@@ -623,7 +646,7 @@ def main():
 
     show_progress = is_rank0 and len(dataset) > 0
     total_f1, total_auroc, total_auprc, total_answer_accuracy, total_count, sample_edge_masks, sample_metrics = (
-        _process_dataset(
+        process_dataset(
             dataset=dataset,
             args=args,
             device=device,
