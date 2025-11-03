@@ -537,31 +537,6 @@ def process_dataset(
             if progress is not None:
                 progress.update(1)
 
-        stats = sample_metrics.get(sample_idx)
-        if stats and stats["count"] > 0:
-            should_emit = not has_trial_override or override_value is None
-            if not should_emit:
-                try:
-                    override_int = int(override_value)
-                except (TypeError, ValueError):
-                    override_int = None
-                should_emit = override_int is not None and override_int == args.num_trials - 1
-            if should_emit:
-                avg_ans_accuracy = stats["answer_accuracy_sum"] / stats["count"]
-                avg_f1 = stats["f1_sum"] / stats["count"]
-                avg_auroc = stats["auroc_sum"] / stats["count"]
-                avg_auprc = stats["auprc_sum"] / stats["count"]
-                logger.debug(
-                    "Per-sample metrics (deprecated): [Sample %s] trials=%s AnswerAcc=%.3f, "
-                    "AUROC=%.3f, AUPRC=%.3f, F1=%.3f",
-                    sample_idx,
-                    stats["count"],
-                    avg_ans_accuracy,
-                    avg_auroc,
-                    avg_auprc,
-                    avg_f1,
-                )
-
     if progress is not None:
         progress.close()
 
