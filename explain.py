@@ -638,7 +638,7 @@ def main():
 
     # Setup wandb logging (rank 0 only)
     if args.wandb and is_rank0:
-        wandb.init(project="MotifQA-Explainer", name=run_name, dir=OUT_DIR, config=vars(args))
+        wandb.init(project="MotifQA-Explainer", name=run_name, config=vars(args), dir=OUT_DIR)
 
     # Setup CSV logging
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -761,17 +761,21 @@ def main():
 
         # Save average metrics per sample
         avg_metrics_path = os.path.join(OUT_DIR, "average_metrics.csv")
-        write_average_metrics_csv(avg_metrics_path, merged_sample_metrics, merged_edge_masks)
+        _, stability_metrics = write_average_metrics_csv(avg_metrics_path, merged_sample_metrics, merged_edge_masks)
         print(f"[INFO] Saved average metrics to {avg_metrics_path}")
         if args.wandb and total_count > 0:
-            wandb.log(
+            wandb_payload: dict[str, float] = {}
+            wandb_payload.update(
                 {
                     "avg_answer_accuracy": avg_answer_accuracy,
-                    "avg_f1": avg_f1,
                     "avg_auroc": avg_auroc,
                     "avg_auprc": avg_auprc,
+                    "avg_f1": avg_f1,
                 }
             )
+            if args.num_trials > 1:
+                wandb_payload.update(**stability_metrics)
+            wandb.log(wandb_payload)
 
     if args.wandb:
         wandb.finish()

@@ -15,11 +15,15 @@ def _write_metrics_header(log_path: str, fieldnames: list[str]) -> None:
         writer.writeheader()
 
 
+def _mean(values: Sequence[float]) -> float:
+    return float(sum(values) / len(values)) if values else 0.0
+
+
 def write_average_metrics_csv(
     output_path: str | Path,
     sample_metrics: Mapping[int, Mapping[str, float]] | None,
     edge_masks: Mapping[int, Sequence[Any]] | None,
-) -> None:
+) -> tuple[dict[int, dict[str, float]], dict[str, float]]:
     """Write per-sample averaged metrics and stability scores to a CSV file.
 
     Parameters
@@ -33,6 +37,13 @@ def write_average_metrics_csv(
     edge_masks : Mapping[int, Sequence[Any]] or None
         Sequences of edge mask artifacts per sample index, used to derive
         stability metrics. Pass ``None`` to skip stability computation.
+
+    Returns
+    -------
+    per_sample_stability : dict[int, dict[str, float]]
+        Computed per-sample edge mask stability metrics.
+    aggregated_stability : dict[str, float]
+        Aggregated edge mask stability metrics averaged across samples.
     """
     output_path = Path(output_path)
     fieldnames = [
@@ -71,6 +82,13 @@ def write_average_metrics_csv(
             for key in EDGE_MASK_STABILITY_KEYS:
                 row[key] = stability.get(key, 0.0)
             writer.writerow(row)
+
+    aggregated_stability = {key: 0.0 for key in EDGE_MASK_STABILITY_KEYS}
+    if per_sample_stability:
+        for key in EDGE_MASK_STABILITY_KEYS:
+            aggregated_stability[key] = _mean([metrics.get(key, 0.0) for metrics in per_sample_stability.values()])
+
+    return dict(per_sample_stability), aggregated_stability
 
 
 __all__ = ["_write_metrics_header", "write_average_metrics_csv"]
