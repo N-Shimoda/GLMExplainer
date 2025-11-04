@@ -9,13 +9,13 @@ log() {
 	echo "[$ts] $*" | tee -a "$LOG_FILE"
 }
 
-# for edge_size in 0.005 0.01 0.1 1 6 12 24 48; do
-for edge_size in 12 24; do
-	for edge_ent in 1.0 2.0; do
+for edge_size in 24 48 72 96; do
+	for edge_ent in 1.0; do
 		cmd=(
 			torchrun --nproc_per_node=2 explain.py
 			--model-path masters/house_check
 			--explain-pos-samples
+			--num-trials 10
 			--edge-size $edge_size --edge-ent $edge_ent
 			--epochs 200 --lr 0.01
 			--wandb
