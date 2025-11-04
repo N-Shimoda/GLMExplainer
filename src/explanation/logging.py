@@ -68,9 +68,9 @@ def write_average_metrics_csv(
             stats = metrics_data[sample_idx]
             count = int(stats.get("count", 0))
             answer_acc_sum = stats.get("answer_accuracy_sum", 0.0)
-            f1_sum = stats.get("f1_sum", 0.0)
             auroc_sum = stats.get("auroc_sum", 0.0)
             auprc_sum = stats.get("auprc_sum", 0.0)
+            f1_sum = stats.get("f1_sum", 0.0)
             row = {
                 "sample_index": sample_idx,
                 "answer_accuracy": answer_acc_sum / count if count > 0 else 0.0,
@@ -91,4 +91,38 @@ def write_average_metrics_csv(
     return dict(per_sample_stability), aggregated_stability
 
 
-__all__ = ["_write_metrics_header", "write_average_metrics_csv"]
+def append_run_history_row(history_path: str | Path, row: Mapping[str, Any]) -> None:
+    """Append a run-level record to the shared history CSV.
+
+    Parameters
+    ----------
+    history_path : str or pathlib.Path
+        Destination CSV path (shared across runs for a subset).
+    row : Mapping[str, Any]
+        Dictionary containing the run metadata and metrics to record.
+    """
+
+    history_path = Path(history_path)
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "run_name",
+        "epochs",
+        "lr",
+        "edge_size",
+        "edge_ent",
+        "avg_auroc",
+        "avg_auprc",
+        "avg_f1",
+        *EDGE_MASK_STABILITY_KEYS,
+        "avg_answer_accuracy",
+    ]
+
+    is_new_file = not history_path.exists()
+    with history_path.open("a", newline="") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        if is_new_file:
+            writer.writeheader()
+        writer.writerow({key: row.get(key, "") for key in fieldnames})
+
+
+__all__ = ["_write_metrics_header", "write_average_metrics_csv", "append_run_history_row"]

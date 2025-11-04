@@ -23,7 +23,11 @@ from transformers.trainer_utils import set_seed
 import wandb
 from eval import create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
-from src.explanation.logging import _write_metrics_header, write_average_metrics_csv
+from src.explanation.logging import (
+    _write_metrics_header,
+    append_run_history_row,
+    write_average_metrics_csv,
+)
 from src.explanation.preprocess import build_dataset, filter_dataset
 from src.explanation.wrapper import GLMWrapper
 from src.glm import GraphTokenLM
@@ -162,7 +166,12 @@ def build_args():
     if args.num_trials < 1:
         raise ValueError("`num_trials` must be at least 1.")
 
-    return args
+    explainer_keys = ["epochs", "lr", "edge_size", "edge_ent"]
+    explainer_args = {key: getattr(args, key) for key in explainer_keys}
+    for key in explainer_keys:
+        delattr(args, key)
+
+    return args, explainer_args
 
 
 def load_model(
@@ -436,6 +445,7 @@ def process_dataset(
     fieldnames: list[str],
     show_progress: bool,
     args: argparse.Namespace,
+    explainer_args: dict[str, float | int],
 ) -> tuple[dict[str, float], float, int, dict[int, list[torch.Tensor]], dict[int, dict[str, float]]]:
     """Run explanations across the dataset, tracking trial artifacts and aggregates.
 
@@ -459,6 +469,8 @@ def process_dataset(
     args : argparse.Namespace
         Parsed CLI arguments controlling trial repetition, dataset name, and
         optional per-sample overrides such as ``num_trials`` and ``dataset``.
+    explainer_args : dict[str, float | int]
+        Hyperparameters passed to the explainer, e.g., epochs and learning rate.
 
     Returns
     -------
@@ -486,12 +498,6 @@ def process_dataset(
         eos_token_id=tokenizer.eos_token_id,
         pad_token_id=tokenizer.eos_token_id,
     )
-    explainer_args: dict[str, float | int] = {
-        "epochs": args.epochs,
-        "lr": args.lr,
-        "edge_size": args.edge_size,
-        "edge_ent": args.edge_ent,
-    }
 
     exp_metric_totals = {"auroc": 0.0, "auprc": 0.0, "f1": 0.0}
     total_answer_accuracy = 0.0
@@ -500,9 +506,9 @@ def process_dataset(
     sample_metrics: defaultdict[int, dict[str, float]] = defaultdict(
         lambda: {
             "answer_accuracy_sum": 0.0,
-            "f1_sum": 0.0,
             "auroc_sum": 0.0,
             "auprc_sum": 0.0,
+            "f1_sum": 0.0,
             "count": 0,
         }
     )
@@ -581,7 +587,7 @@ def process_dataset(
 
 def main():
     set_seed(42)
-    args = build_args()
+    args, explainer_args = build_args()
     run_name = datetime.now().strftime("%m%d-%H%M")
 
     # Setup DDP, random seed, and device
@@ -638,7 +644,12 @@ def main():
 
     # Setup wandb logging (rank 0 only)
     if args.wandb and is_rank0:
-        wandb.init(project="MotifQA-Explainer", name=run_name, config=vars(args), dir=OUT_DIR)
+        wandb.init(
+            project="MotifQA-Explainer",
+            name=run_name,
+            config={**vars(args), **explainer_args},
+            dir=OUT_DIR,
+        )
 
     # Setup CSV logging
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -657,6 +668,7 @@ def main():
         fieldnames=fieldnames,
         show_progress=(is_rank0 and len(dataset) > 0),
         args=args,
+        explainer_args=explainer_args,
     )
 
     # Aggregate metrics across ranks
@@ -710,9 +722,9 @@ def main():
             merged_metrics_accum = defaultdict(
                 lambda: {
                     "answer_accuracy_sum": 0.0,
-                    "f1_sum": 0.0,
                     "auroc_sum": 0.0,
                     "auprc_sum": 0.0,
+                    "f1_sum": 0.0,
                     "count": 0,
                 }
             )
@@ -730,9 +742,9 @@ def main():
                 for idx, stats in partial_metrics.items():
                     acc = merged_metrics_accum[idx]
                     acc["answer_accuracy_sum"] += stats.get("answer_accuracy_sum", 0.0)
-                    acc["f1_sum"] += stats.get("f1_sum", 0.0)
                     acc["auroc_sum"] += stats.get("auroc_sum", 0.0)
                     acc["auprc_sum"] += stats.get("auprc_sum", 0.0)
+                    acc["f1_sum"] += stats.get("f1_sum", 0.0)
                     acc["count"] += stats.get("count", 0)
             merged_sample_metrics = {idx: dict(vals) for idx, vals in merged_metrics_accum.items()}
         else:
@@ -744,11 +756,15 @@ def main():
 
     # Compute and record average metrics across all positive samples
     if is_rank0:
+        avg_answer_accuracy = 0.0
+        avg_auroc = 0.0
+        avg_auprc = 0.0
+        avg_f1 = 0.0
         if total_count > 0:
             avg_answer_accuracy = total_answer_accuracy / total_count
-            avg_f1 = exp_metric_totals["f1"] / total_count
             avg_auroc = exp_metric_totals["auroc"] / total_count
             avg_auprc = exp_metric_totals["auprc"] / total_count
+            avg_f1 = exp_metric_totals["f1"] / total_count
             print(
                 "Average explanation accuracy across positive samples: "
                 f"AnswerAcc={avg_answer_accuracy:.3f}, "
@@ -756,25 +772,38 @@ def main():
             )
             print(f"Saved explanation metrics to {base_log_path}")
         else:
-            avg_answer_accuracy = 0.0
             print("No explanation metrics recorded for positive samples.")
 
         # Save average metrics per sample
         avg_metrics_path = os.path.join(OUT_DIR, "average_metrics.csv")
         _, stability_metrics = write_average_metrics_csv(avg_metrics_path, merged_sample_metrics, merged_edge_masks)
         print(f"[INFO] Saved average metrics to {avg_metrics_path}")
-        if args.wandb and total_count > 0:
-            wandb_payload: dict[str, float] = {}
-            wandb_payload.update(
-                {
-                    "avg_answer_accuracy": avg_answer_accuracy,
-                    "avg_auroc": avg_auroc,
-                    "avg_auprc": avg_auprc,
-                    "avg_f1": avg_f1,
-                }
-            )
-            if args.num_trials > 1:
-                wandb_payload.update(**stability_metrics)
+
+        history_path = os.path.join(os.path.dirname(OUT_DIR), "run_history.csv")
+        append_run_history_row(
+            history_path,
+            {
+                "run_name": run_name,
+                "avg_answer_accuracy": avg_answer_accuracy,
+                "avg_auroc": avg_auroc,
+                "avg_auprc": avg_auprc,
+                "avg_f1": avg_f1,
+                **stability_metrics,
+                **explainer_args,
+            },
+        )
+
+        if args.wandb:
+            wandb_payload = stability_metrics.copy()
+            if total_count > 0:
+                wandb_payload.update(
+                    {
+                        "avg_answer_accuracy": avg_answer_accuracy,
+                        "avg_auroc": avg_auroc,
+                        "avg_auprc": avg_auprc,
+                        "avg_f1": avg_f1,
+                    }
+                )
             wandb.log(wandb_payload)
 
     if args.wandb:
