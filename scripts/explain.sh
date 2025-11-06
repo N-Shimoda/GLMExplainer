@@ -9,7 +9,15 @@ log() {
 	echo "[$ts] $*" | tee -a "$LOG_FILE"
 }
 
-for edge_size in 24 48 72 96; do
+format_duration() {
+	local total=$1
+	local hours=$((total / 3600))
+	local minutes=$(((total % 3600) / 60))
+	local seconds=$((total % 60))
+	printf "%dh %02dmin %02dsec" "$hours" "$minutes" "$seconds"
+}
+
+for edge_size in 120; do
 	for edge_ent in 1.0; do
 		cmd=(
 			torchrun --nproc_per_node=2 explain.py
@@ -35,9 +43,9 @@ for edge_size in 24 48 72 96; do
 
 		# Report status
 		if [[ $rc -eq 0 ]]; then
-			log "[COMPLETED] edge_size=${edge_size} edge_ent=${edge_ent} duration=${dur}s"
+			log "[COMPLETED] edge_size=${edge_size} edge_ent=${edge_ent} duration=$(format_duration "$dur")"
 		else
-			log "[ERROR] edge_size=${edge_size} edge_ent=${edge_ent} rc=${rc} duration=${dur}s"
+			log "[ERROR] edge_size=${edge_size} edge_ent=${edge_ent} rc=${rc} duration=$(format_duration "$dur")"
 		fi
 	done
 done
