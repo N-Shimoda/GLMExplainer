@@ -22,7 +22,6 @@ from trl import SFTConfig, SFTTrainer
 
 import wandb
 from src.ckpt import _resolve_ckpt_path
-from src.sft_callback import PerplexityCallback
 
 
 def is_main_process() -> bool:
@@ -290,7 +289,6 @@ def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: d
         train_dataset=train_ds,
         eval_dataset=eval_ds,
     )
-    trainer.add_callback(PerplexityCallback)
 
     train_dataloader = trainer.get_train_dataloader()
     micro_batches_per_epoch = len(train_dataloader)

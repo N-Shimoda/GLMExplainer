@@ -5,15 +5,22 @@ channels:
   - conda-forge
 dependencies:
   - python=3.12
+  - scipy
+  - matplotlib
+  - openai
+  - pytest
   - pip
+  - ninja
   - pip:
     - --extra-index-url https://download.pytorch.org/whl/cu124
-    - torch
-    - torch_geometric
+    - torch>=2.9.0
+    - torch_geometric>=2.7.0
+    - torchmetrics
     - transformers
     - datasets
     - trl
-    - bitsandbytes
     - peft
+    - bitsandbytes
     - flash_attn
-    - wandb
+    - wandb>=0.22.3
+    

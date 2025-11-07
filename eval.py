@@ -24,7 +24,7 @@ def build_args(*, multitask: bool = False):
         p.add_argument(
             "--subset",
             type=str,
-            choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "maximum_flow"],
+            choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "house_check"],
             default="edge_count",
         )
     p.add_argument("--use-custom-dataset", action="store_true", default=False)
@@ -106,12 +106,29 @@ def create_pyg_batch(
 
 
 def build_dataset(subset: str, split: str, node_feat_dim: int):
-    test_raw = load_dataset("baharef/GraphQA", subset, split=f"zero_shot_{split}")
-    test_ds = test_raw.map(
-        lambda x: add_graph_column(x, k=node_feat_dim),
-        desc="add_graph_column(test)",
-        remove_columns=["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"],
-    )
+    match subset:
+        case "node_count" | "edge_count" | "cycle_check" | "triangle_counting":
+            test_raw = load_dataset("baharef/GraphQA", subset, split=f"zero_shot_{split}")
+            test_ds = test_raw.map(
+                lambda x: add_graph_column(x, k=node_feat_dim),
+                desc="add_graph_column(test)",
+                remove_columns=[
+                    "algorithm",
+                    "answer",
+                    "nedges",
+                    "nnodes",
+                    "question",
+                    "task_description",
+                    "text_encoding",
+                ],
+            )
+        case "house_check":
+            test_raw = load_dataset("naos-ku/motif-qa", split=split)
+            test_ds = test_raw.map(
+                lambda x: add_graph_column(x, k=node_feat_dim, ds_name="motif-qa"),
+                remove_columns=["response", "nodes", "edges", "nnodes", "nedges"],
+                desc="add_graph_column(test)",
+            )
     return test_ds
 
 
@@ -119,13 +136,31 @@ def get_max_new_tokens(subset: str, use_custom: bool = False) -> int:
     max_new_tokens_dict = (
         {"node_count": 96, "edge_count": 256, "cycle_check": 512, "triangle_counting": 256}
         if use_custom
-        else {"node_count": 4, "edge_count": 4, "cycle_check": 8, "triangle_counting": 4}
+        else {"node_count": 4, "edge_count": 4, "cycle_check": 8, "triangle_counting": 4, "house_check": 24}
     )
     return max_new_tokens_dict[subset]
 
 
 @torch.no_grad()
-def eval_model(model: GraphTokenLM, test_ds, batch_size: int, max_new_tokens: int) -> list[dict]:
+def eval_model(model: GraphTokenLM, test_ds, batch_size: int, max_new_tokens: int) -> list[dict[str, str]]:
+    """Evaluates the model on the test dataset and returns the prediction results.
+
+    Parameters
+    ----------
+    model : GraphTokenLM
+        The pre-trained GraphTokenLM model to be evaluated.
+    test_ds : Dataset
+        The test dataset containing prompts and graph data.
+    batch_size : int
+        The batch size for evaluation.
+    max_new_tokens : int
+        The maximum number of new tokens to generate.
+
+    Returns
+    -------
+    results : list of dict
+        A list of dictionaries containing the evaluation results with keys "question", "preds", and "answer".
+    """
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(model.config.base_model)
     gen_cfg = GenerationConfig(
@@ -175,7 +210,7 @@ def collect_result(results: list[dict], res_file: str, subset: str):
         The subset name used for accuracy computation.
     """
     refs = [r["answer"] for r in results]
-    acc, unknowns = comp_accuracy([r["preds"] for r in results], refs, subset)
+    acc, unknowns, _ = comp_accuracy([r["preds"] for r in results], refs, subset)
     print(f"Accuracy: {acc * 100:.4f}%")
     if unknowns:
         print(f"[WARNING] {unknowns} unknown predictions found.")
@@ -189,7 +224,7 @@ def collect_result(results: list[dict], res_file: str, subset: str):
     return acc
 
 
-if __name__ == "__main__":
+def main():
     args = build_args()
 
     # Load pre-trained model
@@ -218,3 +253,7 @@ if __name__ == "__main__":
     res_file = os.path.join("results", args.subset, file_name)
     acc = collect_result(results, res_file, args.subset)
     print(f"[SUMMARY] subset={args.subset} accuracy={acc}")
+
+
+if __name__ == "__main__":
+    main()
