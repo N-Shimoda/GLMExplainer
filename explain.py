@@ -28,6 +28,10 @@ from src.explanation.logging import (
     append_run_history_row,
     write_average_metrics_csv,
 )
+from src.explanation.metrics import (
+    EDGE_MASK_STABILITY_KEYS,
+    compute_edge_mask_stability_metrics_per_sample,
+)
 from src.explanation.preprocess import build_dataset, filter_dataset
 from src.explanation.wrapper import GLMWrapper
 from src.glm import GraphTokenLM
@@ -37,6 +41,59 @@ from src.utils import visualize_motif_explanation
 GRAPH_SVG_SUBDIR = "graphs"
 NODE_FEAT_SVG_SUBDIR = "node_feat"
 TRIAL_OVERRIDE_COLUMN = "_trial_override"
+AVERAGE_METRIC_FIELDNAMES = [
+    "sample_index",
+    "answer_accuracy",
+    "auroc",
+    "auprc",
+    "f1",
+    *EDGE_MASK_STABILITY_KEYS,
+]
+
+
+def _compute_sample_average_row(
+    sample_idx: int, stats: dict[str, float] | None, edge_masks: Iterable[torch.Tensor] | None
+) -> dict[str, float] | None:
+    """Compute averaged accuracy and stability metrics for a single sample."""
+    if not stats:
+        return None
+    count = int(stats.get("count", 0))
+    if count <= 0:
+        return None
+    answer_acc_sum = stats.get("answer_accuracy_sum", 0.0)
+    auroc_sum = stats.get("auroc_sum", 0.0)
+    auprc_sum = stats.get("auprc_sum", 0.0)
+    f1_sum = stats.get("f1_sum", 0.0)
+    row: dict[str, float] = {
+        "sample_index": sample_idx,
+        "answer_accuracy": answer_acc_sum / count,
+        "auroc": auroc_sum / count,
+        "auprc": auprc_sum / count,
+        "f1": f1_sum / count,
+    }
+    mask_list = list(edge_masks) if edge_masks is not None else []
+    stability = compute_edge_mask_stability_metrics_per_sample({sample_idx: mask_list}).get(sample_idx, {})
+    for key in EDGE_MASK_STABILITY_KEYS:
+        row[key] = stability.get(key, 0.0)
+    return row
+
+
+def _record_sample_average_metrics(
+    avg_log_path: str | None,
+    fieldnames: list[str] | None,
+    sample_idx: int,
+    stats: dict[str, float] | None,
+    edge_masks: Iterable[torch.Tensor] | None,
+) -> None:
+    """Append a per-sample averaged metrics row to the CSV log if possible."""
+    if avg_log_path is None or fieldnames is None:
+        return
+    row = _compute_sample_average_row(sample_idx, stats, edge_masks)
+    if row is None:
+        return
+    with open(avg_log_path, "a", newline="") as avg_file:
+        writer = csv.DictWriter(avg_file, fieldnames=fieldnames)
+        writer.writerow(row)
 
 
 def _init_distributed_if_needed() -> tuple[int, int, int, bool]:
@@ -194,6 +251,8 @@ def load_model(
         Loaded GraphTokenLM model.
     tokenizer : AutoTokenizer
         Corresponding tokenizer used with the model.
+    ckpt_path : str
+        Resolved checkpoint path from which the model was loaded.
     """
     # Resolve checkpoint path
     ckpt_path, run_name = _resolve_ckpt_path(model_path)
@@ -206,7 +265,7 @@ def load_model(
 
     # Load pre-trained tokenizer
     tokenizer = AutoTokenizer.from_pretrained(model.config.llm_name, trust_remote_code=True)
-    return model, tokenizer
+    return model, tokenizer, ckpt_path
 
 
 def _get_gt_explanation(sample: dict[str, str]) -> torch.Tensor:
@@ -446,6 +505,8 @@ def process_dataset(
     show_progress: bool,
     args: argparse.Namespace,
     explainer_args: dict[str, float | int],
+    avg_log_path: str | None = None,
+    avg_fieldnames: list[str] | None = None,
 ) -> tuple[dict[str, float], float, int, dict[int, list[torch.Tensor]], dict[int, dict[str, float]]]:
     """Run explanations across the dataset, tracking trial artifacts and aggregates.
 
@@ -471,6 +532,11 @@ def process_dataset(
         optional per-sample overrides such as ``num_trials`` and ``dataset``.
     explainer_args : dict[str, float | int]
         Hyperparameters passed to the explainer, e.g., epochs and learning rate.
+    avg_log_path : str, optional
+        CSV destination used to record per-sample averaged metrics once a sample
+        completes its configured ``num_trials``.
+    avg_fieldnames : list[str], optional
+        Column ordering applied when writing per-sample averages.
 
     Returns
     -------
@@ -512,6 +578,8 @@ def process_dataset(
             "count": 0,
         }
     )
+    trial_completion_counts: defaultdict[int, int] = defaultdict(int)
+    finalized_samples: set[int] = set()
 
     has_trial_override = False
     if hasattr(dataset, "column_names") and TRIAL_OVERRIDE_COLUMN in dataset.column_names:
@@ -535,6 +603,7 @@ def process_dataset(
         else:
             trial_indices = range(args.num_trials)
 
+        num_trial_runs = len(trial_indices)
         for i in trial_indices:
             logged, exp_accuracy, ans_accuracy_single, edge_mask = explain_sample(
                 wrapper=wrapper,
@@ -573,6 +642,17 @@ def process_dataset(
                     )
                 progress.update(1)
 
+        trial_completion_counts[sample_idx] += num_trial_runs
+        if sample_idx not in finalized_samples and trial_completion_counts[sample_idx] >= args.num_trials:
+            _record_sample_average_metrics(
+                avg_log_path=avg_log_path,
+                fieldnames=avg_fieldnames,
+                sample_idx=sample_idx,
+                stats=sample_metrics.get(sample_idx),
+                edge_masks=sample_edge_masks.get(sample_idx, []),
+            )
+            finalized_samples.add(sample_idx)
+
     if progress is not None:
         progress.close()
 
@@ -603,7 +683,7 @@ def main():
     is_rank0 = rank == 0
 
     # Load model and tokenizer
-    model, tokenizer = load_model(args.model_path, device=device, verbose=is_rank0)
+    model, tokenizer, ckpt_path = load_model(args.model_path, device=device, verbose=is_rank0)
     model.eval()
 
     # Load dataset and apply filtering
@@ -643,6 +723,7 @@ def main():
             dataset = dataset.select(indices if indices else [])
 
     # Setup wandb logging (rank 0 only)
+    args.model_path = ckpt_path
     if args.wandb and is_rank0:
         wandb.init(
             project="MotifQA-Explainer",
@@ -658,6 +739,13 @@ def main():
 
     fieldnames = ["sample_index", "trial", "answer_accuracy", "auroc", "auprc", "f1"]
     _write_metrics_header(shard_log_path, fieldnames)
+    avg_metrics_base_path = os.path.join(OUT_DIR, "average_metrics.csv")
+    avg_metrics_shard_path = (
+        avg_metrics_base_path if world_size == 1 else os.path.join(OUT_DIR, f"average_metrics_rank{rank}.csv")
+    )
+    with open(avg_metrics_shard_path, "w", newline="") as avg_file:
+        writer = csv.DictWriter(avg_file, fieldnames=AVERAGE_METRIC_FIELDNAMES)
+        writer.writeheader()
 
     # Process dataset and collect metrics
     exp_metric_totals, total_answer_accuracy, total_count, sample_edge_masks, sample_metrics = process_dataset(
@@ -669,6 +757,8 @@ def main():
         show_progress=(is_rank0 and len(dataset) > 0),
         args=args,
         explainer_args=explainer_args,
+        avg_log_path=avg_metrics_shard_path,
+        avg_fieldnames=AVERAGE_METRIC_FIELDNAMES,
     )
 
     # Aggregate metrics across ranks
@@ -778,6 +868,11 @@ def main():
         avg_metrics_path = os.path.join(OUT_DIR, "average_metrics.csv")
         _, stability_metrics = write_average_metrics_csv(avg_metrics_path, merged_sample_metrics, merged_edge_masks)
         print(f"[INFO] Saved average metrics to {avg_metrics_path}")
+        if is_distributed:
+            for idx in range(world_size):
+                rank_avg_path = os.path.join(OUT_DIR, f"average_metrics_rank{idx}.csv")
+                if os.path.exists(rank_avg_path):
+                    os.remove(rank_avg_path)
 
         history_path = os.path.join(os.path.dirname(OUT_DIR), "run_history.csv")
         append_run_history_row(

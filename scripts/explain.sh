@@ -17,8 +17,8 @@ format_duration() {
 	printf "%dh %02dmin %02dsec" "$hours" "$minutes" "$seconds"
 }
 
-for edge_size in 120; do
-	for edge_ent in 1.0; do
+for edge_size in 96; do
+	for edge_ent in 2.0 10.0; do
 		cmd=(
 			torchrun --nproc_per_node=2 explain.py
 			--model-path masters/house_check
