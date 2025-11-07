@@ -3,7 +3,7 @@ import csv
 import os
 import time
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Iterable
 
 import torch
@@ -58,7 +58,7 @@ def _init_distributed_if_needed() -> tuple[int, int, int, bool]:
         except ValueError:
             device_id = torch.cuda.current_device()
 
-    init_kwargs: dict[str, object] = {"backend": backend}
+    init_kwargs: dict[str, object] = {"backend": backend, "timeout": timedelta(hours=1)}
     if backend == "nccl" and device_id is not None:
         init_kwargs["device_id"] = device_id
 
