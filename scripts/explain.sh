@@ -17,8 +17,8 @@ format_duration() {
 	printf "%dh %02dmin %02dsec" "$hours" "$minutes" "$seconds"
 }
 
-for epochs in 100 300 400; do
-	for lr in 0.01; do
+for epochs in 200; do
+	for lr in 0.05 0.5; do
 		for edge_size in 96; do
 			for edge_ent in 1.0; do
 				cmd=(
