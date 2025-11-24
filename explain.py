@@ -24,14 +24,12 @@ import wandb
 from eval import create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
 from src.explanation.logging import (
+    _record_sample_average_metrics,
     _write_metrics_header,
     append_run_history_row,
     write_average_metrics_csv,
 )
-from src.explanation.metrics import (
-    EDGE_MASK_STABILITY_KEYS,
-    compute_edge_mask_stability_metrics_per_sample,
-)
+from src.explanation.metrics import EDGE_MASK_STABILITY_KEYS
 from src.explanation.preprocess import build_dataset, filter_dataset
 from src.explanation.wrapper import GLMWrapper
 from src.glm import GraphTokenLM
@@ -49,51 +47,6 @@ AVERAGE_METRIC_FIELDNAMES = [
     "f1",
     *EDGE_MASK_STABILITY_KEYS,
 ]
-
-
-def _compute_sample_average_row(
-    sample_idx: int, stats: dict[str, float] | None, edge_masks: Iterable[torch.Tensor] | None
-) -> dict[str, float] | None:
-    """Compute averaged accuracy and stability metrics for a single sample."""
-    if not stats:
-        return None
-    count = int(stats.get("count", 0))
-    if count <= 0:
-        return None
-    answer_acc_sum = stats.get("answer_accuracy_sum", 0.0)
-    auroc_sum = stats.get("auroc_sum", 0.0)
-    auprc_sum = stats.get("auprc_sum", 0.0)
-    f1_sum = stats.get("f1_sum", 0.0)
-    row: dict[str, float] = {
-        "sample_index": sample_idx,
-        "answer_accuracy": answer_acc_sum / count,
-        "auroc": auroc_sum / count,
-        "auprc": auprc_sum / count,
-        "f1": f1_sum / count,
-    }
-    mask_list = list(edge_masks) if edge_masks is not None else []
-    stability = compute_edge_mask_stability_metrics_per_sample({sample_idx: mask_list}).get(sample_idx, {})
-    for key in EDGE_MASK_STABILITY_KEYS:
-        row[key] = stability.get(key, 0.0)
-    return row
-
-
-def _record_sample_average_metrics(
-    avg_log_path: str | None,
-    fieldnames: list[str] | None,
-    sample_idx: int,
-    stats: dict[str, float] | None,
-    edge_masks: Iterable[torch.Tensor] | None,
-) -> None:
-    """Append a per-sample averaged metrics row to the CSV log if possible."""
-    if avg_log_path is None or fieldnames is None:
-        return
-    row = _compute_sample_average_row(sample_idx, stats, edge_masks)
-    if row is None:
-        return
-    with open(avg_log_path, "a", newline="") as avg_file:
-        writer = csv.DictWriter(avg_file, fieldnames=fieldnames)
-        writer.writerow(row)
 
 
 def _init_distributed_if_needed() -> tuple[int, int, int, bool]:
