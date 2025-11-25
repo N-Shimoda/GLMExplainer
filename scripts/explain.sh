@@ -18,8 +18,8 @@ format_duration() {
 }
 
 for epochs in 200; do
-	for lr in 0.05 0.5; do
-		for edge_size in 96; do
+	for lr in 0.01; do
+		for edge_size in 0.005 0.05 0.5; do
 			for edge_ent in 1.0; do
 				cmd=(
 					torchrun --nproc_per_node=2 explain.py
