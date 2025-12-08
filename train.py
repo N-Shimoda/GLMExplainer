@@ -24,11 +24,27 @@ def is_main_process() -> bool:
     return int(os.environ.get("RANK", "0")) == 0
 
 
+def validate_args(args):
+    # Subsets
+    match args.dataset:
+        case "GraphQA":
+            valid_subsets = ["node_count", "edge_count", "cycle_check", "triangle_counting"]
+        case "MotifQA":
+            valid_subsets = ["house_check"]
+    if args.subset not in valid_subsets:
+        raise ValueError(f"Subset {args.subset} is not valid for dataset {args.dataset}.")
+
+    # Custom dataset
+    if args.use_custom_dataset and args.dataset != "GraphQA":
+        raise ValueError("--use-custom-dataset is only supported with GraphQA dataset.")
+
+
 def build_args(*, multitask: bool = False):
     p = argparse.ArgumentParser(description="Train GraphTokenLM on GraphQA or MotifQA dataset.")
 
     # General settings
     if not multitask:
+        p.add_argument("--dataset", type=str, default="GraphQA", choices=["GraphQA", "MotifQA"])
         p.add_argument(
             "--subset",
             type=str,
@@ -72,7 +88,9 @@ def build_args(*, multitask: bool = False):
     # Logging
     p.add_argument("--wandb", action="store_true", help="Use wandb logging")
 
+    # Parse and validate args
     args = p.parse_args()
+    validate_args(args)
 
     # Args for GraphTokenLMConfig and SFTConfig
     glm_args = {
@@ -142,7 +160,7 @@ def setup_run_context(subset: str, use_wandb: bool):
     return output_dir, date_str
 
 
-def build_dataset(
+def build_graphqa_dataset(
     subset: str, node_feat_dim: int, do_eval: bool = False, load_from_cache_file: bool = True
 ) -> tuple[Dataset, Dataset, Dataset | None]:
     """Build dataset for training and evaluation.
@@ -378,6 +396,7 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
     final_ckpt_dir : str
         Path to the final checkpoint directory produced after training.
     """
+    # Initialize model and tokenizer
     glm_cfg = GraphTokenLMConfig(**glm_args)
     model = GraphTokenLM(glm_cfg)
     tokenizer = AutoTokenizer.from_pretrained(glm_cfg.base_model, trust_remote_code=True)
@@ -415,6 +434,7 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
         "adafactor": "adafactor",
     }
 
+    # Setup SFTTrainer
     sft_config = SFTConfig(
         optim=hf_optim_map[optim_choice],
         completion_only_loss=True,
@@ -432,13 +452,11 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
         gradient_checkpointing=False,  # GraphTokenLM currently lacks gradient checkpoint support
         **sft_args,
     )
-
     collator = GraphQACollator(
         tokenizer=tokenizer,
         max_length=512,
         num_graph_tokens=glm_cfg.num_graph_tokens,
     )
-
     trainer = SFTTrainer(
         model=model,
         processing_class=tokenizer,
@@ -448,6 +466,7 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
         data_collator=collator,
     )
 
+    # Start training
     if is_main_process():
         print("***** Training *****")
     trainer.train()
@@ -506,27 +525,31 @@ def main():
     set_seed(42)
 
     # Training
-    if args.use_custom_dataset:
-        if is_main_process():
-            print("[INFO] Using custom dataset.")
-        train_ds, eval_ds, test_ds = build_custom_dataset(
-            args.subset,
-            glm_args["node_feat_dim"],
-            do_eval=args.do_eval,
-        )
-    elif args.subset in ["node_count", "edge_count", "cycle_check", "triangle_counting"]:
-        train_ds, eval_ds, test_ds = build_dataset(
-            args.subset,
-            glm_args["node_feat_dim"],
-            do_eval=args.do_eval,
-            load_from_cache_file=False,
-        )
-    else:
-        train_ds, eval_ds, test_ds = build_motif_dataset(
-            glm_args["node_feat_dim"],
-            do_eval=args.do_eval,
-            load_from_cache_file=False,
-        )
+    match args.dataset:
+        case "GraphQA":
+            # TODO: Merge build_custom_dataset into build_graphqa_dataset using certain collator logic
+            if args.use_custom_dataset:
+                if is_main_process():
+                    print("[INFO] Building dataset with custom prompt.")
+                train_ds, eval_ds, test_ds = build_custom_dataset(
+                    args.subset,
+                    glm_args["node_feat_dim"],
+                    do_eval=args.do_eval,
+                )
+            else:
+                train_ds, eval_ds, test_ds = build_graphqa_dataset(
+                    args.subset,
+                    glm_args["node_feat_dim"],
+                    do_eval=args.do_eval,
+                    load_from_cache_file=False,
+                )
+        case "MotifQA":
+            train_ds, eval_ds, test_ds = build_motif_dataset(
+                glm_args["node_feat_dim"],
+                do_eval=args.do_eval,
+                load_from_cache_file=False,
+            )
+
     # Save datasets locally as JSONL (only on the main process to avoid races)
     out_dir = os.path.join("ds_debug", args.subset)
     if is_main_process():
