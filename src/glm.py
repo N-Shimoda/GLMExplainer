@@ -19,7 +19,7 @@ class GraphTokenLMConfig(PretrainedConfig):
 
     def __init__(
         self,
-        base_model="Qwen/Qwen3-4B-Instruct-2507",
+        base_model="Qwen/Qwen3-4B-Base",
         gnn_type: Literal["GCN", "GAT", "GIN", "GraphSAGE"] = "GCN",
         node_feat_dim=8,
         pos_emb_dim=8,
