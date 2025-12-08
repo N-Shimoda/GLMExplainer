@@ -24,8 +24,9 @@ graphqa_subsets=(
 	# edge_count
 	# cycle_check
 	# triangle_counting
+	# node_degree
 	# reachability
-	node_degree
+	edge_existence
 )
 
 motifqa_subsets=(

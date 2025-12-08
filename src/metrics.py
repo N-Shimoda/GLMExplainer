@@ -21,6 +21,7 @@ def comp_accuracy(
         "reachability",
         "house_check",
         "node_degree",
+        "edge_existence",
     ],
     exact_match: bool = False,
 ) -> tuple[float, int, list[bool]]:
@@ -57,11 +58,12 @@ def comp_accuracy(
         "reachability",
         "house_check",
         "node_degree",
+        "edge_existence",
     ]:
         raise NotImplementedError(f"Unsupported subset: {subset}")
 
     match subset:
-        case "cycle_check" | "house_check" | "reachability":
+        case "cycle_check" | "house_check" | "reachability" | "edge_existence":
             if exact_match:
                 normalized_preds = [_normalize_text(p) for p in preds]
                 normalized_refs = [_normalize_text(r) for r in refs]
