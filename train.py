@@ -25,7 +25,7 @@ def is_main_process() -> bool:
 
 
 def build_args(*, multitask: bool = False):
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser(description="Train GraphTokenLM on GraphQA or MotifQA dataset.")
 
     # General settings
     if not multitask:
@@ -343,6 +343,41 @@ def build_custom_dataset(
 
 
 def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
+    """
+    Fine-tune a GraphToken language model on graph QA data using TRL's SFTTrainer.
+
+    Parameters
+    ----------
+    train_ds : datasets.Dataset
+        Training split in prompt-completion format. Each element must be a
+        mapping with keys:
+        - ``prompt`` (str): Instruction or question text.
+        - ``completion`` (str): Target answer text.
+        - ``graph`` (dict): Graph payload convertible to ``torch_geometric.data.Data``
+          via :func:`src.collator.pyg_from_dict`. Expected fields are
+          ``x`` (FloatTensor of shape ``(num_nodes, k)``), ``edge_index`` (LongTensor
+          of shape ``(2, num_edges)`` with 0-based consecutive node indices), and
+          optional ``num_nodes`` or ``edge_attr``. Extra keys are ignored.
+    eval_ds : datasets.Dataset
+        Validation split with the same schema as ``train_ds``. Can be ``None`` to
+        skip evaluation steps.
+    output_dir : str
+        Directory where checkpoints and trainer state will be written.
+    glm_args : dict
+        Keyword arguments forwarded to :class:`src.glm.GraphTokenLMConfig`.
+    sft_args : dict
+        Keyword arguments forwarded to :class:`trl.SFTConfig`. ``optim`` and
+        save-related flags are consumed here before building the config.
+    args : argparse.Namespace
+        Parsed CLI arguments containing logging options (e.g., wandb flag).
+
+    Returns
+    -------
+    model : GraphTokenLM
+        The fine-tuned model instance (on the local process).
+    final_ckpt_dir : str
+        Path to the final checkpoint directory produced after training.
+    """
     glm_cfg = GraphTokenLMConfig(**glm_args)
     model = GraphTokenLM(glm_cfg)
     tokenizer = AutoTokenizer.from_pretrained(glm_cfg.base_model, trust_remote_code=True)
@@ -362,24 +397,18 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
         print("[INFO] Explicitly setting pad_token to eos_token")
         tokenizer.pad_token = tokenizer.eos_token
 
-    collator = GraphQACollator(
-        tokenizer=tokenizer,
-        max_length=512,
-        num_graph_tokens=glm_cfg.num_graph_tokens,
-    )
-
+    # Compute save interval steps
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     micro_batches_per_epoch = ceil(len(train_ds) / (sft_args["per_device_train_batch_size"] * world_size))
     steps_per_epoch = ceil(micro_batches_per_epoch / sft_args["gradient_accumulation_steps"])
 
     save_intermediate_models = sft_args.pop("save_intermediate_models")
     save_interval_epochs = sft_args.pop("save_interval_epochs")
-    optim_choice = sft_args.pop("optim")
-
     if save_intermediate_models and is_main_process():
         print(f"[INFO] Intermediate models will be saved every {save_interval_epochs} epochs.")
 
-    # Map CLI choices to HF/TRL optimizer identifiers
+    # Prepare optimizer mapping
+    optim_choice = sft_args.pop("optim")
     hf_optim_map = {
         "lion": "lion_32bit",
         "adamw": "adamw_torch",
@@ -400,8 +429,14 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
         remove_unused_columns=False,
         ddp_backend="nccl",  # DDP
         ddp_find_unused_parameters=False,  # since all params are used in each forward pass
-        gradient_checkpointing=False,  # GraphTokenLM currently lacks gradient checkpoint support.
+        gradient_checkpointing=False,  # GraphTokenLM currently lacks gradient checkpoint support
         **sft_args,
+    )
+
+    collator = GraphQACollator(
+        tokenizer=tokenizer,
+        max_length=512,
+        num_graph_tokens=glm_cfg.num_graph_tokens,
     )
 
     trainer = SFTTrainer(
