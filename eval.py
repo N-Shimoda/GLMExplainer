@@ -126,7 +126,7 @@ def build_dataset(subset: str, split: str, node_feat_dim: int):
         case "house_check":
             test_raw = load_dataset("naos-ku/motif-qa", split=split)
             test_ds = test_raw.map(
-                lambda x: add_graph_column(x, k=node_feat_dim, ds_name="motif-qa"),
+                lambda x: add_graph_column(x, k=node_feat_dim, ds_name="MotifQA"),
                 remove_columns=["response", "nodes", "edges", "nnodes", "nedges"],
                 desc="add_graph_column(test)",
             )

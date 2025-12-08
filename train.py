@@ -13,8 +13,8 @@ from trl import SFTConfig, SFTTrainer
 
 import wandb
 from eval import collect_result, eval_model, get_max_new_tokens
-from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 from src.collator import GraphQACollator
+from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 from src.ds_stats import completion_length_report
 from src.glm import GraphTokenLM, GraphTokenLMConfig
 from src.preprocess import add_graph_column
@@ -56,7 +56,7 @@ def build_args(*, multitask: bool = False):
     p.add_argument("--use-custom-dataset", action="store_true", help="Use custom dataset with extended answer labels.")
 
     # Model architecture
-    p.add_argument("--base-model", type=str, default="Qwen/Qwen3-4B-Instruct-2507")
+    p.add_argument("--base-model", type=str, default="Qwen/Qwen3-4B-Base")
     p.add_argument("--gnn-type", type=str, default="GCN", choices=["GCN", "GAT", "GIN", "GraphSAGE"])
     p.add_argument("--num-max-nodes", type=int, default=20)
     p.add_argument("--num-graph-tokens", type=int, default=4)
@@ -131,7 +131,7 @@ def build_args(*, multitask: bool = False):
     return glm_args, sft_args, args
 
 
-def setup_run_context(dataset: str, subset: str, use_wandb: bool):
+def setup_run_context(dataset: str, subset: str, use_wandb: bool, glm_args: dict) -> tuple[str, str]:
     """Setup output directory and initialize wandb if needed.
 
     Parameters
@@ -142,6 +142,8 @@ def setup_run_context(dataset: str, subset: str, use_wandb: bool):
         Subset name for the current run.
     use_wandb : bool
         Whether to use wandb logging.
+    glm_args : dict
+        Arguments for GraphTokenLMConfig.
 
     Returns
     -------
@@ -156,9 +158,9 @@ def setup_run_context(dataset: str, subset: str, use_wandb: bool):
     if use_wandb and is_main_process():
         match dataset:
             case "MotifQA":
-                wandb.init(project="MotifQA-GLM", name=run_name)
+                wandb.init(project="MotifQA-GLM", name=run_name, config=glm_args)
             case "GraphQA":
-                wandb.init(project="GraphQA-GLM", name=run_name)
+                wandb.init(project="GraphQA-GLM", name=run_name, config=glm_args)
 
     return output_dir, date_str
 
@@ -241,7 +243,7 @@ def build_motif_dataset(
     """
 
     def modify_dataset(example):
-        return add_graph_column(example, k=node_feat_dim, ds_name="motif-qa")
+        return add_graph_column(example, k=node_feat_dim, ds_name="MotifQA")
 
     # Load and preprocess the dataset
     splits = {"train": "train", "validation": "validation"}
@@ -522,7 +524,7 @@ def main():
         print(f"Subset: {args.subset}")
 
     # Wandb initialization, output directory
-    output_dir, date_str = setup_run_context(args.dataset, args.subset, args.wandb)
+    output_dir, date_str = setup_run_context(args.dataset, args.subset, args.wandb, glm_args)
 
     # Fix seed for reproducibility
     set_seed(42)

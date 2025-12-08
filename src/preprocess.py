@@ -137,7 +137,7 @@ def create_pyg_dict(nodes: List[int], edges: List[Tuple[int, int]], k: int) -> D
     }
 
 
-def add_graph_column(example, k: int = 4, ds_name: Literal["GraphQA", "motif-qa"] = "GraphQA") -> Dict[str, Any]:
+def add_graph_column(example, k: int = 4, ds_name: Literal["GraphQA", "MotifQA"] = "GraphQA") -> Dict[str, Any]:
     """Enrich an example with graph metadata parsed from the question.
 
     Parameters
@@ -148,8 +148,8 @@ def add_graph_column(example, k: int = 4, ds_name: Literal["GraphQA", "motif-qa"
     k : int, default=4
         Number of Laplacian positional embedding dimensions to include in the
         generated graph features.
-    ds_name : {'GraphQA', 'motif-qa'}, default='GraphQA'
-        Type of dataset to process. Both 'GraphQA' and 'motif-qa' are supported.
+    ds_name : {'GraphQA', 'MotifQA'}, default='GraphQA'
+        Type of dataset to process. Both 'GraphQA' and 'MotifQA' are supported.
 
     Returns
     -------
@@ -164,7 +164,7 @@ def add_graph_column(example, k: int = 4, ds_name: Literal["GraphQA", "motif-qa"
             example["prompt"] = example["task_description"]
             example["completion"] = example["answer"].strip()
             example["graph"] = create_pyg_dict(nodes, edges, k=k)  # k: dimension of LPE
-        case "motif-qa":
+        case "MotifQA":
             example["prompt"] = f"Q: {example['prompt']}\nA:"
             example["completion"] = example["response"]
             example["graph"] = create_pyg_dict(example["nodes"], example["edges"], k=k)
