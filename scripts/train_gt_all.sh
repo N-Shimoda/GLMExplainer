@@ -19,24 +19,35 @@ log() {
 	echo "[$ts] $*" | tee -a "$LOG_FILE"
 }
 
-subsets=(
+graphqa_subsets=(
 	# node_count
 	# edge_count
 	# cycle_check
 	# triangle_counting
-	house_check
+	reachability
 )
 
-gnns=("GCN" "GAT" "GIN" "GraphSAGE")
+motifqa_subsets=(
+	# house_check
+)
 
-for subset in "${subsets[@]}"; do
+gnns=(
+	"GCN"
+	# "GAT"
+	# "GIN"
+	# "GraphSAGE"
+)
+
+run_train_loop() {
+	local dataset="$1"
+	local subset="$2"
 	for gnn in "${gnns[@]}"; do
-		log "[INFO] Starting training for subset='${subset}' with GNN='${gnn}'"
+		log "[INFO] Starting training for subset='${subset}' (dataset='${dataset}') with GNN='${gnn}'"
 		cmd=(
-			torchrun --nproc_per_node=2 train.py --subset "${subset}"
+			torchrun --nproc_per_node=2 train.py --dataset "${dataset}" --subset "${subset}"
 			--num-graph-tokens 4 --node-feat-dim 8 --pos-emb-dim 8
 			--gnn-hidden-dim 256 --gnn-out-dim 512 --num-gnn-layers 4
-			--epochs 12
+			--epochs 6
 			--gnn-type "${gnn}"
 			# --optim "lion" --lr 0.01
 			# --lr-scheduler-type "linear" --warmup-ratio 0.05
@@ -63,5 +74,13 @@ for subset in "${subsets[@]}"; do
 		fi
 		echo
 	done
+}
+
+for subset in "${graphqa_subsets[@]}"; do
+	run_train_loop "GraphQA" "$subset"
+done
+
+for subset in "${motifqa_subsets[@]}"; do
+	run_train_loop "MotifQA" "$subset"
 done
 log "[INFO] ALL subsets finished successfully."
