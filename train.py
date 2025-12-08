@@ -4,6 +4,7 @@ from datetime import datetime
 from math import ceil
 from typing import Optional
 
+import torch
 import torch.distributed as dist
 from datasets import load_dataset
 from datasets.arrow_dataset import Dataset
@@ -23,6 +24,16 @@ from src.preprocess import add_graph_column
 def is_main_process() -> bool:
     # RANK = 0 is the main process
     return int(os.environ.get("RANK", "0")) == 0
+
+
+def _safe_barrier():
+    """Call dist.barrier with device_ids when using NCCL to silence warnings."""
+    if not (dist.is_available() and dist.is_initialized()):
+        return
+    if dist.get_backend() == "nccl" and torch.cuda.is_available():
+        dist.barrier(device_ids=[torch.cuda.current_device()])
+    else:
+        dist.barrier()
 
 
 def validate_args(args):
@@ -156,11 +167,12 @@ def setup_run_context(dataset: str, subset: str, use_wandb: bool, glm_args: dict
     run_name = f"{subset}_{date_str}"
     output_dir = os.path.join("outputs", subset, date_str)
     if use_wandb and is_main_process():
+        config = {"dataset": dataset, "subset": subset, "glm_args": glm_args}
         match dataset:
             case "MotifQA":
-                wandb.init(project="MotifQA-GLM", name=run_name, config=glm_args)
+                wandb.init(project="MotifQA-GLM", name=run_name, config=config)
             case "GraphQA":
-                wandb.init(project="GraphQA-GLM", name=run_name, config=glm_args)
+                wandb.init(project="GraphQA-GLM", name=run_name, config=config)
 
     return output_dir, date_str
 
@@ -211,8 +223,7 @@ def build_graphqa_dataset(
     test_ds = processed_ds["test"] if do_eval else None
 
     # Sync processes if running with DDP
-    if dist.is_available() and dist.is_initialized():
-        dist.barrier()
+    _safe_barrier()
 
     return train_ds, eval_ds, test_ds
 
@@ -490,7 +501,7 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
 
 def eval_ddp(model, subset: str, test_ds: Dataset, max_new_tokens: int, date_str: str, use_wandb: bool):
     if dist.is_initialized():
-        dist.barrier()
+        _safe_barrier()
         world_size = dist.get_world_size()
         rank = dist.get_rank()
         local_test_ds = test_ds.shard(num_shards=world_size, index=rank)
