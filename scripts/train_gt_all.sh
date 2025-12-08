@@ -20,12 +20,12 @@ log() {
 }
 
 graphqa_subsets=(
-	# node_count
-	# edge_count
-	# cycle_check
-	# triangle_counting
-	# node_degree
-	# reachability
+	node_count
+	edge_count
+	cycle_check
+	triangle_counting
+	node_degree
+	reachability
 	edge_existence
 )
 
@@ -34,10 +34,11 @@ motifqa_subsets=(
 )
 
 gnns=(
-	"GCN"
+	# "GCN"
 	# "GAT"
 	# "GIN"
 	# "GraphSAGE"
+	"GraphTransformer"
 )
 
 run_train_loop() {

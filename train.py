@@ -68,7 +68,12 @@ def build_args(*, multitask: bool = False):
 
     # Model architecture
     p.add_argument("--base-model", type=str, default="Qwen/Qwen3-4B-Base")
-    p.add_argument("--gnn-type", type=str, default="GCN", choices=["GCN", "GAT", "GIN", "GraphSAGE"])
+    p.add_argument(
+        "--gnn-type",
+        type=str,
+        default="GCN",
+        choices=["GCN", "GAT", "GIN", "GraphSAGE", "GraphTransformer"],
+    )
     p.add_argument("--num-max-nodes", type=int, default=20)
     p.add_argument("--num-graph-tokens", type=int, default=4)
     p.add_argument("--node-feat-dim", type=int, default=8)
