@@ -10,6 +10,7 @@ from torch_geometric.data import Data as PygData
 from tqdm import tqdm
 from transformers import AutoTokenizer, GenerationConfig
 
+from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 from src.ckpt import _resolve_ckpt_path
 from src.glm import GraphTokenLM
 from src.metrics import comp_accuracy
@@ -24,7 +25,7 @@ def build_args(*, multitask: bool = False):
         p.add_argument(
             "--subset",
             type=str,
-            choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "house_check"],
+            choices=GRAPHQA_SUBSETS + MOTIFQA_SUBSETS,
             default="edge_count",
         )
     p.add_argument("--use-custom-dataset", action="store_true", default=False)
@@ -107,7 +108,7 @@ def create_pyg_batch(
 
 def build_dataset(subset: str, split: str, node_feat_dim: int):
     match subset:
-        case "node_count" | "edge_count" | "cycle_check" | "triangle_counting":
+        case "node_count" | "edge_count" | "cycle_check" | "triangle_counting" | "reachability":
             test_raw = load_dataset("baharef/GraphQA", subset, split=f"zero_shot_{split}")
             test_ds = test_raw.map(
                 lambda x: add_graph_column(x, k=node_feat_dim),
@@ -136,9 +137,16 @@ def get_max_new_tokens(subset: str, use_custom: bool = False) -> int:
     max_new_tokens_dict = (
         {"node_count": 96, "edge_count": 256, "cycle_check": 512, "triangle_counting": 256}
         if use_custom
-        else {"node_count": 4, "edge_count": 4, "cycle_check": 8, "triangle_counting": 4, "house_check": 24}
+        else {
+            "node_count": 4,
+            "edge_count": 4,
+            "cycle_check": 8,
+            "triangle_counting": 4,
+            "reachability": 4,
+            "house_check": 24,
+        }
     )
-    return max_new_tokens_dict[subset]
+    return max_new_tokens_dict.get(subset, 32)
 
 
 @torch.no_grad()

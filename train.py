@@ -13,6 +13,7 @@ from trl import SFTConfig, SFTTrainer
 
 import wandb
 from eval import collect_result, eval_model, get_max_new_tokens
+from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 from src.collator import GraphQACollator
 from src.ds_stats import completion_length_report
 from src.glm import GraphTokenLM, GraphTokenLMConfig
@@ -28,9 +29,9 @@ def validate_args(args):
     # Subsets
     match args.dataset:
         case "GraphQA":
-            valid_subsets = ["node_count", "edge_count", "cycle_check", "triangle_counting"]
+            valid_subsets = GRAPHQA_SUBSETS
         case "MotifQA":
-            valid_subsets = ["house_check"]
+            valid_subsets = MOTIFQA_SUBSETS
     if args.subset not in valid_subsets:
         raise ValueError(f"Subset {args.subset} is not valid for dataset {args.dataset}.")
 
@@ -48,8 +49,8 @@ def build_args(*, multitask: bool = False):
         p.add_argument(
             "--subset",
             type=str,
-            choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "house_check"],
             default="edge_count",
+            choices=GRAPHQA_SUBSETS + MOTIFQA_SUBSETS,
         )
     p.add_argument("--do-eval", action="store_true", help="Run evaluation after training")
     p.add_argument("--use-custom-dataset", action="store_true", help="Use custom dataset with extended answer labels.")
@@ -130,11 +131,13 @@ def build_args(*, multitask: bool = False):
     return glm_args, sft_args, args
 
 
-def setup_run_context(subset: str, use_wandb: bool):
+def setup_run_context(dataset: str, subset: str, use_wandb: bool):
     """Setup output directory and initialize wandb if needed.
 
     Parameters
     ----------
+    dataset : str
+        Dataset name for the current run.
     subset : str
         Subset name for the current run.
     use_wandb : bool
@@ -151,10 +154,10 @@ def setup_run_context(subset: str, use_wandb: bool):
     run_name = f"{subset}_{date_str}"
     output_dir = os.path.join("outputs", subset, date_str)
     if use_wandb and is_main_process():
-        match subset:
-            case "house_check":
+        match dataset:
+            case "MotifQA":
                 wandb.init(project="MotifQA-GLM", name=run_name)
-            case _:
+            case "GraphQA":
                 wandb.init(project="GraphQA-GLM", name=run_name)
 
     return output_dir, date_str
@@ -519,7 +522,7 @@ def main():
         print(f"Subset: {args.subset}")
 
     # Wandb initialization, output directory
-    output_dir, date_str = setup_run_context(args.subset, args.wandb)
+    output_dir, date_str = setup_run_context(args.dataset, args.subset, args.wandb)
 
     # Fix seed for reproducibility
     set_seed(42)
@@ -527,7 +530,6 @@ def main():
     # Training
     match args.dataset:
         case "GraphQA":
-            # TODO: Merge build_custom_dataset into build_graphqa_dataset using certain collator logic
             if args.use_custom_dataset:
                 if is_main_process():
                     print("[INFO] Building dataset with custom prompt.")

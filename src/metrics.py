@@ -41,11 +41,11 @@ def comp_accuracy(
     correct_mask : list[bool]
         Boolean mask indicating whether each prediction is correct.
     """
-    if subset not in ["cycle_check", "node_count", "edge_count", "triangle_counting", "house_check"]:
+    if subset not in ["cycle_check", "node_count", "edge_count", "triangle_counting", "reachability", "house_check"]:
         raise NotImplementedError(f"Unsupported subset: {subset}")
 
     match subset:
-        case "cycle_check" | "house_check":
+        case "cycle_check" | "house_check" | "reachability":
             if exact_match:
                 normalized_preds = [_normalize_text(p) for p in preds]
                 normalized_refs = [_normalize_text(r) for r in refs]
