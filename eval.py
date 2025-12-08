@@ -10,8 +10,8 @@ from torch_geometric.data import Data as PygData
 from tqdm import tqdm
 from transformers import AutoTokenizer, GenerationConfig
 
-from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 from src.ckpt import _resolve_ckpt_path
+from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 from src.glm import GraphTokenLM
 from src.metrics import comp_accuracy
 from src.preprocess import add_graph_column
@@ -170,7 +170,9 @@ def eval_model(model: GraphTokenLM, test_ds, batch_size: int, max_new_tokens: in
         A list of dictionaries containing the evaluation results with keys "question", "preds", and "answer".
     """
     model.eval()
-    tokenizer = AutoTokenizer.from_pretrained(model.config.base_model)
+    tokenizer = AutoTokenizer.from_pretrained(model.config.base_model, trust_remote_code=True)
+    tokenizer.padding_side = "left"
+
     gen_cfg = GenerationConfig(
         max_new_tokens=max_new_tokens,
         do_sample=True,
