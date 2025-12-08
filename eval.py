@@ -108,7 +108,7 @@ def create_pyg_batch(
 
 def build_dataset(subset: str, split: str, node_feat_dim: int):
     match subset:
-        case "node_count" | "edge_count" | "cycle_check" | "triangle_counting" | "reachability":
+        case "node_count" | "edge_count" | "cycle_check" | "triangle_counting" | "reachability" | "node_degree":
             test_raw = load_dataset("baharef/GraphQA", subset, split=f"zero_shot_{split}")
             test_ds = test_raw.map(
                 lambda x: add_graph_column(x, k=node_feat_dim),
@@ -143,6 +143,7 @@ def get_max_new_tokens(subset: str, use_custom: bool = False) -> int:
             "cycle_check": 8,
             "triangle_counting": 4,
             "reachability": 4,
+            "node_degree": 4,
             "house_check": 24,
         }
     )

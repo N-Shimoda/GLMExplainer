@@ -428,9 +428,6 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
         f"bos_token_id: {glm_cfg.bos_token_id}, "
         f"pad_token_id: {glm_cfg.pad_token_id}"
     )
-    if tokenizer.pad_token is None:
-        print("[INFO] Explicitly setting pad_token to eos_token")
-        tokenizer.pad_token = tokenizer.eos_token
 
     # Compute save interval steps
     world_size = int(os.environ.get("WORLD_SIZE", "1"))

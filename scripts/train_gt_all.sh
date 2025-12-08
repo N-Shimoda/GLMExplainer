@@ -20,15 +20,16 @@ log() {
 }
 
 graphqa_subsets=(
-	node_count
-	edge_count
-	cycle_check
-	triangle_counting
-	reachability
+	# node_count
+	# edge_count
+	# cycle_check
+	# triangle_counting
+	# reachability
+	node_degree
 )
 
 motifqa_subsets=(
-	house_check
+	# house_check
 )
 
 gnns=(
