@@ -20,15 +20,15 @@ log() {
 }
 
 graphqa_subsets=(
-	# node_count
-	# edge_count
-	# cycle_check
-	# triangle_counting
+	node_count
+	edge_count
+	cycle_check
+	triangle_counting
 	reachability
 )
 
 motifqa_subsets=(
-	# house_check
+	house_check
 )
 
 gnns=(
@@ -48,7 +48,7 @@ run_train_loop() {
 			--dataset "${dataset}" --subset "${subset}"
 			--num-graph-tokens 4 --node-feat-dim 8 --pos-emb-dim 8
 			--gnn-hidden-dim 256 --gnn-out-dim 512 --num-gnn-layers 4
-			--epochs 6
+			--epochs 12
 			--gnn-type "${gnn}"
 			# --optim "lion" --lr 0.01
 			# --lr-scheduler-type "linear" --warmup-ratio 0.05
