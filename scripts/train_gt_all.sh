@@ -44,7 +44,8 @@ run_train_loop() {
 	for gnn in "${gnns[@]}"; do
 		log "[INFO] Starting training for subset='${subset}' (dataset='${dataset}') with GNN='${gnn}'"
 		cmd=(
-			torchrun --nproc_per_node=2 train.py --dataset "${dataset}" --subset "${subset}"
+			torchrun --nproc_per_node=2 train.py
+			--dataset "${dataset}" --subset "${subset}"
 			--num-graph-tokens 4 --node-feat-dim 8 --pos-emb-dim 8
 			--gnn-hidden-dim 256 --gnn-out-dim 512 --num-gnn-layers 4
 			--epochs 6
