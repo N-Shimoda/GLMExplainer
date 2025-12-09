@@ -20,10 +20,10 @@ log() {
 }
 
 graphqa_subsets=(
-	node_count
-	edge_count
-	cycle_check
-	triangle_counting
+	# node_count
+	# edge_count
+	# cycle_check
+	# triangle_counting
 	node_degree
 	reachability
 	edge_existence
@@ -35,56 +35,58 @@ motifqa_subsets=(
 
 gnns=(
 	# "GCN"
-	# "GAT"
-	# "GIN"
-	# "GraphSAGE"
-	"GraphTransformer"
+	"GAT"
+	"GIN"
+	"GraphSAGE"
+	# "GraphTransformer"
 )
 
 run_train_loop() {
 	local dataset="$1"
 	local subset="$2"
-	for gnn in "${gnns[@]}"; do
-		log "[INFO] Starting training for subset='${subset}' (dataset='${dataset}') with GNN='${gnn}'"
-		cmd=(
-			torchrun --nproc_per_node=2 train.py
-			--dataset "${dataset}" --subset "${subset}"
-			--num-graph-tokens 4 --node-feat-dim 8 --pos-emb-dim 8
-			--gnn-hidden-dim 256 --gnn-out-dim 512 --num-gnn-layers 4
-			--epochs 12
-			--gnn-type "${gnn}"
-			# --optim "lion" --lr 0.01
-			# --lr-scheduler-type "linear" --warmup-ratio 0.05
-			--optim "adamw" --lr 0.0075 --weight-decay 0.01
-			--lr-scheduler-type "cosine" --warmup-ratio 0.05
-			--do-eval --wandb
-		)
-		log "[START] ${cmd[*]}"
-		start_ts=$(date +%s)
+	# for gnn in "${gnns[@]}"; do
+	log "[INFO] Starting training for subset='${subset}' (dataset='${dataset}') with GNN='${gnn}'"
+	cmd=(
+		torchrun --nproc_per_node=2 train.py
+		--dataset "${dataset}" --subset "${subset}"
+		--num-graph-tokens 4 --node-feat-dim 8 --pos-emb-dim 8
+		--gnn-hidden-dim 256 --gnn-out-dim 512 --num-gnn-layers 4
+		--epochs 12
+		--gnn-type "${gnn}"
+		# --optim "lion" --lr 0.01
+		# --lr-scheduler-type "linear" --warmup-ratio 0.05
+		--optim "adamw" --lr 0.0075 --weight-decay 0.01
+		--lr-scheduler-type "cosine" --warmup-ratio 0.05
+		--do-eval --wandb
+	)
+	log "[START] ${cmd[*]}"
+	start_ts=$(date +%s)
 
-		# Run torchrun and get exit code (avoid set -e effect)
-		set +e
-		"${cmd[@]}"
-		rc=$?
-		set -e
+	# Run torchrun and get exit code (avoid set -e effect)
+	set +e
+	"${cmd[@]}"
+	rc=$?
+	set -e
 
-		end_ts=$(date +%s)
-		dur=$((end_ts - start_ts))
+	end_ts=$(date +%s)
+	dur=$((end_ts - start_ts))
 
-		if [[ $rc -eq 0 ]]; then
-			log "[COMPLETED] subset=${subset} duration=${dur}s"
-		else
-			log "[ERROR] subset=${subset} rc=${rc} duration=${dur}s"
-		fi
-		echo
-	done
+	if [[ $rc -eq 0 ]]; then
+		log "[COMPLETED] subset=${subset} duration=${dur}s"
+	else
+		log "[ERROR] subset=${subset} rc=${rc} duration=${dur}s"
+	fi
+	echo
+	# done
 }
 
-for subset in "${graphqa_subsets[@]}"; do
-	run_train_loop "GraphQA" "$subset"
-done
+for gnn in "${gnns[@]}"; do
+	for subset in "${graphqa_subsets[@]}"; do
+		run_train_loop "GraphQA" "$subset"
+	done
 
-for subset in "${motifqa_subsets[@]}"; do
-	run_train_loop "MotifQA" "$subset"
+	for subset in "${motifqa_subsets[@]}"; do
+		run_train_loop "MotifQA" "$subset"
+	done
 done
 log "[INFO] ALL subsets finished successfully."
