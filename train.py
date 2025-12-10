@@ -421,18 +421,6 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
     glm_cfg = GraphTokenLMConfig(**glm_args)
     model = GraphTokenLM(glm_cfg)
     tokenizer = AutoTokenizer.from_pretrained(glm_cfg.base_model, trust_remote_code=True)
-    print(
-        "IDs from tokenizer:\n"
-        f"eos_token: {tokenizer.eos_token}, "
-        f"bos_token: {tokenizer.bos_token}, "
-        f"pad_token: {tokenizer.pad_token}"
-    )
-    print(
-        "IDs from GraphTokenLMConfig:\n"
-        f"eos_token_id: {glm_cfg.eos_token_id}, "
-        f"bos_token_id: {glm_cfg.bos_token_id}, "
-        f"pad_token_id: {glm_cfg.pad_token_id}"
-    )
 
     # Compute save interval steps
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
