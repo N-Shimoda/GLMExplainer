@@ -184,7 +184,7 @@ def setup_run_context(dataset: str, subset: str, use_wandb: bool, glm_args: dict
 
 def build_graphqa_dataset(
     subset: str, node_feat_dim: int, do_eval: bool = False, load_from_cache_file: bool = True
-) -> tuple[Dataset, Dataset, Dataset | None]:
+) -> tuple[Dataset, Dataset, Dataset | None, int]:
     """Build dataset for training and evaluation.
 
     Parameters
@@ -206,6 +206,8 @@ def build_graphqa_dataset(
         Evaluation dataset with `prompt`, `completion`, and `graph` columns.
     test_ds : Dataset or None
         Test dataset if `do_eval` is True, otherwise None.
+    num_max_nodes : int
+        Maximum number of nodes across all graphs in the dataset.
     """
 
     def modify_dataset(example):
@@ -214,8 +216,8 @@ def build_graphqa_dataset(
     splits = {"train": "zero_shot_train", "validation": "zero_shot_validation"}
     if do_eval:
         splits["test"] = "zero_shot_test"
-
     raw_ds = load_dataset("baharef/GraphQA", subset, split=splits)
+
     processed_ds = raw_ds.map(
         modify_dataset,
         remove_columns=["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"],
@@ -230,12 +232,13 @@ def build_graphqa_dataset(
     # Sync processes if running with DDP
     _safe_barrier()
 
-    return train_ds, eval_ds, test_ds
+    num_max_nodes = 20
+    return train_ds, eval_ds, test_ds, num_max_nodes
 
 
 def build_motif_dataset(
     subset: str, node_feat_dim: int, do_eval: bool = False, load_from_cache_file: bool = True
-) -> tuple[Dataset, Dataset, Optional[Dataset]]:
+) -> tuple[Dataset, Dataset, Optional[Dataset], int]:
     """Build MotifQA dataset for training and evaluation.
 
     Parameters
@@ -257,7 +260,8 @@ def build_motif_dataset(
         Evaluation dataset with `prompt`, `completion`, and `graph` columns.
     test_ds : Dataset | None
         Test dataset with `prompt`, `completion`, and `graph` columns, or None if not needed.
-
+    num_max_nodes : int
+        Maximum number of nodes across all graphs in the dataset.
     """
 
     def modify_dataset(example):
@@ -268,6 +272,10 @@ def build_motif_dataset(
     if do_eval:
         splits["test"] = "test"
     raw_ds = load_dataset("naos-ku/motif-qa", subset, split=splits)
+
+    # Compute maximum node count
+    nnodes_lists = [raw_ds[split]["nnodes"] for split in splits]
+    num_max_nodes = max([max(nnodes_list) for nnodes_list in nnodes_lists])
 
     processed_ds = raw_ds.map(
         modify_dataset,
@@ -280,12 +288,12 @@ def build_motif_dataset(
     eval_ds = processed_ds["validation"]
     test_ds = processed_ds["test"] if do_eval else None
 
-    return train_ds, eval_ds, test_ds
+    return train_ds, eval_ds, test_ds, num_max_nodes
 
 
 def build_custom_dataset(
     subset: str, node_feat_dim: int, do_eval: bool = False
-) -> tuple[Dataset, Dataset, Dataset | None]:
+) -> tuple[Dataset, Dataset, Dataset | None, int]:
     """Build custom dataset for training and evaluation.
 
     Parameters
@@ -305,6 +313,8 @@ def build_custom_dataset(
         Evaluation dataset with `prompt`, `completion`, and `graph` columns.
     test_ds : Dataset or None
         Test dataset if `do_eval` is True, otherwise None.
+    num_max_nodes : int
+        Maximum number of nodes across all graphs in the dataset.
     """
     ds_dict = load_dataset(
         "json",
@@ -380,7 +390,8 @@ def build_custom_dataset(
     if is_main_process():
         completion_length_report(ds_dict, subset, main_process=is_main_process())
 
-    return ds_dict["train"], ds_dict["validation"], ds_dict["test"] if do_eval else None
+    num_max_nodes = 20
+    return ds_dict["train"], ds_dict["validation"], ds_dict["test"] if do_eval else None, num_max_nodes
 
 
 def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
@@ -538,25 +549,32 @@ def main():
             if args.use_custom_dataset:
                 if is_main_process():
                     print("[INFO] Building dataset with custom prompt.")
-                train_ds, eval_ds, test_ds = build_custom_dataset(
+                train_ds, eval_ds, test_ds, num_max_nodes = build_custom_dataset(
                     args.subset,
                     glm_args["node_feat_dim"],
                     do_eval=args.do_eval,
                 )
             else:
-                train_ds, eval_ds, test_ds = build_graphqa_dataset(
+                train_ds, eval_ds, test_ds, num_max_nodes = build_graphqa_dataset(
                     args.subset,
                     glm_args["node_feat_dim"],
                     do_eval=args.do_eval,
                     load_from_cache_file=False,
                 )
         case "MotifQA":
-            train_ds, eval_ds, test_ds = build_motif_dataset(
+            train_ds, eval_ds, test_ds, num_max_nodes = build_motif_dataset(
                 args.subset,
                 glm_args["node_feat_dim"],
                 do_eval=args.do_eval,
                 load_from_cache_file=False,
             )
+
+    # Update maximum node count if needed
+    if num_max_nodes > glm_args["num_max_nodes"]:
+        glm_args["num_max_nodes"] = num_max_nodes
+        if is_main_process():
+            wandb.config.update({"num_max_nodes": num_max_nodes})
+            print(f"[INFO] Updated glm_args['num_max_nodes'] as {num_max_nodes}.")
 
     # Save datasets locally as JSONL (only on the main process to avoid races)
     out_dir = os.path.join("ds_debug", args.subset)
