@@ -234,12 +234,14 @@ def build_graphqa_dataset(
 
 
 def build_motif_dataset(
-    node_feat_dim: int, do_eval: bool = False, load_from_cache_file: bool = True
+    subset: str, node_feat_dim: int, do_eval: bool = False, load_from_cache_file: bool = True
 ) -> tuple[Dataset, Dataset, Optional[Dataset]]:
-    """Build house motif dataset for training and evaluation.
+    """Build MotifQA dataset for training and evaluation.
 
     Parameters
     ----------
+    subset : str
+        MotifQA subset name.
     node_feat_dim : int
         Dimensionality of node features (k in Laplacian PE).
     do_eval : bool, default=False
@@ -265,7 +267,7 @@ def build_motif_dataset(
     splits = {"train": "train", "validation": "validation"}
     if do_eval:
         splits["test"] = "test"
-    raw_ds = load_dataset("naos-ku/motif-qa", "yes_no", split=splits)
+    raw_ds = load_dataset("naos-ku/motif-qa", subset, split=splits)
 
     processed_ds = raw_ds.map(
         modify_dataset,
@@ -550,6 +552,7 @@ def main():
                 )
         case "MotifQA":
             train_ds, eval_ds, test_ds = build_motif_dataset(
+                args.subset,
                 glm_args["node_feat_dim"],
                 do_eval=args.do_eval,
                 load_from_cache_file=False,

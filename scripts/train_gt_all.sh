@@ -30,7 +30,9 @@ graphqa_subsets=(
 )
 
 motifqa_subsets=(
-	# house_check
+	# ba_shapes
+	# tree_cycle
+	# tree_grid
 )
 
 gnns=(

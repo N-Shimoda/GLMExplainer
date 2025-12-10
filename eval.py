@@ -131,8 +131,8 @@ def build_dataset(subset: str, split: str, node_feat_dim: int):
                     "text_encoding",
                 ],
             )
-        case "house_check":
-            test_raw = load_dataset("naos-ku/motif-qa", split=split)
+        case "ba_shapes" | "tree_cycle" | "tree_grid":
+            test_raw = load_dataset("naos-ku/motif-qa", subset, split=split)
             test_ds = test_raw.map(
                 lambda x: add_graph_column(x, k=node_feat_dim, ds_name="MotifQA"),
                 remove_columns=["response", "nodes", "edges", "nnodes", "nedges"],
@@ -153,7 +153,7 @@ def get_max_new_tokens(subset: str, use_custom: bool = False) -> int:
             "reachability": 4,
             "node_degree": 4,
             "edge_existence": 4,
-            "house_check": 24,
+            "ba_shapes": 24,
         }
     )
     return max_new_tokens_dict.get(subset, 32)

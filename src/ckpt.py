@@ -17,7 +17,16 @@ def _get_dir_type(path: str) -> Literal["task", "model", "checkpoint"]:
         return "model"
     elif dir_name.startswith("checkpoint-"):
         return "checkpoint"
-    elif dir_name in ["node_count", "edge_count", "cycle_check", "triangle_counting", "house_check", "multitask"]:
+    elif dir_name in [
+        "node_count",
+        "edge_count",
+        "cycle_check",
+        "triangle_counting",
+        "ba_shapes",
+        "tree_cycle",
+        "tree_grid",
+        "multitask",
+    ]:
         return "task"
     else:
         raise ValueError(f"Directory '{path}' is neither a task, model, nor checkpoint directory.")

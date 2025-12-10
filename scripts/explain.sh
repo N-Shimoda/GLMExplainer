@@ -1,4 +1,4 @@
-LOG_FILE="logs/explain_house_check.log"
+LOG_FILE="logs/explain_ba_shapes.log"
 rm -f "$LOG_FILE"
 mkdir -p logs
 
@@ -21,7 +21,7 @@ for edge_size in 96; do
 	for edge_ent in 2.0 10.0; do
 		cmd=(
 			torchrun --nproc_per_node=2 explain.py
-			--model-path masters/house_check
+			--model-path masters/ba_shapes
 			--explain-pos-samples
 			--num-trials 10
 			--edge-size $edge_size --edge-ent $edge_ent

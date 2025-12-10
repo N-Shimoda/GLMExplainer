@@ -65,7 +65,9 @@ subsets=(
 	edge_count
 	cycle_check
 	triangle_counting
-	house_check
+	ba_shapes
+	tree_cycle
+	tree_grid
 )
 
 for subset in "${subsets[@]}"; do
