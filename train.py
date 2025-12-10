@@ -573,7 +573,7 @@ def main():
     if num_max_nodes > glm_args["num_max_nodes"]:
         glm_args["num_max_nodes"] = num_max_nodes
         if is_main_process():
-            wandb.config.update({"num_max_nodes": num_max_nodes})
+            wandb.config.update({"glm_args": glm_args})
             print(f"[INFO] Updated glm_args['num_max_nodes'] as {num_max_nodes}.")
 
     # Save datasets locally for debugging
