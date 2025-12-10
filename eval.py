@@ -156,6 +156,7 @@ def get_max_new_tokens(subset: str, use_custom: bool = False) -> int:
             "ba_shapes": 8,
             "tree_cycle": 8,
             "tree_grid": 8,
+            "ba_two_motifs": 12,
         }
     )
     return max_new_tokens_dict.get(subset, 32)

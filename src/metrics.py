@@ -1,8 +1,6 @@
 import re
 from typing import Literal
 
-from src.constants import MOTIFQA_SUBSETS
-
 
 def _normalize_text(s: str) -> str:
     s = s.strip()
@@ -57,10 +55,20 @@ def comp_accuracy(
     correct_mask : list[bool]
         Boolean mask indicating whether each prediction is correct.
     """
-    yes_no_subsets = {"cycle_check", "reachability", "edge_existence", *MOTIFQA_SUBSETS}
+    yes_no_subsets = {"cycle_check", "reachability", "edge_existence", "ba_shapes", "tree_cycle", "tree_grid"}
     numeric_subsets = {"node_count", "edge_count", "triangle_counting", "node_degree"}
+    classification_subsets = {"ba_two_motifs"}
 
-    if subset in yes_no_subsets:
+    if subset in numeric_subsets:
+        digit_ans_li = [int(matches[-1]) if (matches := re.findall(r"\d+", ref)) else -100 for ref in refs]
+        pred_nums = [int(matches[-1]) if (matches := re.findall(r"\d+", pred)) else -1 for pred in preds]
+        correct_mask = [False] * len(preds)
+        for idx, (ans, pred_val) in enumerate(zip(digit_ans_li, pred_nums)):
+            correct_mask[idx] = ans == pred_val and not (ans < 0 or pred_val < 0)
+        acc = sum(correct_mask[: len(digit_ans_li)]) / max(1, len(refs))
+        num_unknown = 0
+
+    elif subset in yes_no_subsets:
         if exact_match:
             normalized_preds = [_normalize_text(p) for p in preds]
             normalized_refs = [_normalize_text(r) for r in refs]
@@ -79,14 +87,18 @@ def comp_accuracy(
                 correct_mask[idx] = pred_label == ref_label
             acc = sum(correct_mask[: len(refs_yes_no)]) / max(1, len(refs_yes_no))
             num_unknown = sum(p == "unknown" for p in preds_yes_no)
-    elif subset in numeric_subsets:
-        digit_ans_li = [int(matches[-1]) if (matches := re.findall(r"\d+", ref)) else -100 for ref in refs]
-        pred_nums = [int(matches[-1]) if (matches := re.findall(r"\d+", pred)) else -1 for pred in preds]
+
+    elif subset in classification_subsets and subset == "ba_two_motifs":
+        low_preds = [pred.lower() for pred in preds]
+        low_refs = [ref.lower() for ref in refs]
+        preds_class = ["house" if "house" in pred else "cycle" if "cycle" in pred else "unknown" for pred in low_preds]
+        refs_class = ["house" if "house" in ref else "cycle" if "cycle" in ref else "unknown" for ref in low_refs]
         correct_mask = [False] * len(preds)
-        for idx, (ans, pred_val) in enumerate(zip(digit_ans_li, pred_nums)):
-            correct_mask[idx] = ans == pred_val and not (ans < 0 or pred_val < 0)
-        acc = sum(correct_mask[: len(digit_ans_li)]) / max(1, len(refs))
-        num_unknown = 0
+        for idx, (pred_label, ref_label) in enumerate(zip(preds_class, refs_class)):
+            correct_mask[idx] = pred_label == ref_label
+        acc = sum(correct_mask[: len(refs_class)]) / max(1, len(refs_class))
+        num_unknown = sum(p == "unknown" for p in preds_class)
+
     else:
         raise ValueError(f"Unknown subset: {subset}")
 

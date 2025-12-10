@@ -236,7 +236,7 @@ def build_graphqa_dataset(
     return train_ds, eval_ds, test_ds, num_max_nodes
 
 
-def build_motif_dataset(
+def build_motifqa_dataset(
     subset: str, node_feat_dim: int, do_eval: bool = False, load_from_cache_file: bool = True
 ) -> tuple[Dataset, Dataset, Optional[Dataset], int]:
     """Build MotifQA dataset for training and evaluation.
@@ -562,7 +562,7 @@ def main():
                     load_from_cache_file=False,
                 )
         case "MotifQA":
-            train_ds, eval_ds, test_ds, num_max_nodes = build_motif_dataset(
+            train_ds, eval_ds, test_ds, num_max_nodes = build_motifqa_dataset(
                 args.subset,
                 glm_args["node_feat_dim"],
                 do_eval=args.do_eval,
