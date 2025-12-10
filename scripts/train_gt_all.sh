@@ -44,7 +44,8 @@ gnns=(
 run_train_loop() {
 	local dataset="$1"
 	local subset="$2"
-	# for gnn in "${gnns[@]}"; do
+	local gnn="$3"
+
 	log "[INFO] Starting training for subset='${subset}' (dataset='${dataset}') with GNN='${gnn}'"
 	cmd=(
 		torchrun --nproc_per_node=2 train.py
@@ -77,15 +78,14 @@ run_train_loop() {
 		log "[ERROR] subset=${subset} rc=${rc} duration=${dur}s"
 	fi
 	echo
-	# done
 }
 
 for gnn in "${gnns[@]}"; do
 	for subset in "${graphqa_subsets[@]}"; do
-		run_train_loop "GraphQA" "$subset"
+		run_train_loop "GraphQA" "$subset" "$gnn"
 	done
 	for subset in "${motifqa_subsets[@]}"; do
-		run_train_loop "MotifQA" "$subset"
+		run_train_loop "MotifQA" "$subset" "$gnn"
 	done
 done
 
