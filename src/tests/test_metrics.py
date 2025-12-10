@@ -34,6 +34,18 @@ def test_comp_accuracy_numeric_subsets_handle_mixed_correctness(subset):
     assert correct_mask == [True, False, False]
 
 
+@pytest.mark.parametrize("subset", ["node_count", "edge_count", "triangle_counting", "node_degree"])
+def test_comp_accuracy_numeric_subsets_handle_multiple_digits(subset):
+    preds = ["Graph stats: 4 nodes and 15 edges", "Triangle count 3 with 7 edges"]
+    refs = ["15.", "8."]
+
+    acc, unknown, correct_mask = comp_accuracy(preds, refs, subset)
+
+    assert acc == pytest.approx(0.5)
+    assert unknown == 0
+    assert correct_mask == [True, False]
+
+
 @pytest.mark.parametrize(
     "subset",
     ["cycle_check", "reachability", "edge_existence", "ba_shapes", "tree_cycle", "tree_grid"],
