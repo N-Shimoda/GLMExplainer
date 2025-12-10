@@ -6,13 +6,13 @@ from typing import Optional
 
 import torch
 import torch.distributed as dist
+import wandb
 from datasets import load_dataset
 from datasets.arrow_dataset import Dataset
 from transformers import AutoTokenizer
 from transformers.trainer_utils import set_seed
 from trl import SFTConfig, SFTTrainer
 
-import wandb
 from eval import collect_result, eval_model, get_max_new_tokens
 from src.collator import GraphQACollator
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
@@ -175,9 +175,9 @@ def setup_run_context(dataset: str, subset: str, use_wandb: bool, glm_args: dict
         config = {"dataset": dataset, "subset": subset, "glm_args": glm_args}
         match dataset:
             case "MotifQA":
-                wandb.init(project="MotifQA-GLM", name=run_name, config=config)
+                wandb.init(project="MotifQA-GLM", name=run_name, config=config, dir=output_dir)
             case "GraphQA":
-                wandb.init(project="GraphQA-GLM", name=run_name, config=config)
+                wandb.init(project="GraphQA-GLM", name=run_name, config=config, dir=output_dir)
 
     return output_dir, date_str
 
@@ -537,13 +537,10 @@ def main():
     if is_main_process():
         print(f"Subset: {args.subset}")
 
-    # Wandb initialization, output directory
-    output_dir, date_str = setup_run_context(args.dataset, args.subset, args.wandb, glm_args)
-
     # Fix seed for reproducibility
     set_seed(42)
 
-    # Training
+    # Load dataset
     match args.dataset:
         case "GraphQA":
             if args.use_custom_dataset:
@@ -569,13 +566,6 @@ def main():
                 load_from_cache_file=False,
             )
 
-    # Update maximum node count if needed
-    if num_max_nodes > glm_args["num_max_nodes"]:
-        glm_args["num_max_nodes"] = num_max_nodes
-        if is_main_process():
-            wandb.config.update({"glm_args": glm_args})
-            print(f"[INFO] Updated glm_args['num_max_nodes'] as {num_max_nodes}.")
-
     # Save datasets locally for debugging
     out_dir = os.path.join("ds_debug", args.subset)
     if is_main_process():
@@ -585,6 +575,16 @@ def main():
         if args.do_eval:
             test_ds.to_json(os.path.join(out_dir, "test.jsonl"), orient="records", lines=True)
 
+    # Update node capacity of GLM if needed
+    if num_max_nodes > glm_args["num_max_nodes"]:
+        glm_args["num_max_nodes"] = num_max_nodes
+        if is_main_process():
+            print(f"[INFO] Updated glm_args['num_max_nodes'] as {num_max_nodes}.")
+
+    # Initialize wandb, setup output directory and date
+    output_dir, date_str = setup_run_context(args.dataset, args.subset, args.wandb, glm_args)
+
+    # Training
     model, ckpt_path = train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args)
 
     # Quick evaluation with 1 trial
