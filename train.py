@@ -22,7 +22,7 @@ from src.preprocess import add_graph_column
 
 
 def is_main_process() -> bool:
-    # RANK = 0 is the main process
+    """Check if the current process is the main process in DDP setup."""
     return int(os.environ.get("RANK", "0")) == 0
 
 
@@ -36,7 +36,7 @@ def _safe_barrier():
         dist.barrier()
 
 
-def validate_args(args):
+def validate_args(args: argparse.Namespace):
     # Subsets
     match args.dataset:
         case "GraphQA":
@@ -576,7 +576,7 @@ def main():
             wandb.config.update({"num_max_nodes": num_max_nodes})
             print(f"[INFO] Updated glm_args['num_max_nodes'] as {num_max_nodes}.")
 
-    # Save datasets locally as JSONL (only on the main process to avoid races)
+    # Save datasets locally for debugging
     out_dir = os.path.join("ds_debug", args.subset)
     if is_main_process():
         os.makedirs(out_dir, exist_ok=True)
