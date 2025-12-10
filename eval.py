@@ -11,6 +11,7 @@ from tqdm import tqdm
 from transformers import AutoTokenizer, GenerationConfig
 
 from src.ckpt import _resolve_ckpt_path
+from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 from src.glm import GraphTokenLM
 from src.metrics import comp_accuracy
 from src.preprocess import add_graph_column
@@ -24,7 +25,7 @@ def build_args(*, multitask: bool = False):
         p.add_argument(
             "--subset",
             type=str,
-            choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "house_check"],
+            choices=GRAPHQA_SUBSETS + MOTIFQA_SUBSETS,
             default="edge_count",
         )
     p.add_argument("--use-custom-dataset", action="store_true", default=False)
@@ -107,7 +108,15 @@ def create_pyg_batch(
 
 def build_dataset(subset: str, split: str, node_feat_dim: int):
     match subset:
-        case "node_count" | "edge_count" | "cycle_check" | "triangle_counting":
+        case (
+            "node_count"
+            | "edge_count"
+            | "cycle_check"
+            | "triangle_counting"
+            | "reachability"
+            | "node_degree"
+            | "edge_existence"
+        ):
             test_raw = load_dataset("baharef/GraphQA", subset, split=f"zero_shot_{split}")
             test_ds = test_raw.map(
                 lambda x: add_graph_column(x, k=node_feat_dim),
@@ -125,7 +134,7 @@ def build_dataset(subset: str, split: str, node_feat_dim: int):
         case "house_check":
             test_raw = load_dataset("naos-ku/motif-qa", split=split)
             test_ds = test_raw.map(
-                lambda x: add_graph_column(x, k=node_feat_dim, ds_name="motif-qa"),
+                lambda x: add_graph_column(x, k=node_feat_dim, ds_name="MotifQA"),
                 remove_columns=["response", "nodes", "edges", "nnodes", "nedges"],
                 desc="add_graph_column(test)",
             )
@@ -136,9 +145,18 @@ def get_max_new_tokens(subset: str, use_custom: bool = False) -> int:
     max_new_tokens_dict = (
         {"node_count": 96, "edge_count": 256, "cycle_check": 512, "triangle_counting": 256}
         if use_custom
-        else {"node_count": 4, "edge_count": 4, "cycle_check": 8, "triangle_counting": 4, "house_check": 24}
+        else {
+            "node_count": 4,
+            "edge_count": 4,
+            "cycle_check": 8,
+            "triangle_counting": 4,
+            "reachability": 4,
+            "node_degree": 4,
+            "edge_existence": 4,
+            "house_check": 24,
+        }
     )
-    return max_new_tokens_dict[subset]
+    return max_new_tokens_dict.get(subset, 32)
 
 
 @torch.no_grad()
@@ -162,7 +180,9 @@ def eval_model(model: GraphTokenLM, test_ds, batch_size: int, max_new_tokens: in
         A list of dictionaries containing the evaluation results with keys "question", "preds", and "answer".
     """
     model.eval()
-    tokenizer = AutoTokenizer.from_pretrained(model.config.base_model)
+    tokenizer = AutoTokenizer.from_pretrained(model.config.base_model, trust_remote_code=True)
+    tokenizer.padding_side = "left"
+
     gen_cfg = GenerationConfig(
         max_new_tokens=max_new_tokens,
         do_sample=True,

@@ -2,7 +2,7 @@ from typing import Literal
 
 import torch
 import torch.nn as nn
-from torch_geometric.nn import GATConv, GCNConv, GINConv, GraphSAGE, global_mean_pool
+from torch_geometric.nn import GATConv, GCNConv, GINConv, GraphSAGE, TransformerConv, global_mean_pool
 from torch_geometric.utils import to_dense_batch
 from transformers import (
     AutoConfig,
@@ -19,8 +19,8 @@ class GraphTokenLMConfig(PretrainedConfig):
 
     def __init__(
         self,
-        base_model="Qwen/Qwen3-4B-Instruct-2507",
-        gnn_type: Literal["GCN", "GAT", "GIN", "GraphSAGE"] = "GCN",
+        base_model="Qwen/Qwen3-4B-Base",
+        gnn_type: Literal["GCN", "GAT", "GIN", "GraphSAGE", "GraphTransformer"] = "GCN",
         node_feat_dim=8,
         pos_emb_dim=8,
         gnn_hidden_dim=256,
@@ -82,7 +82,7 @@ class GNNEncoder(nn.Module):
         Dimensionality of the optional learned positional embeddings.
     dropout : float, default=0.1
         Dropout probability applied between hidden layers.
-    gnn_type : {"GCN", "GAT", "GIN", "GraphSAGE"}, default="GCN"
+    gnn_type : {"GCN", "GAT", "GIN", "GraphSAGE", "GraphTransformer"}, default="GCN"
         Type of graph convolution layer to build.
     """
 
@@ -95,7 +95,7 @@ class GNNEncoder(nn.Module):
         num_layers: int = 2,
         node_pos_emb_dim: int = 8,
         dropout: float = 0.1,
-        gnn_type: Literal["GCN", "GAT", "GIN", "GraphSAGE"] = "GCN",
+        gnn_type: Literal["GCN", "GAT", "GIN", "GraphSAGE", "GraphTransformer"] = "GCN",
     ):
         super().__init__()
         self.max_nodes = max_nodes
@@ -118,6 +118,9 @@ class GNNEncoder(nn.Module):
                     self.convs.append(GINConv(nn.Linear(dims[i], dims[i + 1])))
                 case "GraphSAGE":
                     self.convs.append(GraphSAGE(dims[i], dims[i + 1], 1))
+                case "GraphTransformer":
+                    # Multi-head attention with concat disabled to keep the output dim aligned.
+                    self.convs.append(TransformerConv(dims[i], dims[i + 1], heads=4, concat=False, dropout=dropout))
                 case _:
                     raise ValueError(f"Unsupported gnn_type: {gnn_type}")
         self.act = nn.ReLU()

@@ -19,7 +19,7 @@ def build_dataset(dataset: str, subset: str, split: str, node_feat_dim: int) -> 
         case "MotifQA":
             ds_raw = load_dataset("naos-ku/motif-qa", "yes_no", split=split)
             ds = ds_raw.map(
-                lambda x: add_graph_column(x, k=node_feat_dim, ds_name="motif-qa"),
+                lambda x: add_graph_column(x, k=node_feat_dim, ds_name="MotifQA"),
                 remove_columns=["response", "nedges", "nnodes"],
                 load_from_cache_file=False,
             )

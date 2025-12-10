@@ -4,6 +4,7 @@ from datetime import datetime
 from math import ceil
 from typing import Optional
 
+import torch
 import torch.distributed as dist
 from datasets import load_dataset
 from datasets.arrow_dataset import Dataset
@@ -14,6 +15,7 @@ from trl import SFTConfig, SFTTrainer
 import wandb
 from eval import collect_result, eval_model, get_max_new_tokens
 from src.collator import GraphQACollator
+from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 from src.ds_stats import completion_length_report
 from src.glm import GraphTokenLM, GraphTokenLMConfig
 from src.preprocess import add_graph_column
@@ -24,23 +26,54 @@ def is_main_process() -> bool:
     return int(os.environ.get("RANK", "0")) == 0
 
 
+def _safe_barrier():
+    """Call dist.barrier with device_ids when using NCCL to silence warnings."""
+    if not (dist.is_available() and dist.is_initialized()):
+        return
+    if dist.get_backend() == "nccl" and torch.cuda.is_available():
+        dist.barrier(device_ids=[torch.cuda.current_device()])
+    else:
+        dist.barrier()
+
+
+def validate_args(args):
+    # Subsets
+    match args.dataset:
+        case "GraphQA":
+            valid_subsets = GRAPHQA_SUBSETS
+        case "MotifQA":
+            valid_subsets = MOTIFQA_SUBSETS
+    if args.subset not in valid_subsets:
+        raise ValueError(f"Subset {args.subset} is not valid for dataset {args.dataset}.")
+
+    # Custom dataset
+    if args.use_custom_dataset and args.dataset != "GraphQA":
+        raise ValueError("--use-custom-dataset is only supported with GraphQA dataset.")
+
+
 def build_args(*, multitask: bool = False):
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser(description="Train GraphTokenLM on GraphQA or MotifQA dataset.")
 
     # General settings
     if not multitask:
+        p.add_argument("--dataset", type=str, default="GraphQA", choices=["GraphQA", "MotifQA"])
         p.add_argument(
             "--subset",
             type=str,
-            choices=["node_count", "edge_count", "cycle_check", "triangle_counting", "house_check"],
             default="edge_count",
+            choices=GRAPHQA_SUBSETS + MOTIFQA_SUBSETS,
         )
     p.add_argument("--do-eval", action="store_true", help="Run evaluation after training")
     p.add_argument("--use-custom-dataset", action="store_true", help="Use custom dataset with extended answer labels.")
 
     # Model architecture
-    p.add_argument("--base-model", type=str, default="Qwen/Qwen3-4B-Instruct-2507")
-    p.add_argument("--gnn-type", type=str, default="GCN", choices=["GCN", "GAT", "GIN", "GraphSAGE"])
+    p.add_argument("--base-model", type=str, default="Qwen/Qwen3-4B-Base")
+    p.add_argument(
+        "--gnn-type",
+        type=str,
+        default="GCN",
+        choices=["GCN", "GAT", "GIN", "GraphSAGE", "GraphTransformer"],
+    )
     p.add_argument("--num-max-nodes", type=int, default=20)
     p.add_argument("--num-graph-tokens", type=int, default=4)
     p.add_argument("--node-feat-dim", type=int, default=8)
@@ -72,7 +105,9 @@ def build_args(*, multitask: bool = False):
     # Logging
     p.add_argument("--wandb", action="store_true", help="Use wandb logging")
 
+    # Parse and validate args
     args = p.parse_args()
+    validate_args(args)
 
     # Args for GraphTokenLMConfig and SFTConfig
     glm_args = {
@@ -112,15 +147,19 @@ def build_args(*, multitask: bool = False):
     return glm_args, sft_args, args
 
 
-def setup_run_context(subset: str, use_wandb: bool):
+def setup_run_context(dataset: str, subset: str, use_wandb: bool, glm_args: dict) -> tuple[str, str]:
     """Setup output directory and initialize wandb if needed.
 
     Parameters
     ----------
+    dataset : str
+        Dataset name for the current run.
     subset : str
         Subset name for the current run.
     use_wandb : bool
         Whether to use wandb logging.
+    glm_args : dict
+        Arguments for GraphTokenLMConfig.
 
     Returns
     -------
@@ -133,16 +172,17 @@ def setup_run_context(subset: str, use_wandb: bool):
     run_name = f"{subset}_{date_str}"
     output_dir = os.path.join("outputs", subset, date_str)
     if use_wandb and is_main_process():
-        match subset:
-            case "house_check":
-                wandb.init(project="MotifQA-GLM", name=run_name)
-            case _:
-                wandb.init(project="GraphQA-GLM", name=run_name)
+        config = {"dataset": dataset, "subset": subset, "glm_args": glm_args}
+        match dataset:
+            case "MotifQA":
+                wandb.init(project="MotifQA-GLM", name=run_name, config=config)
+            case "GraphQA":
+                wandb.init(project="GraphQA-GLM", name=run_name, config=config)
 
     return output_dir, date_str
 
 
-def build_dataset(
+def build_graphqa_dataset(
     subset: str, node_feat_dim: int, do_eval: bool = False, load_from_cache_file: bool = True
 ) -> tuple[Dataset, Dataset, Dataset | None]:
     """Build dataset for training and evaluation.
@@ -188,8 +228,7 @@ def build_dataset(
     test_ds = processed_ds["test"] if do_eval else None
 
     # Sync processes if running with DDP
-    if dist.is_available() and dist.is_initialized():
-        dist.barrier()
+    _safe_barrier()
 
     return train_ds, eval_ds, test_ds
 
@@ -220,7 +259,7 @@ def build_motif_dataset(
     """
 
     def modify_dataset(example):
-        return add_graph_column(example, k=node_feat_dim, ds_name="motif-qa")
+        return add_graph_column(example, k=node_feat_dim, ds_name="MotifQA")
 
     # Load and preprocess the dataset
     splits = {"train": "train", "validation": "validation"}
@@ -343,49 +382,65 @@ def build_custom_dataset(
 
 
 def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
+    """
+    Fine-tune a GraphToken language model on graph QA data using TRL's SFTTrainer.
+
+    Parameters
+    ----------
+    train_ds : datasets.Dataset
+        Training split in prompt-completion format. Each element must be a
+        mapping with keys:
+        - ``prompt`` (str): Instruction or question text.
+        - ``completion`` (str): Target answer text.
+        - ``graph`` (dict): Graph payload convertible to ``torch_geometric.data.Data``
+          via :func:`src.collator.pyg_from_dict`. Expected fields are
+          ``x`` (FloatTensor of shape ``(num_nodes, k)``), ``edge_index`` (LongTensor
+          of shape ``(2, num_edges)`` with 0-based consecutive node indices), and
+          optional ``num_nodes`` or ``edge_attr``. Extra keys are ignored.
+    eval_ds : datasets.Dataset
+        Validation split with the same schema as ``train_ds``. Can be ``None`` to
+        skip evaluation steps.
+    output_dir : str
+        Directory where checkpoints and trainer state will be written.
+    glm_args : dict
+        Keyword arguments forwarded to :class:`src.glm.GraphTokenLMConfig`.
+    sft_args : dict
+        Keyword arguments forwarded to :class:`trl.SFTConfig`. ``optim`` and
+        save-related flags are consumed here before building the config.
+    args : argparse.Namespace
+        Parsed CLI arguments containing logging options (e.g., wandb flag).
+
+    Returns
+    -------
+    model : GraphTokenLM
+        The fine-tuned model instance (on the local process).
+    final_ckpt_dir : str
+        Path to the final checkpoint directory produced after training.
+    """
+    # Initialize model and tokenizer
     glm_cfg = GraphTokenLMConfig(**glm_args)
     model = GraphTokenLM(glm_cfg)
     tokenizer = AutoTokenizer.from_pretrained(glm_cfg.base_model, trust_remote_code=True)
-    print(
-        "IDs from tokenizer:\n"
-        f"eos_token: {tokenizer.eos_token}, "
-        f"bos_token: {tokenizer.bos_token}, "
-        f"pad_token: {tokenizer.pad_token}"
-    )
-    print(
-        "IDs from GraphTokenLMConfig:\n"
-        f"eos_token_id: {glm_cfg.eos_token_id}, "
-        f"bos_token_id: {glm_cfg.bos_token_id}, "
-        f"pad_token_id: {glm_cfg.pad_token_id}"
-    )
-    if tokenizer.pad_token is None:
-        print("[INFO] Explicitly setting pad_token to eos_token")
-        tokenizer.pad_token = tokenizer.eos_token
 
-    collator = GraphQACollator(
-        tokenizer=tokenizer,
-        max_length=512,
-        num_graph_tokens=glm_cfg.num_graph_tokens,
-    )
-
+    # Compute save interval steps
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     micro_batches_per_epoch = ceil(len(train_ds) / (sft_args["per_device_train_batch_size"] * world_size))
     steps_per_epoch = ceil(micro_batches_per_epoch / sft_args["gradient_accumulation_steps"])
 
     save_intermediate_models = sft_args.pop("save_intermediate_models")
     save_interval_epochs = sft_args.pop("save_interval_epochs")
-    optim_choice = sft_args.pop("optim")
-
     if save_intermediate_models and is_main_process():
         print(f"[INFO] Intermediate models will be saved every {save_interval_epochs} epochs.")
 
-    # Map CLI choices to HF/TRL optimizer identifiers
+    # Prepare optimizer mapping
+    optim_choice = sft_args.pop("optim")
     hf_optim_map = {
         "lion": "lion_32bit",
         "adamw": "adamw_torch",
         "adafactor": "adafactor",
     }
 
+    # Setup SFTTrainer
     sft_config = SFTConfig(
         optim=hf_optim_map[optim_choice],
         completion_only_loss=True,
@@ -400,10 +455,14 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
         remove_unused_columns=False,
         ddp_backend="nccl",  # DDP
         ddp_find_unused_parameters=False,  # since all params are used in each forward pass
-        gradient_checkpointing=False,  # GraphTokenLM currently lacks gradient checkpoint support.
+        gradient_checkpointing=False,  # GraphTokenLM currently lacks gradient checkpoint support
         **sft_args,
     )
-
+    collator = GraphQACollator(
+        tokenizer=tokenizer,
+        max_length=512,
+        num_graph_tokens=glm_cfg.num_graph_tokens,
+    )
     trainer = SFTTrainer(
         model=model,
         processing_class=tokenizer,
@@ -413,6 +472,7 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
         data_collator=collator,
     )
 
+    # Start training
     if is_main_process():
         print("***** Training *****")
     trainer.train()
@@ -431,7 +491,7 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
 
 def eval_ddp(model, subset: str, test_ds: Dataset, max_new_tokens: int, date_str: str, use_wandb: bool):
     if dist.is_initialized():
-        dist.barrier()
+        _safe_barrier()
         world_size = dist.get_world_size()
         rank = dist.get_rank()
         local_test_ds = test_ds.shard(num_shards=world_size, index=rank)
@@ -465,33 +525,36 @@ def main():
         print(f"Subset: {args.subset}")
 
     # Wandb initialization, output directory
-    output_dir, date_str = setup_run_context(args.subset, args.wandb)
+    output_dir, date_str = setup_run_context(args.dataset, args.subset, args.wandb, glm_args)
 
     # Fix seed for reproducibility
     set_seed(42)
 
     # Training
-    if args.use_custom_dataset:
-        if is_main_process():
-            print("[INFO] Using custom dataset.")
-        train_ds, eval_ds, test_ds = build_custom_dataset(
-            args.subset,
-            glm_args["node_feat_dim"],
-            do_eval=args.do_eval,
-        )
-    elif args.subset in ["node_count", "edge_count", "cycle_check", "triangle_counting"]:
-        train_ds, eval_ds, test_ds = build_dataset(
-            args.subset,
-            glm_args["node_feat_dim"],
-            do_eval=args.do_eval,
-            load_from_cache_file=False,
-        )
-    else:
-        train_ds, eval_ds, test_ds = build_motif_dataset(
-            glm_args["node_feat_dim"],
-            do_eval=args.do_eval,
-            load_from_cache_file=False,
-        )
+    match args.dataset:
+        case "GraphQA":
+            if args.use_custom_dataset:
+                if is_main_process():
+                    print("[INFO] Building dataset with custom prompt.")
+                train_ds, eval_ds, test_ds = build_custom_dataset(
+                    args.subset,
+                    glm_args["node_feat_dim"],
+                    do_eval=args.do_eval,
+                )
+            else:
+                train_ds, eval_ds, test_ds = build_graphqa_dataset(
+                    args.subset,
+                    glm_args["node_feat_dim"],
+                    do_eval=args.do_eval,
+                    load_from_cache_file=False,
+                )
+        case "MotifQA":
+            train_ds, eval_ds, test_ds = build_motif_dataset(
+                glm_args["node_feat_dim"],
+                do_eval=args.do_eval,
+                load_from_cache_file=False,
+            )
+
     # Save datasets locally as JSONL (only on the main process to avoid races)
     out_dir = os.path.join("ds_debug", args.subset)
     if is_main_process():

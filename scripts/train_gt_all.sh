@@ -19,49 +19,74 @@ log() {
 	echo "[$ts] $*" | tee -a "$LOG_FILE"
 }
 
-subsets=(
+graphqa_subsets=(
 	# node_count
 	# edge_count
 	# cycle_check
 	# triangle_counting
-	house_check
+	node_degree
+	reachability
+	edge_existence
 )
 
-gnns=("GCN" "GAT" "GIN" "GraphSAGE")
+motifqa_subsets=(
+	# house_check
+)
 
-for subset in "${subsets[@]}"; do
-	for gnn in "${gnns[@]}"; do
-		log "[INFO] Starting training for subset='${subset}' with GNN='${gnn}'"
-		cmd=(
-			torchrun --nproc_per_node=2 train.py --subset "${subset}"
-			--num-graph-tokens 4 --node-feat-dim 8 --pos-emb-dim 8
-			--gnn-hidden-dim 256 --gnn-out-dim 512 --num-gnn-layers 4
-			--epochs 12
-			--gnn-type "${gnn}"
-			# --optim "lion" --lr 0.01
-			# --lr-scheduler-type "linear" --warmup-ratio 0.05
-			--optim "adamw" --lr 0.0075 --weight-decay 0.01
-			--lr-scheduler-type "cosine" --warmup-ratio 0.05
-			--do-eval --wandb
-		)
-		log "[START] ${cmd[*]}"
-		start_ts=$(date +%s)
+gnns=(
+	"GCN"
+	# "GAT"
+	# "GIN"
+	# "GraphSAGE"
+	# "GraphTransformer"
+)
 
-		# Run torchrun and get exit code (avoid set -e effect)
-		set +e
-		"${cmd[@]}"
-		rc=$?
-		set -e
+run_train_loop() {
+	local dataset="$1"
+	local subset="$2"
+	local gnn="$3"
 
-		end_ts=$(date +%s)
-		dur=$((end_ts - start_ts))
+	log "[INFO] Starting training for subset='${subset}' (dataset='${dataset}') with GNN='${gnn}'"
+	cmd=(
+		torchrun --nproc_per_node=2 train.py
+		--dataset "${dataset}" --subset "${subset}"
+		--num-graph-tokens 4 --node-feat-dim 8 --pos-emb-dim 8
+		--gnn-hidden-dim 256 --gnn-out-dim 512 --num-gnn-layers 4
+		--epochs 12
+		--gnn-type "${gnn}"
+		# --optim "lion" --lr 0.01
+		# --lr-scheduler-type "linear" --warmup-ratio 0.05
+		--optim "adamw" --lr 0.0075 --weight-decay 0.01
+		--lr-scheduler-type "cosine" --warmup-ratio 0.05
+		--do-eval --wandb
+	)
+	log "[START] ${cmd[*]}"
+	start_ts=$(date +%s)
 
-		if [[ $rc -eq 0 ]]; then
-			log "[COMPLETED] subset=${subset} duration=${dur}s"
-		else
-			log "[ERROR] subset=${subset} rc=${rc} duration=${dur}s"
-		fi
-		echo
+	# Run torchrun and get exit code (avoid set -e effect)
+	set +e
+	"${cmd[@]}"
+	rc=$?
+	set -e
+
+	end_ts=$(date +%s)
+	dur=$((end_ts - start_ts))
+
+	if [[ $rc -eq 0 ]]; then
+		log "[COMPLETED] subset=${subset} duration=${dur}s"
+	else
+		log "[ERROR] subset=${subset} rc=${rc} duration=${dur}s"
+	fi
+	echo
+}
+
+for gnn in "${gnns[@]}"; do
+	for subset in "${graphqa_subsets[@]}"; do
+		run_train_loop "GraphQA" "$subset" "$gnn"
+	done
+	for subset in "${motifqa_subsets[@]}"; do
+		run_train_loop "MotifQA" "$subset" "$gnn"
 	done
 done
+
 log "[INFO] ALL subsets finished successfully."

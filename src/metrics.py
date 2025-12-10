@@ -13,7 +13,16 @@ def _normalize_text(s: str) -> str:
 def comp_accuracy(
     preds: list[str],
     refs: list[str],
-    subset: Literal["cycle_check", "node_count", "edge_count", "triangle_counting", "house_check"],
+    subset: Literal[
+        "cycle_check",
+        "node_count",
+        "edge_count",
+        "triangle_counting",
+        "reachability",
+        "house_check",
+        "node_degree",
+        "edge_existence",
+    ],
     exact_match: bool = False,
 ) -> tuple[float, int, list[bool]]:
     """
@@ -41,11 +50,20 @@ def comp_accuracy(
     correct_mask : list[bool]
         Boolean mask indicating whether each prediction is correct.
     """
-    if subset not in ["cycle_check", "node_count", "edge_count", "triangle_counting", "house_check"]:
+    if subset not in [
+        "cycle_check",
+        "node_count",
+        "edge_count",
+        "triangle_counting",
+        "reachability",
+        "house_check",
+        "node_degree",
+        "edge_existence",
+    ]:
         raise NotImplementedError(f"Unsupported subset: {subset}")
 
     match subset:
-        case "cycle_check" | "house_check":
+        case "cycle_check" | "house_check" | "reachability" | "edge_existence":
             if exact_match:
                 normalized_preds = [_normalize_text(p) for p in preds]
                 normalized_refs = [_normalize_text(r) for r in refs]
@@ -64,7 +82,7 @@ def comp_accuracy(
                     correct_mask[idx] = pred_label == ref_label
                 acc = sum(correct_mask[: len(refs_yes_no)]) / max(1, len(refs_yes_no))
                 num_unknown = sum(p == "unknown" for p in preds_yes_no)
-        case "node_count" | "edge_count" | "triangle_counting":
+        case "node_count" | "edge_count" | "triangle_counting" | "node_degree":
             digit_ans_li = [int(matches[-1]) if (matches := re.findall(r"\d+", ref)) else -100 for ref in refs]
             pred_nums = [int(matches[-1]) if (matches := re.findall(r"\d+", pred)) else -1 for pred in preds]
             correct_mask = [False] * len(preds)
