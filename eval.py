@@ -153,7 +153,9 @@ def get_max_new_tokens(subset: str, use_custom: bool = False) -> int:
             "reachability": 4,
             "node_degree": 4,
             "edge_existence": 4,
-            "ba_shapes": 24,
+            "ba_shapes": 8,
+            "tree_cycle": 8,
+            "tree_grid": 8,
         }
     )
     return max_new_tokens_dict.get(subset, 32)
