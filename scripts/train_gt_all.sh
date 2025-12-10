@@ -34,10 +34,10 @@ motifqa_subsets=(
 )
 
 gnns=(
-	# "GCN"
-	"GAT"
-	"GIN"
-	"GraphSAGE"
+	"GCN"
+	# "GAT"
+	# "GIN"
+	# "GraphSAGE"
 	# "GraphTransformer"
 )
 
@@ -84,9 +84,9 @@ for gnn in "${gnns[@]}"; do
 	for subset in "${graphqa_subsets[@]}"; do
 		run_train_loop "GraphQA" "$subset"
 	done
-
 	for subset in "${motifqa_subsets[@]}"; do
 		run_train_loop "MotifQA" "$subset"
 	done
 done
+
 log "[INFO] ALL subsets finished successfully."
