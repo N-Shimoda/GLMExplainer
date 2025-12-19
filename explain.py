@@ -359,7 +359,7 @@ def _generate_explanation(
     generated = [wrapper.set_input(sample["prompt"], pyg_batch, gen_cfg) for _ in range(num_trials)]
 
     # Compute accuracy
-    acc, _, correct_mask = comp_accuracy(generated, [sample["completion"]] * len(generated), subset="ba_shapes")
+    acc, _, correct_mask = comp_accuracy(generated, [sample["completion"]] * len(generated), subset="house_check")
     if not any(correct_mask):
         print(
             f"[WARN] Failed to generate the correct answer for sample[index={sample['index']}] "

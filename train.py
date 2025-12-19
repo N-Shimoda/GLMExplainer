@@ -6,14 +6,14 @@ from typing import Optional
 
 import torch
 import torch.distributed as dist
-import wandb
 from datasets import load_dataset
 from datasets.arrow_dataset import Dataset
 from transformers import AutoTokenizer
 from transformers.trainer_utils import set_seed
 from trl import SFTConfig, SFTTrainer
 
-from eval import EXT_MAX_NEW_TOKENS, MAX_NEW_TOKENS, collect_result, eval_model
+import wandb
+from eval import collect_result, eval_model, get_max_new_tokens
 from src.collator import GraphQACollator
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 from src.ds_stats import completion_length_report
@@ -22,7 +22,7 @@ from src.preprocess import add_graph_column
 
 
 def is_main_process() -> bool:
-    """Check if the current process is the main process in DDP setup."""
+    # RANK = 0 is the main process
     return int(os.environ.get("RANK", "0")) == 0
 
 
@@ -36,7 +36,7 @@ def _safe_barrier():
         dist.barrier()
 
 
-def validate_args(args: argparse.Namespace):
+def validate_args(args):
     # Subsets
     match args.dataset:
         case "GraphQA":
@@ -175,16 +175,16 @@ def setup_run_context(dataset: str, subset: str, use_wandb: bool, glm_args: dict
         config = {"dataset": dataset, "subset": subset, "glm_args": glm_args}
         match dataset:
             case "MotifQA":
-                wandb.init(project="MotifQA-GLM", name=run_name, config=config, dir=output_dir)
+                wandb.init(project="MotifQA-GLM", name=run_name, config=config)
             case "GraphQA":
-                wandb.init(project="GraphQA-GLM", name=run_name, config=config, dir=output_dir)
+                wandb.init(project="GraphQA-GLM", name=run_name, config=config)
 
     return output_dir, date_str
 
 
 def build_graphqa_dataset(
     subset: str, node_feat_dim: int, do_eval: bool = False, load_from_cache_file: bool = True
-) -> tuple[Dataset, Dataset, Dataset | None, int]:
+) -> tuple[Dataset, Dataset, Dataset | None]:
     """Build dataset for training and evaluation.
 
     Parameters
@@ -206,8 +206,6 @@ def build_graphqa_dataset(
         Evaluation dataset with `prompt`, `completion`, and `graph` columns.
     test_ds : Dataset or None
         Test dataset if `do_eval` is True, otherwise None.
-    num_max_nodes : int
-        Maximum number of nodes across all graphs in the dataset.
     """
 
     def modify_dataset(example):
@@ -216,8 +214,8 @@ def build_graphqa_dataset(
     splits = {"train": "zero_shot_train", "validation": "zero_shot_validation"}
     if do_eval:
         splits["test"] = "zero_shot_test"
-    raw_ds = load_dataset("baharef/GraphQA", subset, split=splits)
 
+    raw_ds = load_dataset("baharef/GraphQA", subset, split=splits)
     processed_ds = raw_ds.map(
         modify_dataset,
         remove_columns=["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"],
@@ -232,19 +230,16 @@ def build_graphqa_dataset(
     # Sync processes if running with DDP
     _safe_barrier()
 
-    num_max_nodes = 20
-    return train_ds, eval_ds, test_ds, num_max_nodes
+    return train_ds, eval_ds, test_ds
 
 
-def build_motifqa_dataset(
-    subset: str, node_feat_dim: int, do_eval: bool = False, load_from_cache_file: bool = True
-) -> tuple[Dataset, Dataset, Optional[Dataset], int]:
-    """Build MotifQA dataset for training and evaluation.
+def build_motif_dataset(
+    node_feat_dim: int, do_eval: bool = False, load_from_cache_file: bool = True
+) -> tuple[Dataset, Dataset, Optional[Dataset]]:
+    """Build house motif dataset for training and evaluation.
 
     Parameters
     ----------
-    subset : str
-        MotifQA subset name.
     node_feat_dim : int
         Dimensionality of node features (k in Laplacian PE).
     do_eval : bool, default=False
@@ -260,8 +255,7 @@ def build_motifqa_dataset(
         Evaluation dataset with `prompt`, `completion`, and `graph` columns.
     test_ds : Dataset | None
         Test dataset with `prompt`, `completion`, and `graph` columns, or None if not needed.
-    num_max_nodes : int
-        Maximum number of nodes across all graphs in the dataset.
+
     """
 
     def modify_dataset(example):
@@ -271,11 +265,7 @@ def build_motifqa_dataset(
     splits = {"train": "train", "validation": "validation"}
     if do_eval:
         splits["test"] = "test"
-    raw_ds = load_dataset("naos-ku/motif-qa", subset, split=splits)
-
-    # Compute maximum node count
-    nnodes_lists = [raw_ds[split]["nnodes"] for split in splits]
-    num_max_nodes = max([max(nnodes_list) for nnodes_list in nnodes_lists])
+    raw_ds = load_dataset("naos-ku/motif-qa", "yes_no", split=splits)
 
     processed_ds = raw_ds.map(
         modify_dataset,
@@ -288,12 +278,12 @@ def build_motifqa_dataset(
     eval_ds = processed_ds["validation"]
     test_ds = processed_ds["test"] if do_eval else None
 
-    return train_ds, eval_ds, test_ds, num_max_nodes
+    return train_ds, eval_ds, test_ds
 
 
 def build_custom_dataset(
     subset: str, node_feat_dim: int, do_eval: bool = False
-) -> tuple[Dataset, Dataset, Dataset | None, int]:
+) -> tuple[Dataset, Dataset, Dataset | None]:
     """Build custom dataset for training and evaluation.
 
     Parameters
@@ -313,8 +303,6 @@ def build_custom_dataset(
         Evaluation dataset with `prompt`, `completion`, and `graph` columns.
     test_ds : Dataset or None
         Test dataset if `do_eval` is True, otherwise None.
-    num_max_nodes : int
-        Maximum number of nodes across all graphs in the dataset.
     """
     ds_dict = load_dataset(
         "json",
@@ -390,8 +378,7 @@ def build_custom_dataset(
     if is_main_process():
         completion_length_report(ds_dict, subset, main_process=is_main_process())
 
-    num_max_nodes = 20
-    return ds_dict["train"], ds_dict["validation"], ds_dict["test"] if do_eval else None, num_max_nodes
+    return ds_dict["train"], ds_dict["validation"], ds_dict["test"] if do_eval else None
 
 
 def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
@@ -537,36 +524,38 @@ def main():
     if is_main_process():
         print(f"Subset: {args.subset}")
 
+    # Wandb initialization, output directory
+    output_dir, date_str = setup_run_context(args.dataset, args.subset, args.wandb, glm_args)
+
     # Fix seed for reproducibility
     set_seed(42)
 
-    # Load dataset
+    # Training
     match args.dataset:
         case "GraphQA":
             if args.use_custom_dataset:
                 if is_main_process():
                     print("[INFO] Building dataset with custom prompt.")
-                train_ds, eval_ds, test_ds, num_max_nodes = build_custom_dataset(
+                train_ds, eval_ds, test_ds = build_custom_dataset(
                     args.subset,
                     glm_args["node_feat_dim"],
                     do_eval=args.do_eval,
                 )
             else:
-                train_ds, eval_ds, test_ds, num_max_nodes = build_graphqa_dataset(
+                train_ds, eval_ds, test_ds = build_graphqa_dataset(
                     args.subset,
                     glm_args["node_feat_dim"],
                     do_eval=args.do_eval,
                     load_from_cache_file=False,
                 )
         case "MotifQA":
-            train_ds, eval_ds, test_ds, num_max_nodes = build_motifqa_dataset(
-                args.subset,
+            train_ds, eval_ds, test_ds = build_motif_dataset(
                 glm_args["node_feat_dim"],
                 do_eval=args.do_eval,
                 load_from_cache_file=False,
             )
 
-    # Save datasets locally for debugging
+    # Save datasets locally as JSONL (only on the main process to avoid races)
     out_dir = os.path.join("ds_debug", args.subset)
     if is_main_process():
         os.makedirs(out_dir, exist_ok=True)
@@ -575,24 +564,13 @@ def main():
         if args.do_eval:
             test_ds.to_json(os.path.join(out_dir, "test.jsonl"), orient="records", lines=True)
 
-    # Update node capacity of GLM if needed
-    if num_max_nodes > glm_args["num_max_nodes"]:
-        glm_args["num_max_nodes"] = num_max_nodes
-        if is_main_process():
-            print(f"[INFO] Updated glm_args['num_max_nodes'] as {num_max_nodes}.")
-
-    # Initialize wandb, setup output directory and date
-    output_dir, date_str = setup_run_context(args.dataset, args.subset, args.wandb, glm_args)
-
-    # Training
     model, ckpt_path = train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args)
 
     # Quick evaluation with 1 trial
     if args.do_eval and test_ds is not None:
         if is_main_process():
             print("***** Evaluation *****")
-        max_new_tokens_dict = EXT_MAX_NEW_TOKENS if args.use_custom_dataset else MAX_NEW_TOKENS
-        max_new_tokens = max_new_tokens_dict.get(args.subset, 32)
+        max_new_tokens = get_max_new_tokens(args.subset, args.use_custom_dataset)
         eval_ddp(model, args.subset, test_ds, max_new_tokens, date_str, args.wandb)
 
     if dist.is_initialized():

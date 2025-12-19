@@ -24,16 +24,13 @@ graphqa_subsets=(
 	# edge_count
 	# cycle_check
 	# triangle_counting
-	# node_degree
-	# reachability
-	# edge_existence
+	node_degree
+	reachability
+	edge_existence
 )
 
 motifqa_subsets=(
-	ba_shapes
-	tree_cycle
-	tree_grid
-	ba_two_motifs
+	# house_check
 )
 
 gnns=(
@@ -61,8 +58,7 @@ run_train_loop() {
 		# --lr-scheduler-type "linear" --warmup-ratio 0.05
 		--optim "adamw" --lr 0.0075 --weight-decay 0.01
 		--lr-scheduler-type "cosine" --warmup-ratio 0.05
-		--do-eval
-		--wandb
+		--do-eval --wandb
 	)
 	log "[START] ${cmd[*]}"
 	start_ts=$(date +%s)

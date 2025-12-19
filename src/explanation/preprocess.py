@@ -17,10 +17,10 @@ def build_dataset(dataset: str, subset: str, split: str, node_feat_dim: int) -> 
                 load_from_cache_file=False,
             )
         case "MotifQA":
-            ds_raw = load_dataset("naos-ku/motif-qa", subset, split=split)
+            ds_raw = load_dataset("naos-ku/motif-qa", "yes_no", split=split)
             ds = ds_raw.map(
                 lambda x: add_graph_column(x, k=node_feat_dim, ds_name="MotifQA"),
-                remove_columns=["response", "nodes", "edges", "nedges", "nnodes"],
+                remove_columns=["response", "nedges", "nnodes"],
                 load_from_cache_file=False,
             )
     return ds.add_column("index", list(range(len(ds))))
@@ -30,7 +30,7 @@ def filter_dataset(
     dataset: arrow_dataset.Dataset, args: argparse.Namespace, run_name: str
 ) -> tuple[arrow_dataset.Dataset, str]:
     """Filter dataset based on CLI args and return the filtered dataset and output directory."""
-    subset = args.subset if args.subset is not None else "ba_shapes"
+    subset = args.subset if args.subset is not None else "house_check"
     out_dir = os.path.join("explanations", subset, run_name)
 
     if args.sample_idx is not None:
