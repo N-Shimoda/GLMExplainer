@@ -17,8 +17,8 @@ def get_class(class_labels: set[str], pred: str) -> str:
     Returns
     -------
     str
-        The identified class label, "<|unknown|>" if multiple labels match, or
-        "unknown" if none match.
+        The identified class label, or "<|unknown|>" if multiple labels match
+        or none match.
     """
     matched_labels = {label for label in class_labels if label in pred.lower()}
     if len(matched_labels) == 1:
