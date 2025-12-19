@@ -97,7 +97,7 @@ def build_args(*, multitask: bool = False):
     p.add_argument("--lr-scheduler-type", type=str, choices=["linear", "cosine"], default="linear")
     p.add_argument("--warmup-ratio", type=float, default=0)
     p.add_argument("--per-device-train-batch-size", type=int, default=2)
-    p.add_argument("--per-device-eval-batch-size", type=int, default=2)
+    p.add_argument("--per-device-eval-batch-size", type=int, default=4)
     p.add_argument("--gradient-accumulation-steps", type=int, default=4)
     p.add_argument("--save-intermediate-models", action="store_true", help="Save intermediate models")
     p.add_argument("--save-interval-epochs", type=int, default=1, help="Save every N epochs")
