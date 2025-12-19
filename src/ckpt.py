@@ -90,7 +90,7 @@ def _resolve_ckpt_path(model_path: str, model_index: int = -1, ckpt_index: int =
                         return int(parts[-1])
                     except ValueError:
                         pass
-                return 0  # Non-numeric or malformed checkpoints go first
+                return -1  # Non-numeric or malformed checkpoints go first
             
             # Ensure deterministic ordering of checkpoints (e.g., for "latest"/"earliest" selection)
             ckpt_dirs.sort(key=_ckpt_sort_key)
