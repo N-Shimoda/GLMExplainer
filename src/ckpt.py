@@ -85,7 +85,7 @@ def _resolve_ckpt_path(model_path: str, model_index: int = -1, ckpt_index: int =
         case "checkpoint":
             # Final checkpoint directory (may or may not contain a config.json depending on layout)
             if ckpt_index != -1:
-                print("[WARNING] Ignored `checkpoint_index` because a specific checkpoint path is provided.")
+                print("[WARNING] Ignored `ckpt_index` because a specific checkpoint path is provided.")
             run_name = os.path.basename(os.path.dirname(model_path.rstrip(os.sep)))
             return model_path, run_name
         case _:
