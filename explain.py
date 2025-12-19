@@ -8,6 +8,7 @@ from typing import Iterable
 
 import torch
 import torch.distributed as dist
+import wandb
 from torch_geometric.data import Batch as PygBatch
 from torch_geometric.explain import (
     Explainer,
@@ -20,9 +21,9 @@ from tqdm import tqdm
 from transformers import AutoTokenizer, GenerationConfig
 from transformers.trainer_utils import set_seed
 
-import wandb
 from eval import create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
+from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 from src.explanation.logging import (
     _record_sample_average_metrics,
     _write_metrics_header,
@@ -87,6 +88,25 @@ def _cleanup_distributed() -> None:
         dist.destroy_process_group()
 
 
+def validate_args(args: argparse.Namespace) -> None:
+    """Validates the parsed command-line arguments."""
+    # Dataset and subset
+    if args.dataset == "MotifQA" and args.subset not in MOTIFQA_SUBSETS:
+        raise ValueError(f"Available MotifQA subsets are {MOTIFQA_SUBSETS} ({args.subset} was given).")
+    if args.dataset == "GraphQA" and args.subset not in GRAPHQA_SUBSETS:
+        raise ValueError(f"Available GraphQA subsets are {GRAPHQA_SUBSETS} ({args.subset} was given).")
+
+    # Sample filtering
+    if args.target_value is not None and args.sample_idx is not None:
+        raise ValueError("Only one of `target_value` or `sample_idx` should be specified.")
+    if args.explain_pos_samples and args.dataset != "MotifQA":
+        raise ValueError("`--explain-pos-sample` is only supported for the MotifQA dataset.")
+    if args.num_samples is not None and args.sample_idx is not None:
+        raise ValueError("Only one of `num_samples` or `sample_idx` should be specified.")
+    if args.num_trials < 1:
+        raise ValueError("`num_trials` must be at least 1.")
+
+
 def build_args():
     def check_non_negative_int(value: str) -> int:
         try:
@@ -98,9 +118,11 @@ def build_args():
         return ivalue
 
     p = argparse.ArgumentParser(description="Explain GraphTokenLM predictions using GNNExplainer")
+
+    # Model checkpoint
     p.add_argument("--model-path", type=str, required=True, help="Path to the model checkpoint")
 
-    # Dataset arguments
+    # Dataset setting
     p.add_argument(
         "--dataset",
         type=str,
@@ -111,7 +133,7 @@ def build_args():
     p.add_argument(
         "--subset",
         type=str,
-        choices=["node_count", "edge_count", "cycle_check", "triangle_counting"],
+        choices=MOTIFQA_SUBSETS + GRAPHQA_SUBSETS,
         help="Dataset subset to use. Only applicable for GraphQA.",
     )
     p.add_argument(
@@ -122,7 +144,7 @@ def build_args():
         help="Dataset split to use (default: test)",
     )
 
-    # Dataset filtering arguments
+    # Sample filtering
     p.add_argument(
         "--explain-pos-samples",
         action="store_true",
@@ -147,35 +169,24 @@ def build_args():
         "--num-trials", type=int, default=1, help="Number of trials for explaining each sample (default: 1)"
     )
 
-    # GNNExplainer arguments
+    # Hyper-parameters for GNNExplainer
     p.add_argument("--edge-size", type=float, default=0.005, help="GNNExplainer edge size parameter (default: 0.005)")
     p.add_argument("--edge-ent", type=float, default=1.0, help="GNNExplainer edge entropy parameter (default: 1.0)")
     p.add_argument("--epochs", type=int, default=200, help="GNNExplainer optimization epochs (default: 200)")
     p.add_argument("--lr", type=float, default=0.01, help="GNNExplainer learning rate (default: 0.01)")
 
-    # Logging arguments
+    # Logging
     p.add_argument(
         "--wandb",
         action="store_true",
         help="Log per-sample explanation metrics to Weights & Biases.",
     )
 
+    # Parse and validate args
     args = p.parse_args()
+    validate_args(args)
 
-    # Validate arguments
-    if args.target_value is not None and args.sample_idx is not None:
-        raise ValueError("Only one of `target_value` or `sample_idx` should be specified.")
-    if args.dataset == "MotifQA" and args.subset is not None:
-        raise ValueError("`subset` argument is only applicable for GraphQA dataset.")
-    if args.dataset == "GraphQA" and args.subset is None:
-        raise ValueError("`subset` argument must be specified for GraphQA dataset.")
-    if args.explain_pos_samples and args.dataset != "MotifQA":
-        raise ValueError("`--explain-pos-sample` is only supported for the MotifQA dataset.")
-    if args.num_samples is not None and args.sample_idx is not None:
-        raise ValueError("Only one of `num_samples` or `sample_idx` should be specified.")
-    if args.num_trials < 1:
-        raise ValueError("`num_trials` must be at least 1.")
-
+    # Extract explainer args
     explainer_keys = ["epochs", "lr", "edge_size", "edge_ent"]
     explainer_args = {key: getattr(args, key) for key in explainer_keys}
     for key in explainer_keys:
