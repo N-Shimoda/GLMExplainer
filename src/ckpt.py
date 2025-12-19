@@ -1,13 +1,7 @@
 import os
 from typing import Literal, Tuple
 
-
-def _checkpoint_step(path: str) -> int:
-    name = os.path.basename(path.rstrip(os.sep))
-    try:
-        return int(name.split("-")[-1])
-    except (ValueError, IndexError):
-        return -1
+from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 
 
 def _get_dir_type(path: str) -> Literal["task", "model", "checkpoint"]:
@@ -17,16 +11,7 @@ def _get_dir_type(path: str) -> Literal["task", "model", "checkpoint"]:
         return "model"
     elif dir_name.startswith("checkpoint-"):
         return "checkpoint"
-    elif dir_name in [
-        "node_count",
-        "edge_count",
-        "cycle_check",
-        "triangle_counting",
-        "ba_shapes",
-        "tree_cycle",
-        "tree_grid",
-        "multitask",
-    ]:
+    elif dir_name in GRAPHQA_SUBSETS + MOTIFQA_SUBSETS + ["multitask"]:
         return "task"
     else:
         raise ValueError(f"Directory '{path}' is neither a task, model, nor checkpoint directory.")
