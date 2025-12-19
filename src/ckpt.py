@@ -80,7 +80,18 @@ def _resolve_ckpt_path(model_path: str, model_index: int = -1, ckpt_index: int =
                 for entry in os.listdir(model_path)
                 if os.path.isdir(os.path.join(model_path, entry)) and entry.startswith("checkpoint")
             ]
-            ckpt_dir = ckpt_dirs[ckpt_index]
+            # Ensure deterministic ordering of checkpoints (e.g., for "latest"/"earliest" selection)
+            ckpt_dirs.sort()
+            if not ckpt_dirs:
+                raise FileNotFoundError(f"No checkpoint directories found under '{model_path}'.")
+            
+            try:
+                ckpt_dir = ckpt_dirs[ckpt_index]
+            except IndexError:
+                raise IndexError(
+                    f"Checkpoint index {ckpt_index} is out of range for {len(ckpt_dirs)} checkpoints "
+                    f"under '{model_path}'."
+                )
             return ckpt_dir, run_name
         case "checkpoint":
             # Final checkpoint directory (may or may not contain a config.json depending on layout)
