@@ -54,7 +54,8 @@ def build_args(*, multitask: bool = False):
 
     # Model selection
     p.add_argument("--model-path", type=str, required=True)
-    p.add_argument("--model-version-index", type=int, default=-1)
+    p.add_argument("--model-index", type=int, default=-1, help="Which trained model version to use.")
+    p.add_argument("--checkpoint-index", type=int, default=-1, help="Which checkpoint version to use.")
 
     # Evaluation settings
     p.add_argument("--num-trials", type=int, default=1)
@@ -243,7 +244,7 @@ def main():
     args = build_args()
 
     # Load pre-trained model
-    ckpt_path, run_name = _resolve_ckpt_path(args.model_path, args.model_version_index)
+    ckpt_path, run_name = _resolve_ckpt_path(args.model_path, args.model_index, args.checkpoint_index)
     print(f"Checkpoint: {ckpt_path}")
     model = load_model_for_eval(ckpt_path, load_llm_weights=False)
 
