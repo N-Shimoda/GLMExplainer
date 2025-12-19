@@ -13,7 +13,7 @@ from transformers import AutoTokenizer
 from transformers.trainer_utils import set_seed
 from trl import SFTConfig, SFTTrainer
 
-from eval import collect_result, eval_model, get_max_new_tokens
+from eval import EXT_MAX_NEW_TOKENS, MAX_NEW_TOKENS, collect_result, eval_model
 from src.collator import GraphQACollator
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 from src.ds_stats import completion_length_report
@@ -591,7 +591,8 @@ def main():
     if args.do_eval and test_ds is not None:
         if is_main_process():
             print("***** Evaluation *****")
-        max_new_tokens = get_max_new_tokens(args.subset, args.use_custom_dataset)
+        max_new_tokens_dict = EXT_MAX_NEW_TOKENS if args.use_custom_dataset else MAX_NEW_TOKENS
+        max_new_tokens = max_new_tokens_dict.get(args.subset, 32)
         eval_ddp(model, args.subset, test_ds, max_new_tokens, date_str, args.wandb)
 
     if dist.is_initialized():

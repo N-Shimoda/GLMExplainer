@@ -16,18 +16,40 @@ from src.glm import GraphTokenLM
 from src.metrics import comp_accuracy
 from src.preprocess import add_graph_column
 
+MAX_NEW_TOKENS = {
+    "node_count": 4,
+    "edge_count": 4,
+    "cycle_check": 8,
+    "triangle_counting": 4,
+    "reachability": 4,
+    "node_degree": 4,
+    "edge_existence": 4,
+    "ba_shapes": 8,
+    "tree_cycle": 8,
+    "tree_grid": 8,
+    "ba_two_motifs": 12,
+}
+EXT_MAX_NEW_TOKENS = {
+    "node_count": 96,
+    "edge_count": 256,
+    "cycle_check": 512,
+    "triangle_counting": 256,
+}
+
 
 def build_args(*, multitask: bool = False):
     p = argparse.ArgumentParser()
 
     # Dataset settings
     if not multitask:
+        p.add_argument("--dataset", type=str, choices=["GraphQA", "MotifQA"], required=True)
         p.add_argument(
             "--subset",
             type=str,
             choices=GRAPHQA_SUBSETS + MOTIFQA_SUBSETS,
             default="edge_count",
         )
+    p.add_argument("--split", choices=["train", "validation", "test"], default="test")
     p.add_argument("--use-custom-dataset", action="store_true", default=False)
 
     # Model selection
@@ -36,7 +58,6 @@ def build_args(*, multitask: bool = False):
 
     # Evaluation settings
     p.add_argument("--num-trials", type=int, default=1)
-    p.add_argument("--split", choices=["train", "validation", "test"], default="test")
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--max-new-tokens", type=int)
 
@@ -106,17 +127,9 @@ def create_pyg_batch(
     return batch
 
 
-def build_dataset(subset: str, split: str, node_feat_dim: int):
-    match subset:
-        case (
-            "node_count"
-            | "edge_count"
-            | "cycle_check"
-            | "triangle_counting"
-            | "reachability"
-            | "node_degree"
-            | "edge_existence"
-        ):
+def build_dataset(dataset: str, subset: str, split: str, node_feat_dim: int):
+    match dataset:
+        case "GraphQA":
             test_raw = load_dataset("baharef/GraphQA", subset, split=f"zero_shot_{split}")
             test_ds = test_raw.map(
                 lambda x: add_graph_column(x, k=node_feat_dim),
@@ -131,7 +144,7 @@ def build_dataset(subset: str, split: str, node_feat_dim: int):
                     "text_encoding",
                 ],
             )
-        case "ba_shapes" | "tree_cycle" | "tree_grid":
+        case "MotifQA":
             test_raw = load_dataset("naos-ku/motif-qa", subset, split=split)
             test_ds = test_raw.map(
                 lambda x: add_graph_column(x, k=node_feat_dim, ds_name="MotifQA"),
@@ -139,27 +152,6 @@ def build_dataset(subset: str, split: str, node_feat_dim: int):
                 desc="add_graph_column(test)",
             )
     return test_ds
-
-
-def get_max_new_tokens(subset: str, use_custom: bool = False) -> int:
-    max_new_tokens_dict = (
-        {"node_count": 96, "edge_count": 256, "cycle_check": 512, "triangle_counting": 256}
-        if use_custom
-        else {
-            "node_count": 4,
-            "edge_count": 4,
-            "cycle_check": 8,
-            "triangle_counting": 4,
-            "reachability": 4,
-            "node_degree": 4,
-            "edge_existence": 4,
-            "ba_shapes": 8,
-            "tree_cycle": 8,
-            "tree_grid": 8,
-            "ba_two_motifs": 12,
-        }
-    )
-    return max_new_tokens_dict.get(subset, 32)
 
 
 @torch.no_grad()
@@ -256,7 +248,7 @@ def main():
     model = load_model_for_eval(ckpt_path, load_llm_weights=False)
 
     # Load dataset
-    test_ds = build_dataset(args.subset, args.split, model.config.node_feat_dim)
+    test_ds = build_dataset(args.dataset, args.subset, args.split, model.config.node_feat_dim)
     repeated_ds = concatenate_datasets([test_ds] * args.num_trials)
 
     # Evaluate the model
@@ -264,7 +256,8 @@ def main():
         max_new_tokens = args.max_new_tokens
         print(f"Using user-specified max_new_tokens: {max_new_tokens}")
     else:
-        max_new_tokens = get_max_new_tokens(args.subset, args.use_custom_dataset)
+        max_new_tokens_dict = EXT_MAX_NEW_TOKENS if args.use_custom_dataset else MAX_NEW_TOKENS
+        max_new_tokens = max_new_tokens_dict.get(args.subset, 32)
     results = eval_model(model, repeated_ds, args.batch_size, max_new_tokens)
 
     # Save results
