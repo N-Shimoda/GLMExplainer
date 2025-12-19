@@ -81,7 +81,8 @@ def _resolve_ckpt_path(model_path: str, model_index: int = -1, ckpt_index: int =
                 if os.path.isdir(os.path.join(model_path, entry)) and entry.startswith("checkpoint")
             ]
             # Ensure deterministic ordering of checkpoints (e.g., for "latest"/"earliest" selection)
-            ckpt_dirs.sort()
+            # Use numeric sorting based on checkpoint step number
+            ckpt_dirs.sort(key=lambda x: int(os.path.basename(x).split('-')[-1]) if os.path.basename(x).split('-')[-1].isdigit() else 0)
             if not ckpt_dirs:
                 raise FileNotFoundError(f"No checkpoint directories found under '{model_path}'.")
             
@@ -89,8 +90,9 @@ def _resolve_ckpt_path(model_path: str, model_index: int = -1, ckpt_index: int =
                 ckpt_dir = ckpt_dirs[ckpt_index]
             except IndexError:
                 raise IndexError(
-                    f"Checkpoint index {ckpt_index} is out of range for {len(ckpt_dirs)} checkpoints "
-                    f"under '{model_path}'."
+                    f"Checkpoint index {ckpt_index} is out of range. "
+                    f"Valid indices are 0 to {len(ckpt_dirs)-1} (or -1 to -{len(ckpt_dirs)}) "
+                    f"for {len(ckpt_dirs)} checkpoints under '{model_path}'."
                 )
             return ckpt_dir, run_name
         case "checkpoint":
