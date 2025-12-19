@@ -80,7 +80,31 @@ def _resolve_ckpt_path(model_path: str, model_index: int = -1, ckpt_index: int =
                 for entry in os.listdir(model_path)
                 if os.path.isdir(os.path.join(model_path, entry)) and entry.startswith("checkpoint")
             ]
-            ckpt_dir = ckpt_dirs[ckpt_index]
+            
+            def _ckpt_sort_key(path: str):
+                """Extract numeric checkpoint step from path like 'checkpoint-123'."""
+                basename = os.path.basename(path)
+                parts = basename.split("-")
+                if len(parts) >= 2:
+                    try:
+                        return int(parts[-1])
+                    except ValueError:
+                        pass
+                return -1  # Non-numeric or malformed checkpoints go first
+            
+            # Ensure deterministic ordering of checkpoints (e.g., for "latest"/"earliest" selection)
+            ckpt_dirs.sort(key=_ckpt_sort_key)
+            if not ckpt_dirs:
+                raise FileNotFoundError(f"No checkpoint directories found under '{model_path}'.")
+            
+            try:
+                ckpt_dir = ckpt_dirs[ckpt_index]
+            except IndexError:
+                raise IndexError(
+                    f"Checkpoint index {ckpt_index} is out of range. "
+                    f"Valid indices are 0 to {len(ckpt_dirs)-1} (or -1 to -{len(ckpt_dirs)}) "
+                    f"for {len(ckpt_dirs)} checkpoints under '{model_path}'."
+                )
             return ckpt_dir, run_name
         case "checkpoint":
             # Final checkpoint directory (may or may not contain a config.json depending on layout)
