@@ -1,4 +1,4 @@
-LOG_FILE="logs/explain_house_check.log"
+LOG_FILE="logs/explain_ba_shapes.log"
 rm -f "$LOG_FILE"
 mkdir -p logs
 
