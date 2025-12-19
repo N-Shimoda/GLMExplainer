@@ -1,8 +1,9 @@
 import csv
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
+import torch
 from .metrics import (
     EDGE_MASK_STABILITY_KEYS,
     compute_edge_mask_stability_metrics_per_sample,
@@ -91,6 +92,49 @@ def write_average_metrics_csv(
     return dict(per_sample_stability), aggregated_stability
 
 
+def _compute_sample_average_row(
+    sample_idx: int,
+    stats: dict[str, float] | None,
+    edge_masks: Iterable[torch.Tensor] | None,
+) -> dict[str, float] | None:
+    """Compute averaged accuracy and stability metrics for a single sample."""
+    if not stats:
+        return None
+    count = int(stats.get("count", 0))
+    if count <= 0:
+        return None
+    row: dict[str, float] = {
+        "sample_index": sample_idx,
+        "answer_accuracy": stats.get("answer_accuracy_sum", 0.0) / count,
+        "auroc": stats.get("auroc_sum", 0.0) / count,
+        "auprc": stats.get("auprc_sum", 0.0) / count,
+        "f1": stats.get("f1_sum", 0.0) / count,
+    }
+    mask_list = list(edge_masks) if edge_masks is not None else []
+    stability = compute_edge_mask_stability_metrics_per_sample({sample_idx: mask_list}).get(sample_idx, {})
+    for key in EDGE_MASK_STABILITY_KEYS:
+        row[key] = stability.get(key, 0.0)
+    return row
+
+
+def _record_sample_average_metrics(
+    avg_log_path: str | None,
+    fieldnames: list[str] | None,
+    sample_idx: int,
+    stats: dict[str, float] | None,
+    edge_masks: Iterable[torch.Tensor] | None,
+) -> None:
+    """Append a per-sample averaged metrics row to the CSV log if possible."""
+    if avg_log_path is None or fieldnames is None:
+        return
+    row = _compute_sample_average_row(sample_idx, stats, edge_masks)
+    if row is None:
+        return
+    with open(avg_log_path, "a", newline="") as avg_file:
+        writer = csv.DictWriter(avg_file, fieldnames=fieldnames)
+        writer.writerow(row)
+
+
 def append_run_history_row(history_path: str | Path, row: Mapping[str, Any]) -> None:
     """Append a run-level record to the shared history CSV.
 
@@ -125,4 +169,10 @@ def append_run_history_row(history_path: str | Path, row: Mapping[str, Any]) -> 
         writer.writerow({key: row.get(key, "") for key in fieldnames})
 
 
-__all__ = ["_write_metrics_header", "write_average_metrics_csv", "append_run_history_row"]
+__all__ = [
+    "_write_metrics_header",
+    "write_average_metrics_csv",
+    "append_run_history_row",
+    "_compute_sample_average_row",
+    "_record_sample_average_metrics",
+]
