@@ -1,13 +1,7 @@
 import os
 from typing import Literal, Tuple
 
-
-def _checkpoint_step(path: str) -> int:
-    name = os.path.basename(path.rstrip(os.sep))
-    try:
-        return int(name.split("-")[-1])
-    except (ValueError, IndexError):
-        return -1
+from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 
 
 def _get_dir_type(path: str) -> Literal["task", "model", "checkpoint"]:
@@ -17,13 +11,13 @@ def _get_dir_type(path: str) -> Literal["task", "model", "checkpoint"]:
         return "model"
     elif dir_name.startswith("checkpoint-"):
         return "checkpoint"
-    elif dir_name in ["node_count", "edge_count", "cycle_check", "triangle_counting", "house_check", "multitask"]:
+    elif dir_name in GRAPHQA_SUBSETS + MOTIFQA_SUBSETS + ["multitask"]:
         return "task"
     else:
         raise ValueError(f"Directory '{path}' is neither a task, model, nor checkpoint directory.")
 
 
-def _resolve_ckpt_path(model_path: str, version_index: int = -1) -> Tuple[str, str]:
+def _resolve_ckpt_path(model_path: str, model_index: int = -1, ckpt_index: int = -1) -> Tuple[str, str]:
     """
     Resolve the concrete checkpoint directory to load.
 
@@ -31,11 +25,16 @@ def _resolve_ckpt_path(model_path: str, version_index: int = -1) -> Tuple[str, s
     ----------
     model_path : str
         Path to the task directory, model directory or a specific checkpoint.
-    version_index : int
+    model_index : int
         If multiple checkpoints exist, select the one with this index (0-based).
         -1 specifies the latest, 0 the earliest, etc.
         - The index should be specified within the range of available checkpoints.
         - This parameter is only used when `model_path` points to a task directory.
+    ckpt_index : int
+        If multiple checkpoints exist within a model directory, select the one with this index (0-based).
+        -1 specifies the latest, 0 the earliest, etc.
+        - The index should be specified within the range of available checkpoints.
+        - This parameter is only used when `model_path` points to a model or task directory.
 
     Returns
     -------
@@ -71,20 +70,22 @@ def _resolve_ckpt_path(model_path: str, version_index: int = -1) -> Tuple[str, s
                 return key
 
             run_dirs.sort(key=_run_sort_key)
-            latest_dir = os.path.join(model_path, run_dirs[version_index])
-            return _resolve_ckpt_path(latest_dir)
+            latest_dir = os.path.join(model_path, run_dirs[model_index])
+            return _resolve_ckpt_path(latest_dir, ckpt_index=ckpt_index)
         case "model":
             # This directory already contains the model (config.json present)
             run_name = os.path.basename(model_path.rstrip(os.sep))
-            checkpoint_dirs = [
+            ckpt_dirs = [
                 os.path.join(model_path, entry)
                 for entry in os.listdir(model_path)
                 if os.path.isdir(os.path.join(model_path, entry)) and entry.startswith("checkpoint")
             ]
-            latest_ckpt = max(checkpoint_dirs, key=lambda p: (_checkpoint_step(p), p))
-            return latest_ckpt, run_name
+            ckpt_dir = ckpt_dirs[ckpt_index]
+            return ckpt_dir, run_name
         case "checkpoint":
             # Final checkpoint directory (may or may not contain a config.json depending on layout)
+            if ckpt_index != -1:
+                print("[WARNING] Ignored `ckpt_index` because a specific checkpoint path is provided.")
             run_name = os.path.basename(os.path.dirname(model_path.rstrip(os.sep)))
             return model_path, run_name
         case _:

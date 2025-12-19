@@ -7,4 +7,4 @@ GRAPHQA_SUBSETS = [
     "node_degree",
     "edge_existence",
 ]
-MOTIFQA_SUBSETS = ["house_check"]
+MOTIFQA_SUBSETS = ["ba_shapes", "tree_cycle", "tree_grid", "ba_two_motifs"]
