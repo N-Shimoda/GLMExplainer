@@ -1,4 +1,4 @@
-for subset in cycle_tree ba_two_motifs; do
+for subset in tree_cycle ba_two_motifs; do
 	for dim in 16 32 64 128 256 512; do
 		torchrun --nproc_per_node=2 train.py \
 			--dataset "MotifQA" --subset "${subset}" \
