@@ -19,65 +19,37 @@ log() {
 	echo "[$ts] $*" | tee -a "$LOG_FILE"
 }
 
-# -----------------------------------------
-# Argument parsing
-# Accepts --split {test|train|validation} and passes to eval.py
-# Default is test
-# -----------------------------------------
-SPLIT="test"
-while [[ $# -gt 0 ]]; do
-	case "$1" in
-	--split)
-		if [[ $# -lt 2 ]]; then
-			echo "ERROR: --split requires a value (test|train|validation)" >&2
-			exit 2
-		fi
-		SPLIT="$2"
-		shift 2
-		;;
-	-h | --help)
-		cat <<USAGE
-Usage: $(basename "$0") [--split {test|train|validation}]
+graphqa_subsets=(
+	# node_count
+	# edge_count
+	# cycle_check
+	# triangle_counting
+	# reachability
+	# node_degree
+	# edge_existence
+)
 
-Options:
-  --split   Which dataset split to evaluate (default: test)
-USAGE
-		exit 0
-		;;
-	*)
-		echo "ERROR: Unknown argument: $1" >&2
-		exit 2
-		;;
-	esac
-done
-
-# Validate split value
-case "$SPLIT" in
-test | train | validation) ;;
-*)
-	echo "ERROR: --split should be chosen from test|train|validation (got: $SPLIT)" >&2
-	exit 2
-	;;
-esac
-
-subsets=(
-	node_count
-	edge_count
-	cycle_check
-	triangle_counting
+motifqa_subsets=(
 	ba_shapes
 	tree_cycle
 	tree_grid
+	ba_two_motifs
 )
 
-for subset in "${subsets[@]}"; do
+ckpt_indices=(-2 -1)
+
+run_eval_loop() {
+	local dataset="$1"
+	local subset="$2"
+	local ckpt_index="$3"
+
 	cmd=(
-		python eval.py --subset "${subset}"
+		python eval.py --dataset "${dataset}" --subset "${subset}"
 		--model-path "outputs/${subset}"
-		--split "${SPLIT}"
 		--batch-size 64
 		--num-trials 10
-		--model-version-index -1
+		--model-index -1
+		--ckpt-index "${ckpt_index}"
 	)
 	log "[START] ${cmd[*]}"
 	start_ts=$(date +%s)
@@ -101,20 +73,31 @@ for subset in "${subsets[@]}"; do
 			if [[ -n "$acc_value" ]]; then
 				acc_percent="$(awk -v acc="$acc_value" 'BEGIN { printf "%.3f", acc * 100 }')"
 				acc_note=" accuracy=${acc_percent}% (raw=${acc_value})"
-				log "[INFO] subset=${subset}${acc_note}"
+				log "[INFO] dataset=${dataset} subset=${subset} ckpt_index=${ckpt_index}${acc_note}"
 			else
-				log "[WARNING] subset=${subset} accuracy value not found in summary output."
+				log "[WARNING] dataset=${dataset} subset=${subset} ckpt_index=${ckpt_index} accuracy value not found in summary output."
 			fi
 		else
-			log "[WARNING] subset=${subset} summary line not found in eval output."
+			log "[WARNING] dataset=${dataset} subset=${subset} ckpt_index=${ckpt_index} summary line not found in eval output."
 		fi
-		log "[COMPLETED] subset=${subset} duration=${dur}s${acc_note}"
+		log "[COMPLETED] dataset=${dataset} subset=${subset} ckpt_index=${ckpt_index} duration=${dur}s${acc_note}"
 	else
-		log "[ERROR] subset=${subset} rc=${rc} duration=${dur}s"
+		log "[ERROR] dataset=${dataset} subset=${subset} ckpt_index=${ckpt_index} rc=${rc} duration=${dur}s"
 		exit $rc
 	fi
 	echo
+}
 
+for subset in "${graphqa_subsets[@]}"; do
+	for ckpt_index in "${ckpt_indices[@]}"; do
+		run_eval_loop "GraphQA" "$subset" "$ckpt_index"
+	done
+done
+
+for subset in "${motifqa_subsets[@]}"; do
+	for ckpt_index in "${ckpt_indices[@]}"; do
+		run_eval_loop "MotifQA" "$subset" "$ckpt_index"
+	done
 done
 
 log "[INFO] ALL subsets finished successfully."
