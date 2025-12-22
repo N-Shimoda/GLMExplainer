@@ -44,9 +44,9 @@ run_eval_loop() {
 	local ckpt_index="$3"
 
 	cmd=(
-		python eval.py --dataset "${dataset}" --subset "${subset}"
+		torchrun --standalone --nproc_per_node=2 eval.py
+		--dataset "${dataset}" --subset "${subset}"
 		--model-path "outputs/${subset}"
-		--batch-size 64
 		--num-trials 10
 		--model-index -1
 		--ckpt-index "${ckpt_index}"
