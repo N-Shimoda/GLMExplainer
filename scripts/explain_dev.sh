@@ -24,7 +24,7 @@ run_explain_loop() {
 		--dataset "MotifQA" --subset "${subset}"
 		--model-path "outputs/${subset}"
 		--explain-pos-samples
-		--num-samples 16 --num-trials 10
+		--num-samples 8 --num-trials 5
 		--epochs 200 --lr 0.1
 		--edge-size 96 --edge-ent 1.0
 		# --wandb
