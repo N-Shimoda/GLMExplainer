@@ -37,8 +37,8 @@ from src.glm import GraphTokenLM
 from src.metrics import comp_accuracy
 from src.utils import visualize_motif_explanation
 
-GRAPH_SVG_SUBDIR = "graphs"
-NODE_FEAT_SVG_SUBDIR = "node_feat"
+GRAPH_PDF_SUBDIR = "graphs"
+NODE_FEAT_PDF_SUBDIR = "node_feat"
 TRIAL_OVERRIDE_COLUMN = "_trial_override"
 AVERAGE_METRIC_FIELDNAMES = [
     "sample_index",
@@ -437,13 +437,13 @@ def explain_sample(
     # Directories to save figures
     suffix = f"{sample['index']}_{trial_idx}" if num_trials > 1 else f"{sample['index']}"
     out_dir = os.path.dirname(log_path)
-    graph_dir = os.path.join(out_dir, GRAPH_SVG_SUBDIR, f"graph_{sample['index']}")
-    node_feat_dir = os.path.join(out_dir, NODE_FEAT_SVG_SUBDIR, f"node_feat_{sample['index']}")
+    graph_dir = os.path.join(out_dir, GRAPH_PDF_SUBDIR, f"graph_{sample['index']}")
+    node_feat_dir = os.path.join(out_dir, NODE_FEAT_PDF_SUBDIR, f"node_feat_{sample['index']}")
     os.makedirs(graph_dir, exist_ok=True)
     os.makedirs(node_feat_dir, exist_ok=True)
 
     # Save visualizations
-    graph_path = os.path.join(graph_dir, f"{suffix}.svg")
+    graph_path = os.path.join(graph_dir, f"{suffix}.pdf")
     if dataset_name == "MotifQA":
         visualize_motif_explanation(
             sample=sample,
@@ -454,7 +454,7 @@ def explain_sample(
         )
     else:
         explanation.visualize_graph(graph_path)
-    feature_path = os.path.join(node_feat_dir, f"node_feat_{suffix}.svg")
+    feature_path = os.path.join(node_feat_dir, f"node_feat_{suffix}.pdf")
     explanation.visualize_feature_importance(feature_path)
 
     return metrics_logged, exp_accuracy, ans_accuracy_val, pred_edge_mask
