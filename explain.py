@@ -331,6 +331,9 @@ def _generate_explanation(
         )
         return None, acc
 
+    # Update output_text to the first correct generation
+    wrapper.set_output(generated[correct_mask.nonzero(as_tuple=True)[0][0]])
+
     # Generate explanation by GNNExplainer
     explainer = Explainer(
         model=wrapper,

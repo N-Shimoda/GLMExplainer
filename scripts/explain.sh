@@ -32,7 +32,7 @@ run_explain_loop() {
 		--num-trials 5
 		--epochs $epochs --lr $lr
 		--edge-size $edge_size --edge-ent $edge_ent
-		# --wandb
+		--wandb
 	)
 	log "[INFO] Starting explanation with edge_size: $edge_size, edge_ent: $edge_ent"
 	log "[START] ${cmd[*]}"

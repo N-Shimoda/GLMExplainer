@@ -129,3 +129,23 @@ class GLMWrapper(torch.nn.Module):
         else:
             output_text = self.tokenizer.decode(self.generated_ids, skip_special_tokens=True)
         return output_text
+
+    def set_output(self, output_text: str):
+        """Overwrites the generated output text with a custom output.
+        `set_input` must be called before this method.
+
+        Parameters
+        ----------
+        output_text : str
+            The generated output text.
+        """
+        if not isinstance(output_text, str):
+            raise ValueError("Output text must be a string.")
+        if output_text.strip() == "":
+            raise ValueError("Output text cannot be empty.")
+        if self.input_text is None or self._graph_template is None:
+            raise ValueError(
+                "Input text and graph template must be set before setting output. Please call `set_input` first."
+            )
+        else:
+            self.generated_ids = self.tokenizer.encode(output_text, return_tensors="pt").squeeze(0)
