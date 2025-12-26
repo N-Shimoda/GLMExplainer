@@ -322,17 +322,17 @@ def _generate_explanation(
     # Generate output and verify correctness
     generated = [wrapper.set_input(sample["prompt"], pyg_batch, gen_cfg) for _ in range(num_trials)]
 
-    # Compute accuracy
+    # Update output_text to the first correct generation
     acc, _, correct_mask = comp_accuracy(generated, [sample["completion"]] * len(generated), subset="ba_shapes")
-    if not any(correct_mask):
+    try:
+        first_correct_idx = correct_mask.index(True)
+        wrapper.set_output(generated[first_correct_idx])
+    except ValueError:
         print(
             f"[WARN] Failed to generate the correct answer for sample[index={sample['index']}] "
             f"(correct answer: `{sample['completion']}`)."
         )
         return None, acc
-
-    # Update output_text to the first correct generation
-    wrapper.set_output(generated[correct_mask.nonzero(as_tuple=True)[0][0]])
 
     # Generate explanation by GNNExplainer
     explainer = Explainer(
