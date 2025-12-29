@@ -66,7 +66,7 @@ for subset in "${subsets[@]}"; do
 	log "[INFO] Starting explanations for subset='${subset}'"
 	for epochs in 200; do
 		for lr in 0.1; do
-			for edge_size in 12 48 96; do
+			for edge_size in 0.0005 0.005 0.05 0.5 5.0; do
 				for edge_ent in 1.0; do
 					run_explain_loop "$subset" "$epochs" "$lr" "$edge_size" "$edge_ent"
 				done
