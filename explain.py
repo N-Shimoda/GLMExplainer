@@ -635,7 +635,7 @@ def process_dataset(
 def main():
     set_seed(42)
     args, explainer_args = build_args()
-    run_name = datetime.now().strftime("%m%d-%H%M")
+    run_name = f"{args.subset}_{datetime.now().strftime('%m%d-%H%M')}"
 
     # Setup DDP, random seed, and device
     rank, world_size, local_rank, is_distributed = _init_distributed_if_needed()
