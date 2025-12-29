@@ -156,5 +156,5 @@ def visualize_motif_explanation(
     ax_graph.set_axis_off()
     fig.tight_layout()
     os.makedirs(os.path.dirname(graph_path), exist_ok=True)
-    fig.savefig(graph_path, format="svg")
+    fig.savefig(graph_path)
     plt.close(fig)

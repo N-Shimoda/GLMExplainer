@@ -4,7 +4,9 @@ import os
 from math import ceil
 
 import torch
+import torch.distributed as dist
 from datasets import concatenate_datasets, load_dataset
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch_geometric.data import Batch as PygBatch
 from torch_geometric.data import Data as PygData
 from tqdm import tqdm
@@ -59,26 +61,22 @@ def build_args(*, multitask: bool = False):
 
     # Evaluation settings
     p.add_argument("--num-trials", type=int, default=1)
-    p.add_argument("--batch-size", type=int, default=64)
+    p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--max-new-tokens", type=int)
 
     return p.parse_args()
 
 
-def load_model_for_eval(model_path: str, *, load_llm_weights: bool = False) -> GraphTokenLM:
-    """Load GraphTokenLM with multi-GPU support when available."""
+def load_model_for_eval(
+    model_path: str, *, load_llm_weights: bool = False, device: torch.device | None = None
+) -> GraphTokenLM:
+    """Load GraphTokenLM onto a single device (DDP handles data-parallel)."""
+    model = GraphTokenLM.from_pretrained(model_path, load_llm_weights=load_llm_weights)
+    if device is not None:
+        return model.to(device)
     if torch.cuda.is_available():
-        if torch.cuda.device_count() > 1:
-            return GraphTokenLM.from_pretrained(
-                model_path,
-                load_llm_weights=load_llm_weights,
-                device_map="auto",
-            )
-        return GraphTokenLM.from_pretrained(
-            model_path,
-            load_llm_weights=load_llm_weights,
-        ).to("cuda")
-    return GraphTokenLM.from_pretrained(model_path, load_llm_weights=load_llm_weights)
+        return model.to("cuda:0")
+    return model
 
 
 def _unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
@@ -87,27 +85,27 @@ def _unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
 
 def _infer_model_device(model: torch.nn.Module) -> torch.device:
     base_model = _unwrap_model(model)
-    device_map = getattr(base_model, "hf_device_map", None)
-    if device_map:
-        skip_devices = {None, "cpu", "meta"}
-        for device in device_map.values():
-            if device in skip_devices:
-                continue
-            if isinstance(device, int):
-                return torch.device(f"cuda:{device}")
-            if isinstance(device, torch.device):
-                return device
-            return torch.device(device)
-        first_device = next(iter(device_map.values()))
-        if isinstance(first_device, int):
-            return torch.device(f"cuda:{first_device}")
-        if isinstance(first_device, torch.device):
-            return first_device
-        if isinstance(first_device, str):
-            return torch.device(first_device)
-        # fall back to the module's first parameter device
-        return next(base_model.parameters()).device
     return next(base_model.parameters()).device
+
+
+def _init_distributed() -> tuple[bool, int, int, int]:
+    if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
+        rank = int(os.environ["RANK"])
+        world_size = int(os.environ["WORLD_SIZE"])
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        backend = "nccl" if torch.cuda.is_available() else "gloo"
+        dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
+        if torch.cuda.is_available():
+            torch.cuda.set_device(local_rank)
+        return True, rank, world_size, local_rank
+    return False, 0, 1, 0
+
+
+def _shard_dataset(total: int, rank: int, world_size: int) -> tuple[int, int]:
+    per_rank = ceil(total / world_size) if world_size > 0 else total
+    start = rank * per_rank
+    end = min(start + per_rank, total)
+    return start, end
 
 
 def create_pyg_batch(
@@ -176,7 +174,8 @@ def eval_model(model: GraphTokenLM, test_ds, batch_size: int, max_new_tokens: in
         A list of dictionaries containing the evaluation results with keys "question", "preds", and "answer".
     """
     model.eval()
-    tokenizer = AutoTokenizer.from_pretrained(model.config.base_model, trust_remote_code=True)
+    base_model = _unwrap_model(model)
+    tokenizer = AutoTokenizer.from_pretrained(base_model.config.base_model, trust_remote_code=True)
     tokenizer.padding_side = "left"
 
     gen_cfg = GenerationConfig(
@@ -196,7 +195,7 @@ def eval_model(model: GraphTokenLM, test_ds, batch_size: int, max_new_tokens: in
         batch["graph"] = pyg_batch
 
         input_ids = tokenizer(batch["prompt"], return_tensors="pt", padding=True).to(model_device)
-        outputs = model.generate(**input_ids, graph=pyg_batch, generation_config=gen_cfg)
+        outputs = base_model.generate(**input_ids, graph=pyg_batch, generation_config=gen_cfg)
         decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
 
         res_dict_li = [
@@ -241,35 +240,57 @@ def collect_result(results: list[dict], res_file: str, subset: str):
 
 
 def main():
+    use_dist, rank, world_size, local_rank = _init_distributed()
+    is_main = rank == 0
     args = build_args()
 
     # Load pre-trained model
     ckpt_path, run_name = _resolve_ckpt_path(args.model_path, args.model_index, args.ckpt_index)
-    print(f"Checkpoint: {ckpt_path}")
-    model = load_model_for_eval(ckpt_path, load_llm_weights=False)
+    if is_main:
+        print(f"Checkpoint: {ckpt_path}")
+    device = torch.device(f"cuda:{local_rank}") if torch.cuda.is_available() else torch.device("cpu")
+    model = load_model_for_eval(ckpt_path, load_llm_weights=False, device=device)
+    if use_dist:
+        model = DDP(model, device_ids=[local_rank] if torch.cuda.is_available() else None)
+    base_model = _unwrap_model(model)
 
     # Load dataset
-    test_ds = build_dataset(args.dataset, args.subset, args.split, model.config.node_feat_dim)
+    test_ds = build_dataset(args.dataset, args.subset, args.split, base_model.config.node_feat_dim)
     repeated_ds = concatenate_datasets([test_ds] * args.num_trials)
+    if use_dist and world_size > 1:
+        start, end = _shard_dataset(len(repeated_ds), rank, world_size)
+        repeated_ds = repeated_ds.select(range(start, end))
 
     # Evaluate the model
     if args.max_new_tokens is not None:
         max_new_tokens = args.max_new_tokens
-        print(f"Using user-specified max_new_tokens: {max_new_tokens}")
+        if is_main:
+            print(f"Using user-specified max_new_tokens: {max_new_tokens}")
     else:
         max_new_tokens_dict = EXT_MAX_NEW_TOKENS if args.use_custom_dataset else MAX_NEW_TOKENS
         max_new_tokens = max_new_tokens_dict.get(args.subset, 32)
     results = eval_model(model, repeated_ds, args.batch_size, max_new_tokens)
 
     # Save results
-    match args.split:
-        case "test":
-            file_name = f"{run_name}.json" if run_name else "results.json"
-        case _:
-            file_name = f"{run_name}_{args.split}.json" if run_name else f"results_{args.split}.json"
-    res_file = os.path.join("results", args.subset, file_name)
-    acc = collect_result(results, res_file, args.subset)
-    print(f"[SUMMARY] subset={args.subset} accuracy={acc}")
+    if use_dist:
+        gathered: list[list[dict]] = [None for _ in range(world_size)]
+        dist.all_gather_object(gathered, results)
+        if is_main:
+            results = [item for sublist in gathered for item in sublist]
+
+    if is_main:
+        match args.split:
+            case "test":
+                file_name = f"{run_name}.json" if run_name else "results.json"
+            case _:
+                file_name = f"{run_name}_{args.split}.json" if run_name else f"results_{args.split}.json"
+        res_file = os.path.join("results", args.subset, file_name)
+        acc = collect_result(results, res_file, args.subset)
+        print(f"[SUMMARY] subset={args.subset} accuracy={acc}")
+
+    if use_dist:
+        dist.barrier()
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":
