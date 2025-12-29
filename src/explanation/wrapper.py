@@ -137,7 +137,7 @@ class GLMWrapper(torch.nn.Module):
         Parameters
         ----------
         output_text : str
-            The generated output text.
+            The custom output text to set for explanation.
         """
         if not isinstance(output_text, str):
             raise ValueError("Output text must be a string.")
