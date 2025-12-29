@@ -290,6 +290,7 @@ def _generate_explanation(
     wrapper: GLMWrapper,
     sample: dict[str, str],
     pyg_batch: PygBatch,
+    subset: str,
     gen_cfg: GenerationConfig,
     explainer_args: dict[str, float | int],
     num_trials: int = 10,
@@ -304,6 +305,8 @@ def _generate_explanation(
         A single dataset sample containing 'question' and 'completion'.
     pyg_batch : torch_geometric.data.Batch
         The graph data in PyG Batch format.
+    subset : str
+        The dataset subset name (e.g., "ba_shapes").
     gen_cfg : GenerationConfig
         Configuration for text generation.
     explainer_args : dict[str, float | int]
@@ -323,7 +326,7 @@ def _generate_explanation(
     generated = [wrapper.set_input(sample["prompt"], pyg_batch, gen_cfg) for _ in range(num_trials)]
 
     # Update output_text to the first correct generation
-    acc, _, correct_mask = comp_accuracy(generated, [sample["completion"]] * len(generated), subset="ba_shapes")
+    acc, _, correct_mask = comp_accuracy(generated, [sample["completion"]] * len(generated), subset)
     try:
         first_correct_idx = correct_mask.index(True)
         wrapper.set_output(generated[first_correct_idx])
@@ -354,6 +357,7 @@ def _generate_explanation(
 def explain_sample(
     wrapper: GLMWrapper,
     sample: dict[str, str],
+    subset: str,
     trial_idx: int,
     num_trials: int,
     gen_cfg: GenerationConfig,
@@ -373,6 +377,8 @@ def explain_sample(
     sample : dict[str, str]
         Dataset entry that must contain the graph structure as well as fields
         required by :func:`create_pyg_batch` and :func:`_generate_explanation`.
+    subset : str
+        Name of the dataset subset being processed (e.g., ``"ba_shapes"``).
     trial_idx : int
         Index of the current trial for the given ``sample``.
     num_trials : int
@@ -407,7 +413,7 @@ def explain_sample(
     model_device = wrapper.model.device
     pyg_batch = create_pyg_batch(sample["graph"], device=model_device)
     explanation, ans_accuracy = _generate_explanation(
-        wrapper, sample, pyg_batch, gen_cfg, explainer_args=explainer_args, num_trials=num_gen_trials
+        wrapper, sample, pyg_batch, subset, gen_cfg, explainer_args=explainer_args, num_trials=num_gen_trials
     )
 
     if explanation is None:
@@ -467,6 +473,7 @@ def process_dataset(
     dataset: Iterable[dict[str, str]],
     model: GraphTokenLM,
     tokenizer: AutoTokenizer,
+    subset: str,
     log_path: str,
     fieldnames: list[str],
     show_progress: bool,
@@ -487,6 +494,8 @@ def process_dataset(
         Pretrained GraphToken language model whose predictions are explained.
     tokenizer : AutoTokenizer
         Tokenizer paired with ``model`` and used to build prompts.
+    subset : str
+        Name of the dataset subset being processed (e.g., ``"ba_shapes"``).
     log_path : str
         CSV path forwarded to :func:`explain_sample` for appending per-trial
         metrics.
@@ -525,6 +534,8 @@ def process_dataset(
     progress reporting. When the dataset carries a ``_trial_override`` column,
     those overrides supersede ``args.num_trials`` for the affected samples.
     """
+    # Initialize model wrapper
+    wrapper = GLMWrapper(model, tokenizer)
     gen_cfg = GenerationConfig(
         max_new_tokens=10,
         do_sample=True,
@@ -532,6 +543,7 @@ def process_dataset(
         pad_token_id=tokenizer.eos_token_id,
     )
 
+    # Prepare logging
     exp_metric_totals = {"auroc": 0.0, "auprc": 0.0, "f1": 0.0}
     total_answer_accuracy = 0.0
     total_count = 0
@@ -548,17 +560,17 @@ def process_dataset(
     trial_completion_counts: defaultdict[int, int] = defaultdict(int)
     finalized_samples: set[int] = set()
 
+    # Check for per-sample trial overrides
     has_trial_override = False
     if hasattr(dataset, "column_names") and TRIAL_OVERRIDE_COLUMN in dataset.column_names:
         # Ensure at least one sample carries an override before switching modes.
         if len(dataset) > 0 and dataset[0].get(TRIAL_OVERRIDE_COLUMN) is not None:
             has_trial_override = True
 
+    # Setup progress bar
     per_sample_trials = 1 if has_trial_override else args.num_trials
     total_steps = len(dataset) * per_sample_trials
     progress = tqdm(total=total_steps) if show_progress and total_steps > 0 else None
-
-    wrapper = GLMWrapper(model, tokenizer)
 
     start_time = time.time()
 
@@ -575,6 +587,7 @@ def process_dataset(
             logged, exp_accuracy, ans_accuracy_single, edge_mask = explain_sample(
                 wrapper=wrapper,
                 sample=sample,
+                subset=subset,
                 trial_idx=i,
                 num_trials=args.num_trials,
                 gen_cfg=gen_cfg,
@@ -719,6 +732,7 @@ def main():
         dataset=dataset,
         model=model,
         tokenizer=tokenizer,
+        subset=args.subset,
         log_path=shard_log_path,
         fieldnames=fieldnames,
         show_progress=(is_rank0 and len(dataset) > 0),
