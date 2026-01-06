@@ -218,7 +218,7 @@ class ExplanationGraphViewer:
             left_cols = st.columns(3)
             for col, key, label in zip(left_cols, ["auroc", "auprc", "f1"], ["AUROC", "AUPRC", "F1"]):
                 left_value = left_metrics[key]
-                col.metric(label, value=f"{left_value:.4f}", delta=0.0, delta_color="off", border=True)
+                col.metric(label, value=f"{left_value:.4f}")
 
         with metrics_right:
             right_cols = st.columns(3)
@@ -226,7 +226,7 @@ class ExplanationGraphViewer:
                 left_value = left_metrics[key]
                 right_value = right_metrics[key]
                 delta = right_value - left_value
-                col.metric(label, value=f"{right_value:.4f}", delta=f"{delta:+.4f}", border=True)
+                col.metric(label, value=f"{right_value:.4f}", delta=f"{delta:+.4f}")
 
     def run(self) -> None:
         self.create_selections()
