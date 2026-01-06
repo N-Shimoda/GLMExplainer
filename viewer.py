@@ -185,6 +185,7 @@ class ExplanationGraphViewer:
             or self.left_pdf_name is None
             or self.right_pdf_name is None
             or self.graph_name is None
+            or self.trial is None
         ):
             st.error("Selections are incomplete.")
             st.stop()
@@ -194,25 +195,6 @@ class ExplanationGraphViewer:
 
         left_pdf = left_graph_path / self.left_pdf_name
         right_pdf = right_graph_path / self.right_pdf_name
-
-        left_col, right_col = st.columns(2)
-        with left_col:
-            st.subheader(f"{self.left_run_name} / {self.graph_name} / {self.left_pdf_name}")
-            self.embed_graph(left_pdf)
-        with right_col:
-            st.subheader(f"{self.right_run_name} / {self.graph_name} / {self.right_pdf_name}")
-            self.embed_graph(right_pdf)
-
-    def create_metrics(self) -> None:
-        if (
-            self.subset_path is None
-            or self.left_run_name is None
-            or self.right_run_name is None
-            or self.graph_name is None
-            or self.trial is None
-        ):
-            st.error("Selections are incomplete.")
-            st.stop()
 
         graph_index = self.graph_index(self.graph_name)
         if graph_index is None:
@@ -226,31 +208,37 @@ class ExplanationGraphViewer:
             st.warning("Metrics unavailable for the selected graph.")
             return
 
-        metrics_left, metrics_right = st.columns(2)
-        with metrics_left:
-            left_cols = st.columns(3)
-            for col, key, label in zip(left_cols, ["auroc", "auprc", "f1"], ["AUROC", "AUPRC", "F1"]):
-                left_value = left_metrics[key]
-                col.metric(label, value=f"{left_value:.4f}")
+        left_col, right_col = st.columns(2)
+        with left_col:
+            st.subheader(f"Left: `{self.left_run_name}`")
+            self.display_graph(left_pdf, left_metrics, left_metrics, delta_color="off")
+        with right_col:
+            st.subheader(f"Right: `{self.right_run_name}`")
+            self.display_graph(right_pdf, right_metrics, left_metrics)
 
-        with metrics_right:
-            right_cols = st.columns(3)
-            for col, key, label in zip(right_cols, ["auroc", "auprc", "f1"], ["AUROC", "AUPRC", "F1"]):
-                left_value = left_metrics[key]
-                right_value = right_metrics[key]
-                delta = right_value - left_value
-                col.metric(label, value=f"{right_value:.4f}", delta=f"{delta:+.4f}")
+    def display_graph(
+        self,
+        file_path: Path,
+        metrics: dict[str, float],
+        delta_base: dict[str, float],
+        delta_color: str = "normal",
+    ) -> None:
+        metric_cols = st.columns(3)
+        for col, key, label in zip(metric_cols, ["auroc", "auprc", "f1"], ["AUROC", "AUPRC", "F1"]):
+            value = metrics[key]
+            delta = value - delta_base[key]
+            col.metric(label, value=f"{value:.4f}", delta=f"{delta:+.4f}", delta_color=delta_color)
+        self.embed_graph(file_path)
 
     def run(self) -> None:
         self.create_selections()
+        st.divider()
         self.create_graphs()
-        self.create_metrics()
 
 
 if __name__ == "__main__":
-
-    st.set_page_config(page_title="Explanation Graph Viewer", layout="wide")
     st.title("Explanation Graph Viewer")
+    st.set_page_config(page_title="Explanation Graph Viewer", layout="wide")
 
     if not EXPLANATIONS_DIR.exists():
         st.error(f"Missing explanations directory: `{EXPLANATIONS_DIR}`")
