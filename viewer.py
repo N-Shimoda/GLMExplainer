@@ -19,6 +19,7 @@ class ExplanationGraphViewer:
         self.left_pdf_name: str | None = None
         self.right_pdf_name: str | None = None
         self.graph_name: str | None = None
+        self.trial: int | None = None
 
     @staticmethod
     def list_dirs(path: Path) -> list[Path]:
@@ -63,19 +64,20 @@ class ExplanationGraphViewer:
         return None
 
     @staticmethod
-    def load_sample_metrics(path: Path, graph_index: int) -> dict[str, float] | None:
+    def load_sample_metrics(path: Path, graph_index: int, trial: int) -> dict[str, float] | None:
         if not path.exists():
             return None
         df = pd.read_csv(path)
-        if "sample_index" not in df.columns:
+        if "sample_index" not in df.columns or "trial" not in df.columns:
             return None
-        filtered = df[df["sample_index"] == graph_index]
+        filtered = df[(df["sample_index"] == graph_index) & (df["trial"] == trial)]
         if filtered.empty:
             return None
+        row = filtered.iloc[0]
         return {
-            "auroc": float(filtered["auroc"].mean()),
-            "auprc": float(filtered["auprc"].mean()),
-            "f1": float(filtered["f1"].mean()),
+            "auroc": float(row["auroc"]),
+            "auprc": float(row["auprc"]),
+            "f1": float(row["f1"]),
         }
 
     def create_selections(self) -> None:
@@ -148,6 +150,7 @@ class ExplanationGraphViewer:
 
         self.left_pdf_name = left_pdf_by_counter[pdf_counter_value]
         self.right_pdf_name = right_pdf_by_counter[pdf_counter_value]
+        self.trial = int(pdf_counter_value)
 
     def create_graphs(self) -> None:
         if (
@@ -183,6 +186,7 @@ class ExplanationGraphViewer:
             or self.left_run_name is None
             or self.right_run_name is None
             or self.graph_name is None
+            or self.trial is None
         ):
             st.error("Selections are incomplete.")
             st.stop()
@@ -193,8 +197,8 @@ class ExplanationGraphViewer:
             return
         left_metrics_path = self.subset_path / self.left_run_name / "sample_metrics.csv"
         right_metrics_path = self.subset_path / self.right_run_name / "sample_metrics.csv"
-        left_metrics = self.load_sample_metrics(left_metrics_path, graph_index)
-        right_metrics = self.load_sample_metrics(right_metrics_path, graph_index)
+        left_metrics = self.load_sample_metrics(left_metrics_path, graph_index, self.trial)
+        right_metrics = self.load_sample_metrics(right_metrics_path, graph_index, self.trial)
         if left_metrics is None or right_metrics is None:
             st.warning("Metrics unavailable for the selected graph.")
             return
@@ -221,11 +225,13 @@ class ExplanationGraphViewer:
 
 
 if __name__ == "__main__":
+
+    st.set_page_config(page_title="Explanation Graph Viewer", layout="wide")
+    st.title("Explanation Graph Viewer")
+
     if not EXPLANATIONS_DIR.exists():
         st.error(f"Missing explanations directory: `{EXPLANATIONS_DIR}`")
         st.stop()
 
-    st.set_page_config(page_title="Explanation Graph Viewer", layout="wide")
-    st.title("Explanation Graph Viewer")
     viewer = ExplanationGraphViewer(EXPLANATIONS_DIR)
     viewer.run()
