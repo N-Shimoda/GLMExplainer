@@ -148,4 +148,5 @@ class GLMWrapper(torch.nn.Module):
                 "Input text and graph template must be set before setting output. Please call `set_input` first."
             )
         else:
-            self.generated_ids = self.tokenizer(output_text, return_tensors="pt").to(self.model.device).squeeze(0)
+            output_ids = self.tokenizer(output_text, return_tensors="pt")["input_ids"].squeeze(0)
+            self.generated_ids = output_ids.to(self.model.device)
