@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import re
 from pathlib import Path
 
 import streamlit as st
@@ -52,13 +53,27 @@ with right_run:
 
 left_graphs = list_dirs(subset_path / left_run_name / "graphs")
 right_graphs = list_dirs(subset_path / right_run_name / "graphs")
-common_graphs = sorted({p.name for p in left_graphs} & {p.name for p in right_graphs})
+
+
+def graph_sort_key(name: str) -> tuple[int, str]:
+    match = re.match(r"graph_(\d+)$", name)
+    if match:
+        return (0, f"{int(match.group(1)):09d}")
+    return (1, name)
+
+
+common_graphs = sorted(
+    {p.name for p in left_graphs} & {p.name for p in right_graphs},
+    key=graph_sort_key,
+)
 
 if not common_graphs:
     st.warning("No common graphs found for the selected runs.")
     st.stop()
 
-graph_name = st.selectbox("Graph (common subset)", common_graphs)
+graph_col, pdf_col = st.columns(2)
+with graph_col:
+    graph_name = st.selectbox("Graph (common subset)", common_graphs)
 
 left_graph_path = subset_path / left_run_name / "graphs" / graph_name
 right_graph_path = subset_path / right_run_name / "graphs" / graph_name
@@ -67,21 +82,54 @@ left_pdfs = list_pdfs(left_graph_path)
 right_pdfs = list_pdfs(right_graph_path)
 common_pdfs = sorted({p.name for p in left_pdfs} & {p.name for p in right_pdfs})
 
-if not common_pdfs:
+def pdf_counter(name: str) -> int | None:
+    match = re.match(r".*_(\d+)\.pdf$", name)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+left_pdf_by_counter = {}
+for name in (p.name for p in left_pdfs):
+    counter = pdf_counter(name)
+    if counter is not None and counter not in left_pdf_by_counter:
+        left_pdf_by_counter[counter] = name
+
+right_pdf_by_counter = {}
+for name in (p.name for p in right_pdfs):
+    counter = pdf_counter(name)
+    if counter is not None and counter not in right_pdf_by_counter:
+        right_pdf_by_counter[counter] = name
+
+common_counters = sorted(set(left_pdf_by_counter) & set(right_pdf_by_counter))
+
+if not common_counters:
     st.warning("No common PDF files found in the selected graph.")
     st.stop()
 
-pdf_name = st.selectbox("PDF (common subset)", common_pdfs)
+with pdf_col:
+    pdf_counter_value = st.number_input(
+        "PDF index (common subset)",
+        min_value=min(common_counters),
+        max_value=max(common_counters),
+        value=common_counters[0],
+        step=1,
+    )
+if pdf_counter_value not in left_pdf_by_counter or pdf_counter_value not in right_pdf_by_counter:
+    st.warning("Selected PDF index is not available in both runs.")
+    st.stop()
+left_pdf_name = left_pdf_by_counter[pdf_counter_value]
+right_pdf_name = right_pdf_by_counter[pdf_counter_value]
 
-left_pdf = left_graph_path / pdf_name
-right_pdf = right_graph_path / pdf_name
+left_pdf = left_graph_path / left_pdf_name
+right_pdf = right_graph_path / right_pdf_name
 
 st.caption(f"Rendering from: `{EXPLANATIONS_DIR}`")
 
 left_col, right_col = st.columns(2)
 with left_col:
-    st.subheader(f"{left_run_name} / {graph_name} / {pdf_name}")
+    st.subheader(f"{left_run_name} / {graph_name} / {left_pdf_name}")
     embed_pdf(left_pdf)
 with right_col:
-    st.subheader(f"{right_run_name} / {graph_name} / {pdf_name}")
+    st.subheader(f"{right_run_name} / {graph_name} / {right_pdf_name}")
     embed_pdf(right_pdf)
