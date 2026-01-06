@@ -4,6 +4,7 @@ import base64
 import re
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 EXPLANATIONS_DIR = Path("explanations")
@@ -47,6 +48,29 @@ class ExplanationGraphViewer:
         if match:
             return int(match.group(1))
         return None
+
+    @staticmethod
+    def graph_index(name: str) -> int | None:
+        match = re.match(r"graph_(\d+)$", name)
+        if match:
+            return int(match.group(1))
+        return None
+
+    @staticmethod
+    def load_sample_metrics(path: Path, graph_index: int) -> dict[str, float] | None:
+        if not path.exists():
+            return None
+        df = pd.read_csv(path)
+        if "sample_index" not in df.columns:
+            return None
+        filtered = df[df["sample_index"] == graph_index]
+        if filtered.empty:
+            return None
+        return {
+            "auroc": float(filtered["auroc"].mean()),
+            "auprc": float(filtered["auprc"].mean()),
+            "f1": float(filtered["f1"].mean()),
+        }
 
     def create_selections(self) -> tuple[Path, str, str, str, str, str]:
         subset_dirs = self.list_dirs(self.base_dir)
@@ -153,6 +177,39 @@ class ExplanationGraphViewer:
             st.subheader(f"{right_run_name} / {graph_name} / {right_pdf_name}")
             self.embed_pdf(right_pdf)
 
+    def create_metrics(
+        self,
+        subset_path: Path,
+        left_run_name: str,
+        right_run_name: str,
+        graph_name: str,
+    ) -> None:
+        graph_index = self.graph_index(graph_name)
+        if graph_index is None:
+            st.warning("Unable to extract graph index for metric comparison.")
+            return
+        left_metrics_path = subset_path / left_run_name / "sample_metrics.csv"
+        right_metrics_path = subset_path / right_run_name / "sample_metrics.csv"
+        left_metrics = self.load_sample_metrics(left_metrics_path, graph_index)
+        right_metrics = self.load_sample_metrics(right_metrics_path, graph_index)
+        if left_metrics is None or right_metrics is None:
+            st.warning("Metrics unavailable for the selected graph.")
+            return
+        metric_cols = st.columns(3)
+        for col, key, label in zip(
+            metric_cols,
+            ["auroc", "auprc", "f1"],
+            ["AUROC", "AUPRC", "F1"],
+        ):
+            left_value = left_metrics[key]
+            right_value = right_metrics[key]
+            delta = left_value - right_value
+            col.metric(
+                label,
+                value=f"{left_value:.4f}",
+                delta=f"{delta:+.4f}",
+            )
+
     def run(self) -> None:
         (
             subset_path,
@@ -168,6 +225,12 @@ class ExplanationGraphViewer:
             right_run_name,
             left_pdf_name,
             right_pdf_name,
+            graph_name,
+        )
+        self.create_metrics(
+            subset_path,
+            left_run_name,
+            right_run_name,
             graph_name,
         )
 
