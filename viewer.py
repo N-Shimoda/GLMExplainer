@@ -118,14 +118,9 @@ class ExplanationGraphViewer:
             st.warning("No common graphs found for the selected runs.")
             st.stop()
 
-        graph_col, pdf_col = st.columns(2)
-        with graph_col:
-            if "graph_name" not in st.session_state or st.session_state["graph_name"] not in common_graphs:
-                st.session_state["graph_name"] = common_graphs[0]
-            pick_random = st.sidebar.button("Pick a graph", icon="🎲")
-            if pick_random:
-                st.session_state["graph_name"] = random.choice(common_graphs)
-            self.graph_name = st.selectbox("Graph (common subset)", common_graphs, key="graph_name")
+        if "graph_name" not in st.session_state or st.session_state["graph_name"] not in common_graphs:
+            st.session_state["graph_name"] = common_graphs[0]
+        self.graph_name = st.sidebar.selectbox("Graph", common_graphs, key="graph_name")
 
         left_graph_path = self.subset_path / self.left_run_name / "graphs" / self.graph_name
         right_graph_path = self.subset_path / self.right_run_name / "graphs" / self.graph_name
@@ -151,23 +146,21 @@ class ExplanationGraphViewer:
             st.warning("No common PDF files found in the selected graph.")
             st.stop()
 
-        if pick_random:
-            st.session_state["graph_file_index"] = random.choice(common_counters)
+        if "graph_file_index" not in st.session_state or st.session_state["graph_file_index"] not in common_counters:
+            st.session_state["graph_file_index"] = common_counters[0]
+        pdf_counter_value = st.sidebar.number_input(
+            "Graph file index",
+            min_value=min(common_counters),
+            max_value=max(common_counters),
+            value=st.session_state["graph_file_index"],
+            step=1,
+            key="graph_file_index",
+        )
 
-        with pdf_col:
-            if (
-                "graph_file_index" not in st.session_state
-                or st.session_state["graph_file_index"] not in common_counters
-            ):
-                st.session_state["graph_file_index"] = common_counters[0]
-            pdf_counter_value = st.number_input(
-                "Graph file index (common subset)",
-                min_value=min(common_counters),
-                max_value=max(common_counters),
-                value=st.session_state["graph_file_index"],
-                step=1,
-                key="graph_file_index",
-            )
+        pick_random = st.sidebar.button("Pick a graph", icon="🎲")
+        if pick_random:
+            st.session_state["graph_name"] = random.choice(common_graphs)
+            st.session_state["graph_file_index"] = random.choice(common_counters)
 
         if pdf_counter_value not in left_pdf_by_counter or pdf_counter_value not in right_pdf_by_counter:
             st.warning("Selected PDF index is not available in both runs.")
