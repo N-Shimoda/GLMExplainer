@@ -146,21 +146,23 @@ class ExplanationGraphViewer:
             st.warning("No common PDF files found in the selected graph.")
             st.stop()
 
-        if "graph_file_index" not in st.session_state or st.session_state["graph_file_index"] not in common_counters:
-            st.session_state["graph_file_index"] = common_counters[0]
+        if "trial_index" not in st.session_state or st.session_state["trial_index"] not in common_counters:
+            st.session_state["trial_index"] = common_counters[0]
         pdf_counter_value = st.sidebar.number_input(
-            "Graph file index",
+            "Trial index",
             min_value=min(common_counters),
             max_value=max(common_counters),
-            value=st.session_state["graph_file_index"],
+            value=st.session_state["trial_index"],
             step=1,
-            key="graph_file_index",
+            key="trial_index",
         )
+
+        st.sidebar.divider()
 
         pick_random = st.sidebar.button("Pick a graph", icon="🎲")
         if pick_random:
             st.session_state["graph_name"] = random.choice(common_graphs)
-            st.session_state["graph_file_index"] = random.choice(common_counters)
+            st.session_state["trial_index"] = random.choice(common_counters)
 
         if pdf_counter_value not in left_pdf_by_counter or pdf_counter_value not in right_pdf_by_counter:
             st.warning("Selected PDF index is not available in both runs.")
