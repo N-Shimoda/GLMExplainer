@@ -28,13 +28,23 @@ class ExplanationGraphViewer:
         return sorted([p for p in path.iterdir() if p.is_dir()])
 
     @staticmethod
-    def list_pdfs(path: Path) -> list[Path]:
+    def list_graph_files(path: Path) -> list[Path]:
         if not path.exists():
             return []
-        return sorted(path.glob("*.pdf"))
+        files = list(path.glob("*.pdf")) + list(path.glob("*.svg"))
+        return sorted(files)
 
     @staticmethod
-    def embed_pdf(path: Path) -> None:
+    def embed_graph(path: Path) -> None:
+        if path.suffix.lower() == ".svg":
+            svg_text = path.read_text(encoding="utf-8")
+            container = st.container(border=True)
+            with container:
+                st.markdown(
+                    f'<div style="width: 100%; height: 420px; overflow: auto;">{svg_text}</div>',
+                    unsafe_allow_html=True,
+                )
+            return
         pdf_bytes = path.read_bytes()
         b64 = base64.b64encode(pdf_bytes).decode("ascii")
         st.markdown(
@@ -50,8 +60,8 @@ class ExplanationGraphViewer:
         return (1, name)
 
     @staticmethod
-    def pdf_counter(name: str) -> int | None:
-        match = re.match(r".*_(\d+)\.pdf$", name)
+    def graph_file_counter(name: str) -> int | None:
+        match = re.match(r".*_(\d+)\.(pdf|svg)$", name)
         if match:
             return int(match.group(1))
         return None
@@ -114,18 +124,18 @@ class ExplanationGraphViewer:
         left_graph_path = self.subset_path / self.left_run_name / "graphs" / self.graph_name
         right_graph_path = self.subset_path / self.right_run_name / "graphs" / self.graph_name
 
-        left_pdfs = self.list_pdfs(left_graph_path)
-        right_pdfs = self.list_pdfs(right_graph_path)
+        left_files = self.list_graph_files(left_graph_path)
+        right_files = self.list_graph_files(right_graph_path)
 
         left_pdf_by_counter = {}
-        for name in (p.name for p in left_pdfs):
-            counter = self.pdf_counter(name)
+        for name in (p.name for p in left_files):
+            counter = self.graph_file_counter(name)
             if counter is not None and counter not in left_pdf_by_counter:
                 left_pdf_by_counter[counter] = name
 
         right_pdf_by_counter = {}
-        for name in (p.name for p in right_pdfs):
-            counter = self.pdf_counter(name)
+        for name in (p.name for p in right_files):
+            counter = self.graph_file_counter(name)
             if counter is not None and counter not in right_pdf_by_counter:
                 right_pdf_by_counter[counter] = name
 
@@ -137,7 +147,7 @@ class ExplanationGraphViewer:
 
         with pdf_col:
             pdf_counter_value = st.number_input(
-                "PDF index (common subset)",
+                "Graph file index (common subset)",
                 min_value=min(common_counters),
                 max_value=max(common_counters),
                 value=common_counters[0],
@@ -175,10 +185,10 @@ class ExplanationGraphViewer:
         left_col, right_col = st.columns(2)
         with left_col:
             st.subheader(f"{self.left_run_name} / {self.graph_name} / {self.left_pdf_name}")
-            self.embed_pdf(left_pdf)
+            self.embed_graph(left_pdf)
         with right_col:
             st.subheader(f"{self.right_run_name} / {self.graph_name} / {self.right_pdf_name}")
-            self.embed_pdf(right_pdf)
+            self.embed_graph(right_pdf)
 
     def create_metrics(self) -> None:
         if (
@@ -208,7 +218,7 @@ class ExplanationGraphViewer:
             left_cols = st.columns(3)
             for col, key, label in zip(left_cols, ["auroc", "auprc", "f1"], ["AUROC", "AUPRC", "F1"]):
                 left_value = left_metrics[key]
-                col.metric(label, value=f"{left_value:.4f}")
+                col.metric(label, value=f"{left_value:.4f}", delta=0.0, delta_color="off", border=True)
 
         with metrics_right:
             right_cols = st.columns(3)
@@ -216,7 +226,7 @@ class ExplanationGraphViewer:
                 left_value = left_metrics[key]
                 right_value = right_metrics[key]
                 delta = right_value - left_value
-                col.metric(label, value=f"{right_value:.4f}", delta=f"{delta:+.4f}")
+                col.metric(label, value=f"{right_value:.4f}", delta=f"{delta:+.4f}", border=True)
 
     def run(self) -> None:
         self.create_selections()
