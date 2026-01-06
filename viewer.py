@@ -91,14 +91,10 @@ class ExplanationGraphViewer:
         with left_run:
             self.left_run_name = st.selectbox("Left run", run_names, index=0)
         with right_run:
-            self.right_run_name = st.selectbox(
-                "Right run", run_names, index=min(1, len(run_names) - 1)
-            )
+            self.right_run_name = st.selectbox("Right run", run_names, index=min(1, len(run_names) - 1))
 
         left_graphs = self.list_dirs(self.subset_path / self.left_run_name / "graphs")
-        right_graphs = self.list_dirs(
-            self.subset_path / self.right_run_name / "graphs"
-        )
+        right_graphs = self.list_dirs(self.subset_path / self.right_run_name / "graphs")
 
         common_graphs = sorted(
             {p.name for p in left_graphs} & {p.name for p in right_graphs},
@@ -113,12 +109,8 @@ class ExplanationGraphViewer:
         with graph_col:
             self.graph_name = st.selectbox("Graph (common subset)", common_graphs)
 
-        left_graph_path = (
-            self.subset_path / self.left_run_name / "graphs" / self.graph_name
-        )
-        right_graph_path = (
-            self.subset_path / self.right_run_name / "graphs" / self.graph_name
-        )
+        left_graph_path = self.subset_path / self.left_run_name / "graphs" / self.graph_name
+        right_graph_path = self.subset_path / self.right_run_name / "graphs" / self.graph_name
 
         left_pdfs = self.list_pdfs(left_graph_path)
         right_pdfs = self.list_pdfs(right_graph_path)
@@ -169,12 +161,8 @@ class ExplanationGraphViewer:
             st.error("Selections are incomplete.")
             st.stop()
 
-        left_graph_path = (
-            self.subset_path / self.left_run_name / "graphs" / self.graph_name
-        )
-        right_graph_path = (
-            self.subset_path / self.right_run_name / "graphs" / self.graph_name
-        )
+        left_graph_path = self.subset_path / self.left_run_name / "graphs" / self.graph_name
+        right_graph_path = self.subset_path / self.right_run_name / "graphs" / self.graph_name
 
         left_pdf = left_graph_path / self.left_pdf_name
         right_pdf = right_graph_path / self.right_pdf_name
@@ -183,14 +171,10 @@ class ExplanationGraphViewer:
 
         left_col, right_col = st.columns(2)
         with left_col:
-            st.subheader(
-                f"{self.left_run_name} / {self.graph_name} / {self.left_pdf_name}"
-            )
+            st.subheader(f"{self.left_run_name} / {self.graph_name} / {self.left_pdf_name}")
             self.embed_pdf(left_pdf)
         with right_col:
-            st.subheader(
-                f"{self.right_run_name} / {self.graph_name} / {self.right_pdf_name}"
-            )
+            st.subheader(f"{self.right_run_name} / {self.graph_name} / {self.right_pdf_name}")
             self.embed_pdf(right_pdf)
 
     def create_metrics(self) -> None:
@@ -208,28 +192,27 @@ class ExplanationGraphViewer:
             st.warning("Unable to extract graph index for metric comparison.")
             return
         left_metrics_path = self.subset_path / self.left_run_name / "sample_metrics.csv"
-        right_metrics_path = (
-            self.subset_path / self.right_run_name / "sample_metrics.csv"
-        )
+        right_metrics_path = self.subset_path / self.right_run_name / "sample_metrics.csv"
         left_metrics = self.load_sample_metrics(left_metrics_path, graph_index)
         right_metrics = self.load_sample_metrics(right_metrics_path, graph_index)
         if left_metrics is None or right_metrics is None:
             st.warning("Metrics unavailable for the selected graph.")
             return
-        metric_cols = st.columns(3)
-        for col, key, label in zip(
-            metric_cols,
-            ["auroc", "auprc", "f1"],
-            ["AUROC", "AUPRC", "F1"],
-        ):
-            left_value = left_metrics[key]
-            right_value = right_metrics[key]
-            delta = left_value - right_value
-            col.metric(
-                label,
-                value=f"{left_value:.4f}",
-                delta=f"{delta:+.4f}",
-            )
+
+        metrics_left, metrics_right = st.columns(2)
+        with metrics_left:
+            left_cols = st.columns(3)
+            for col, key, label in zip(left_cols, ["auroc", "auprc", "f1"], ["AUROC", "AUPRC", "F1"]):
+                left_value = left_metrics[key]
+                col.metric(label, value=f"{left_value:.4f}")
+
+        with metrics_right:
+            right_cols = st.columns(3)
+            for col, key, label in zip(right_cols, ["auroc", "auprc", "f1"], ["AUROC", "AUPRC", "F1"]):
+                left_value = left_metrics[key]
+                right_value = right_metrics[key]
+                delta = right_value - left_value
+                col.metric(label, value=f"{right_value:.4f}", delta=f"{delta:+.4f}")
 
     def run(self) -> None:
         self.create_selections()
