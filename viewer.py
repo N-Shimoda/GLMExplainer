@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import random
 import re
 from pathlib import Path
 
@@ -93,7 +94,7 @@ class ExplanationGraphViewer:
     def create_selections(self) -> None:
         subset_dirs = self.list_dirs(self.base_dir)
         subset_names = [p.name for p in subset_dirs]
-        subset = st.selectbox("Subset", subset_names)
+        subset = st.sidebar.selectbox("Subset", subset_names)
 
         self.subset_path = self.base_dir / subset
         run_dirs = self.list_dirs(self.subset_path)
@@ -119,7 +120,12 @@ class ExplanationGraphViewer:
 
         graph_col, pdf_col = st.columns(2)
         with graph_col:
-            self.graph_name = st.selectbox("Graph (common subset)", common_graphs)
+            if "graph_name" not in st.session_state or st.session_state["graph_name"] not in common_graphs:
+                st.session_state["graph_name"] = common_graphs[0]
+            pick_random = st.sidebar.button("Pick a graph", icon="🎲")
+            if pick_random:
+                st.session_state["graph_name"] = random.choice(common_graphs)
+            self.graph_name = st.selectbox("Graph (common subset)", common_graphs, key="graph_name")
 
         left_graph_path = self.subset_path / self.left_run_name / "graphs" / self.graph_name
         right_graph_path = self.subset_path / self.right_run_name / "graphs" / self.graph_name
@@ -145,13 +151,22 @@ class ExplanationGraphViewer:
             st.warning("No common PDF files found in the selected graph.")
             st.stop()
 
+        if pick_random:
+            st.session_state["graph_file_index"] = random.choice(common_counters)
+
         with pdf_col:
+            if (
+                "graph_file_index" not in st.session_state
+                or st.session_state["graph_file_index"] not in common_counters
+            ):
+                st.session_state["graph_file_index"] = common_counters[0]
             pdf_counter_value = st.number_input(
                 "Graph file index (common subset)",
                 min_value=min(common_counters),
                 max_value=max(common_counters),
-                value=common_counters[0],
+                value=st.session_state["graph_file_index"],
                 step=1,
+                key="graph_file_index",
             )
 
         if pdf_counter_value not in left_pdf_by_counter or pdf_counter_value not in right_pdf_by_counter:
@@ -179,8 +194,6 @@ class ExplanationGraphViewer:
 
         left_pdf = left_graph_path / self.left_pdf_name
         right_pdf = right_graph_path / self.right_pdf_name
-
-        st.caption(f"Rendering from: `{self.base_dir}`")
 
         left_col, right_col = st.columns(2)
         with left_col:
