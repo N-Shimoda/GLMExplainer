@@ -13,6 +13,12 @@ EXPLANATIONS_DIR = Path("explanations")
 class ExplanationGraphViewer:
     def __init__(self, base_dir: Path) -> None:
         self.base_dir = base_dir
+        self.subset_path: Path | None = None
+        self.left_run_name: str | None = None
+        self.right_run_name: str | None = None
+        self.left_pdf_name: str | None = None
+        self.right_pdf_name: str | None = None
+        self.graph_name: str | None = None
 
     @staticmethod
     def list_dirs(path: Path) -> list[Path]:
@@ -72,23 +78,27 @@ class ExplanationGraphViewer:
             "f1": float(filtered["f1"].mean()),
         }
 
-    def create_selections(self) -> tuple[Path, str, str, str, str, str]:
+    def create_selections(self) -> None:
         subset_dirs = self.list_dirs(self.base_dir)
         subset_names = [p.name for p in subset_dirs]
         subset = st.selectbox("Subset", subset_names)
 
-        subset_path = self.base_dir / subset
-        run_dirs = self.list_dirs(subset_path)
+        self.subset_path = self.base_dir / subset
+        run_dirs = self.list_dirs(self.subset_path)
         run_names = [p.name for p in run_dirs]
 
         left_run, right_run = st.columns(2)
         with left_run:
-            left_run_name = st.selectbox("Left run", run_names, index=0)
+            self.left_run_name = st.selectbox("Left run", run_names, index=0)
         with right_run:
-            right_run_name = st.selectbox("Right run", run_names, index=min(1, len(run_names) - 1))
+            self.right_run_name = st.selectbox(
+                "Right run", run_names, index=min(1, len(run_names) - 1)
+            )
 
-        left_graphs = self.list_dirs(subset_path / left_run_name / "graphs")
-        right_graphs = self.list_dirs(subset_path / right_run_name / "graphs")
+        left_graphs = self.list_dirs(self.subset_path / self.left_run_name / "graphs")
+        right_graphs = self.list_dirs(
+            self.subset_path / self.right_run_name / "graphs"
+        )
 
         common_graphs = sorted(
             {p.name for p in left_graphs} & {p.name for p in right_graphs},
@@ -101,10 +111,14 @@ class ExplanationGraphViewer:
 
         graph_col, pdf_col = st.columns(2)
         with graph_col:
-            graph_name = st.selectbox("Graph (common subset)", common_graphs)
+            self.graph_name = st.selectbox("Graph (common subset)", common_graphs)
 
-        left_graph_path = subset_path / left_run_name / "graphs" / graph_name
-        right_graph_path = subset_path / right_run_name / "graphs" / graph_name
+        left_graph_path = (
+            self.subset_path / self.left_run_name / "graphs" / self.graph_name
+        )
+        right_graph_path = (
+            self.subset_path / self.right_run_name / "graphs" / self.graph_name
+        )
 
         left_pdfs = self.list_pdfs(left_graph_path)
         right_pdfs = self.list_pdfs(right_graph_path)
@@ -140,56 +154,63 @@ class ExplanationGraphViewer:
             st.warning("Selected PDF index is not available in both runs.")
             st.stop()
 
-        left_pdf_name = left_pdf_by_counter[pdf_counter_value]
-        right_pdf_name = right_pdf_by_counter[pdf_counter_value]
+        self.left_pdf_name = left_pdf_by_counter[pdf_counter_value]
+        self.right_pdf_name = right_pdf_by_counter[pdf_counter_value]
 
-        return (
-            subset_path,
-            left_run_name,
-            right_run_name,
-            left_pdf_name,
-            right_pdf_name,
-            graph_name,
+    def create_graphs(self) -> None:
+        if (
+            self.subset_path is None
+            or self.left_run_name is None
+            or self.right_run_name is None
+            or self.left_pdf_name is None
+            or self.right_pdf_name is None
+            or self.graph_name is None
+        ):
+            st.error("Selections are incomplete.")
+            st.stop()
+
+        left_graph_path = (
+            self.subset_path / self.left_run_name / "graphs" / self.graph_name
+        )
+        right_graph_path = (
+            self.subset_path / self.right_run_name / "graphs" / self.graph_name
         )
 
-    def create_graphs(
-        self,
-        subset_path: Path,
-        left_run_name: str,
-        right_run_name: str,
-        left_pdf_name: str,
-        right_pdf_name: str,
-        graph_name: str,
-    ) -> None:
-        left_graph_path = subset_path / left_run_name / "graphs" / graph_name
-        right_graph_path = subset_path / right_run_name / "graphs" / graph_name
-
-        left_pdf = left_graph_path / left_pdf_name
-        right_pdf = right_graph_path / right_pdf_name
+        left_pdf = left_graph_path / self.left_pdf_name
+        right_pdf = right_graph_path / self.right_pdf_name
 
         st.caption(f"Rendering from: `{self.base_dir}`")
 
         left_col, right_col = st.columns(2)
         with left_col:
-            st.subheader(f"{left_run_name} / {graph_name} / {left_pdf_name}")
+            st.subheader(
+                f"{self.left_run_name} / {self.graph_name} / {self.left_pdf_name}"
+            )
             self.embed_pdf(left_pdf)
         with right_col:
-            st.subheader(f"{right_run_name} / {graph_name} / {right_pdf_name}")
+            st.subheader(
+                f"{self.right_run_name} / {self.graph_name} / {self.right_pdf_name}"
+            )
             self.embed_pdf(right_pdf)
 
-    def create_metrics(
-        self,
-        subset_path: Path,
-        left_run_name: str,
-        right_run_name: str,
-        graph_name: str,
-    ) -> None:
-        graph_index = self.graph_index(graph_name)
+    def create_metrics(self) -> None:
+        if (
+            self.subset_path is None
+            or self.left_run_name is None
+            or self.right_run_name is None
+            or self.graph_name is None
+        ):
+            st.error("Selections are incomplete.")
+            st.stop()
+
+        graph_index = self.graph_index(self.graph_name)
         if graph_index is None:
             st.warning("Unable to extract graph index for metric comparison.")
             return
-        left_metrics_path = subset_path / left_run_name / "sample_metrics.csv"
-        right_metrics_path = subset_path / right_run_name / "sample_metrics.csv"
+        left_metrics_path = self.subset_path / self.left_run_name / "sample_metrics.csv"
+        right_metrics_path = (
+            self.subset_path / self.right_run_name / "sample_metrics.csv"
+        )
         left_metrics = self.load_sample_metrics(left_metrics_path, graph_index)
         right_metrics = self.load_sample_metrics(right_metrics_path, graph_index)
         if left_metrics is None or right_metrics is None:
@@ -211,28 +232,9 @@ class ExplanationGraphViewer:
             )
 
     def run(self) -> None:
-        (
-            subset_path,
-            left_run_name,
-            right_run_name,
-            left_pdf_name,
-            right_pdf_name,
-            graph_name,
-        ) = self.create_selections()
-        self.create_graphs(
-            subset_path,
-            left_run_name,
-            right_run_name,
-            left_pdf_name,
-            right_pdf_name,
-            graph_name,
-        )
-        self.create_metrics(
-            subset_path,
-            left_run_name,
-            right_run_name,
-            graph_name,
-        )
+        self.create_selections()
+        self.create_graphs()
+        self.create_metrics()
 
 
 if __name__ == "__main__":
