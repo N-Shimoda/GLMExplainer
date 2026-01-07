@@ -193,10 +193,8 @@ class ExplanationGraphViewer(AppPage):
 
         left_col, right_col = st.columns(2)
         with left_col:
-            st.subheader(f"Left: `{self.left_run_name}`")
             self.display_graph(left_pdf, left_metrics, left_metrics, delta_color="off")
         with right_col:
-            st.subheader(f"Right: `{self.right_run_name}`")
             self.display_graph(right_pdf, right_metrics, left_metrics)
 
     def display_graph(
@@ -229,7 +227,6 @@ class ExplanationGraphViewer(AppPage):
 
     def run(self) -> None:
         self.create_selections()
-        st.divider()
         self.create_graphs()
 
 
