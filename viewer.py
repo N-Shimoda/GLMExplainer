@@ -120,6 +120,9 @@ class ExplanationGraphViewer:
 
         if "graph_name" not in st.session_state or st.session_state["graph_name"] not in common_graphs:
             st.session_state["graph_name"] = common_graphs[0]
+        pick_random = st.sidebar.button("Pick a graph", icon="🎲")
+        if pick_random:
+            st.session_state["graph_name"] = random.choice(common_graphs)
         self.graph_name = st.sidebar.selectbox("Graph", common_graphs, key="graph_name")
 
         left_graph_path = self.subset_path / self.left_run_name / "graphs" / self.graph_name
@@ -146,6 +149,8 @@ class ExplanationGraphViewer:
             st.warning("No common PDF files found in the selected graph.")
             st.stop()
 
+        if pick_random:
+            st.session_state["trial_index"] = random.choice(common_counters)
         if "trial_index" not in st.session_state or st.session_state["trial_index"] not in common_counters:
             st.session_state["trial_index"] = common_counters[0]
         pdf_counter_value = st.sidebar.number_input(
@@ -156,13 +161,6 @@ class ExplanationGraphViewer:
             step=1,
             key="trial_index",
         )
-
-        st.sidebar.divider()
-
-        pick_random = st.sidebar.button("Pick a graph", icon="🎲")
-        if pick_random:
-            st.session_state["graph_name"] = random.choice(common_graphs)
-            st.session_state["trial_index"] = random.choice(common_counters)
 
         if pdf_counter_value not in left_pdf_by_counter or pdf_counter_value not in right_pdf_by_counter:
             st.warning("Selected PDF index is not available in both runs.")
