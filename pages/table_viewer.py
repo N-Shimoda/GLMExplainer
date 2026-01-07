@@ -5,6 +5,8 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from pages.utils import list_dirs, load_sample_metrics
+
 EXPLANATIONS_DIR = Path("explanations")
 
 
@@ -18,12 +20,6 @@ class AUROCComparisonViewer:
         self.table_mode: str = "Per-trial"
 
     @staticmethod
-    def list_dirs(path: Path) -> list[Path]:
-        if not path.exists():
-            return []
-        return sorted([p for p in path.iterdir() if p.is_dir()])
-
-    @staticmethod
     def load_run_history(path: Path) -> pd.DataFrame | None:
         if not path.exists():
             return None
@@ -32,18 +28,8 @@ class AUROCComparisonViewer:
             return None
         return df
 
-    @staticmethod
-    def load_sample_metrics(path: Path) -> pd.DataFrame | None:
-        if not path.exists():
-            return None
-        df = pd.read_csv(path)
-        required = {"sample_index", "trial", "auroc"}
-        if not required.issubset(df.columns):
-            return None
-        return df
-
     def create_selections(self) -> None:
-        subset_dirs = self.list_dirs(self.base_dir)
+        subset_dirs = list_dirs(self.base_dir)
         subset_names = [p.name for p in subset_dirs]
         if not subset_names:
             st.error(f"No subsets found under `{self.base_dir}`.")
@@ -99,8 +85,9 @@ class AUROCComparisonViewer:
 
         left_samples_path = self.subset_path / self.left_run_name / "sample_metrics.csv"
         right_samples_path = self.subset_path / self.right_run_name / "sample_metrics.csv"
-        left_samples = self.load_sample_metrics(left_samples_path)
-        right_samples = self.load_sample_metrics(right_samples_path)
+        required = {"sample_index", "trial", "auroc"}
+        left_samples = load_sample_metrics(left_samples_path, required=required)
+        right_samples = load_sample_metrics(right_samples_path, required=required)
         if left_samples is None or right_samples is None:
             st.warning("Sample metrics are unavailable for one or both runs.")
             return
@@ -145,7 +132,7 @@ class AUROCComparisonViewer:
         }
         if "trial" in merged.columns:
             column_config["trial"] = st.column_config.NumberColumn(width="small")
-        st.dataframe(styled, use_container_width=True, hide_index=True, column_config=column_config)
+        st.dataframe(styled, width="stretch", hide_index=True, column_config=column_config)
 
     def run(self) -> None:
         self.create_selections()

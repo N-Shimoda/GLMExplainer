@@ -5,8 +5,9 @@ import random
 import re
 from pathlib import Path
 
-import pandas as pd
 import streamlit as st
+
+from pages.utils import list_dirs, load_sample_metrics
 
 EXPLANATIONS_DIR = Path("explanations")
 
@@ -21,12 +22,6 @@ class ExplanationGraphViewer:
         self.right_pdf_name: str | None = None
         self.graph_name: str | None = None
         self.trial: int | None = None
-
-    @staticmethod
-    def list_dirs(path: Path) -> list[Path]:
-        if not path.exists():
-            return []
-        return sorted([p for p in path.iterdir() if p.is_dir()])
 
     @staticmethod
     def list_graph_files(path: Path) -> list[Path]:
@@ -74,30 +69,13 @@ class ExplanationGraphViewer:
             return int(match.group(1))
         return None
 
-    @staticmethod
-    def load_sample_metrics(path: Path, graph_index: int, trial: int) -> dict[str, float] | None:
-        if not path.exists():
-            return None
-        df = pd.read_csv(path)
-        if "sample_index" not in df.columns or "trial" not in df.columns:
-            return None
-        filtered = df[(df["sample_index"] == graph_index) & (df["trial"] == trial)]
-        if filtered.empty:
-            return None
-        row = filtered.iloc[0]
-        return {
-            "auroc": float(row["auroc"]),
-            "auprc": float(row["auprc"]),
-            "f1": float(row["f1"]),
-        }
-
     def create_selections(self) -> None:
-        subset_dirs = self.list_dirs(self.base_dir)
+        subset_dirs = list_dirs(self.base_dir)
         subset_names = [p.name for p in subset_dirs]
         subset = st.sidebar.selectbox("Subset", subset_names)
 
         self.subset_path = self.base_dir / subset
-        run_dirs = self.list_dirs(self.subset_path)
+        run_dirs = list_dirs(self.subset_path)
         run_names = [p.name for p in run_dirs]
 
         left_run, right_run = st.columns(2)
@@ -106,8 +84,8 @@ class ExplanationGraphViewer:
         with right_run:
             self.right_run_name = st.selectbox("Right run", run_names, index=min(1, len(run_names) - 1))
 
-        left_graphs = self.list_dirs(self.subset_path / self.left_run_name / "graphs")
-        right_graphs = self.list_dirs(self.subset_path / self.right_run_name / "graphs")
+        left_graphs = list_dirs(self.subset_path / self.left_run_name / "graphs")
+        right_graphs = list_dirs(self.subset_path / self.right_run_name / "graphs")
 
         common_graphs = sorted(
             {p.name for p in left_graphs} & {p.name for p in right_graphs},
@@ -195,8 +173,8 @@ class ExplanationGraphViewer:
             return
         left_metrics_path = self.subset_path / self.left_run_name / "sample_metrics.csv"
         right_metrics_path = self.subset_path / self.right_run_name / "sample_metrics.csv"
-        left_metrics = self.load_sample_metrics(left_metrics_path, graph_index, self.trial)
-        right_metrics = self.load_sample_metrics(right_metrics_path, graph_index, self.trial)
+        left_metrics = self._load_graph_metrics(left_metrics_path, graph_index, self.trial)
+        right_metrics = self._load_graph_metrics(right_metrics_path, graph_index, self.trial)
         if left_metrics is None or right_metrics is None:
             st.warning("Metrics unavailable for the selected graph.")
             return
@@ -222,6 +200,20 @@ class ExplanationGraphViewer:
             delta = value - delta_base[key]
             col.metric(label, value=f"{value:.4f}", delta=f"{delta:+.4f}", delta_color=delta_color)
         self.embed_graph(file_path)
+
+    def _load_graph_metrics(self, path: Path, graph_index: int, trial: int) -> dict[str, float] | None:
+        df = load_sample_metrics(path, required={"sample_index", "trial", "auroc", "auprc", "f1"})
+        if df is None:
+            return None
+        filtered = df[(df["sample_index"] == graph_index) & (df["trial"] == trial)]
+        if filtered.empty:
+            return None
+        row = filtered.iloc[0]
+        return {
+            "auroc": float(row["auroc"]),
+            "auprc": float(row["auprc"]),
+            "f1": float(row["f1"]),
+        }
 
     def run(self) -> None:
         self.create_selections()
