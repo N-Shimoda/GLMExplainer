@@ -15,6 +15,7 @@ class AUROCComparisonViewer:
         self.run_history: pd.DataFrame | None = None
         self.left_run_name: str | None = None
         self.right_run_name: str | None = None
+        self.table_mode: str = "Per-trial"
 
     @staticmethod
     def list_dirs(path: Path) -> list[Path]:
@@ -67,6 +68,11 @@ class AUROCComparisonViewer:
         with right_col:
             self.right_run_name = st.selectbox("Right run", run_names, index=min(1, len(run_names) - 1))
 
+        self.table_mode = st.sidebar.radio(
+            "Table view",
+            options=["Average per sample", "Per-trial"],
+        )
+
     def display_comparison(self) -> None:
         if self.run_history is None or self.left_run_name is None or self.right_run_name is None:
             st.error("Selections are incomplete.")
@@ -99,17 +105,37 @@ class AUROCComparisonViewer:
             st.warning("Sample metrics are unavailable for one or both runs.")
             return
 
-        left_trimmed = left_samples[["sample_index", "trial", "auroc"]].rename(columns={"auroc": "left_auroc"})
-        right_trimmed = right_samples[["sample_index", "trial", "auroc"]].rename(columns={"auroc": "right_auroc"})
-        merged = left_trimmed.merge(right_trimmed, on=["sample_index", "trial"], how="inner")
-        if merged.empty:
-            st.warning("No overlapping trials found between the selected runs.")
-            return
-
-        merged["delta"] = merged["right_auroc"] - merged["left_auroc"]
-        merged = merged.sort_values(["sample_index", "trial"])
-
-        st.subheader("Per-trial AUROC comparison")
+        match self.table_mode:
+            case "Average per sample":
+                left_trimmed = (
+                    left_samples.groupby("sample_index", as_index=False)["auroc"]
+                    .mean()
+                    .rename(columns={"auroc": "left_auroc"})
+                )
+                right_trimmed = (
+                    right_samples.groupby("sample_index", as_index=False)["auroc"]
+                    .mean()
+                    .rename(columns={"auroc": "right_auroc"})
+                )
+                merged = left_trimmed.merge(right_trimmed, on="sample_index", how="inner")
+                if merged.empty:
+                    st.warning("No overlapping samples found between the selected runs.")
+                    return
+                merged["delta"] = merged["right_auroc"] - merged["left_auroc"]
+                merged = merged.sort_values(["sample_index"])
+                st.subheader("Average AUROC per sample")
+            case "Per-trial":
+                left_trimmed = left_samples[["sample_index", "trial", "auroc"]].rename(columns={"auroc": "left_auroc"})
+                right_trimmed = right_samples[["sample_index", "trial", "auroc"]].rename(
+                    columns={"auroc": "right_auroc"}
+                )
+                merged = left_trimmed.merge(right_trimmed, on=["sample_index", "trial"], how="inner")
+                if merged.empty:
+                    st.warning("No overlapping trials found between the selected runs.")
+                    return
+                merged["delta"] = merged["right_auroc"] - merged["left_auroc"]
+                merged = merged.sort_values(["sample_index", "trial"])
+                st.subheader("Per-trial AUROC comparison")
         styled = merged.style.format(precision=4).map(
             lambda value: (
                 "background-color: #c8e6c9;"
@@ -118,15 +144,10 @@ class AUROCComparisonViewer:
             ),
             subset=["delta"],
         )
-        st.dataframe(
-            styled,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "sample_index": st.column_config.NumberColumn(width="small"),
-                "trial": st.column_config.NumberColumn(width="small"),
-            },
-        )
+        column_config = {"sample_index": st.column_config.NumberColumn(width="small")}
+        if "trial" in merged.columns:
+            column_config["trial"] = st.column_config.NumberColumn(width="small")
+        st.dataframe(styled, use_container_width=True, hide_index=True, column_config=column_config)
 
     def run(self) -> None:
         self.create_selections()
