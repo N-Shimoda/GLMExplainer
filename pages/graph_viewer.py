@@ -7,17 +7,16 @@ from pathlib import Path
 
 import streamlit as st
 
+from pages.Page import AppPage
 from pages.utils import list_dirs, load_sample_metrics, selectbox_with_state
 
 EXPLANATIONS_DIR = Path("explanations")
 
 
-class ExplanationGraphViewer:
+class ExplanationGraphViewer(AppPage):
     def __init__(self, base_dir: Path) -> None:
-        self.base_dir = base_dir
+        super().__init__(base_dir)
         self.subset_path: Path | None = None
-        self.left_run_name: str | None = None
-        self.right_run_name: str | None = None
         self.left_pdf_name: str | None = None
         self.right_pdf_name: str | None = None
         self.graph_name: str | None = None
@@ -70,17 +69,24 @@ class ExplanationGraphViewer:
         return None
 
     def create_selections(self) -> None:
+        # Select subset
         subset_dirs = list_dirs(self.base_dir)
         subset_names = [p.name for p in subset_dirs]
-        subset = selectbox_with_state("Subset", subset_names, "subset_name", container=st.sidebar)
+        # subset = selectbox_with_state("Subset", subset_names, "subset_name", container=st.sidebar)
+        with st.sidebar:
+            default_index = subset_names.index(self.subset) if self.subset in subset_names else 0
+            subset = st.selectbox("Subset", subset_names, index=default_index, key="subset_name")
+            st.session_state["subset"] = subset
 
         self.subset_path = self.base_dir / subset
         run_dirs = list_dirs(self.subset_path)
         run_names = [p.name for p in run_dirs]
 
+        # Select left / right runs
         left_run, right_run = st.columns(2)
         with left_run:
             self.left_run_name = selectbox_with_state("Left run", run_names, "left_run_name", container=left_run)
+            st.session_state["left_run_name"] = self.left_run_name
         with right_run:
             self.right_run_name = selectbox_with_state(
                 "Right run",
@@ -89,6 +95,7 @@ class ExplanationGraphViewer:
                 default_index=min(1, len(run_names) - 1),
                 container=right_run,
             )
+            st.session_state["right_run_name"] = self.right_run_name
 
         left_graphs = list_dirs(self.subset_path / self.left_run_name / "graphs")
         right_graphs = list_dirs(self.subset_path / self.right_run_name / "graphs")
