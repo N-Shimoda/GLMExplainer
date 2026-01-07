@@ -13,12 +13,9 @@ EXPLANATIONS_DIR = Path("explanations")
 
 class AUROCComparisonViewer(AppPage):
     def __init__(self, base_dir: Path) -> None:
-        print("Initializing AUROCComparisonViewer")
         super().__init__(base_dir)
         self.subset_path: Path | None = None
         self.run_history: pd.DataFrame | None = None
-        # self.left_run_name: str | None = None
-        # self.right_run_name: str | None = None
         self.table_mode: str = "Per-trial"
 
     @staticmethod
@@ -169,7 +166,6 @@ class AUROCComparisonViewer(AppPage):
     def run(self) -> None:
         self.create_selections()
         self.display_comparison()
-        print(self.subset_path)
 
 
 if __name__ == "__main__":

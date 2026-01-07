@@ -14,7 +14,6 @@ EXPLANATIONS_DIR = Path("explanations")
 
 class ExplanationGraphViewer(AppPage):
     def __init__(self, base_dir: Path) -> None:
-        print("Initializing Graph Viewer")
         super().__init__(base_dir)
         self.subset_path: Path | None = None
         self.left_pdf_name: str | None = None
@@ -72,7 +71,6 @@ class ExplanationGraphViewer(AppPage):
         # Select subset
         subset_dirs = self.list_dirs(self.base_dir)
         subset_names = [p.name for p in subset_dirs]
-        # subset = selectbox_with_state("Subset", subset_names, "subset_name", container=st.sidebar)
         with st.sidebar:
             default_index = subset_names.index(self.subset) if self.subset in subset_names else 0
             subset = st.selectbox("Subset", subset_names, index=default_index, key="subset_name")
