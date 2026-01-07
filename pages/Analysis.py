@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from pages.Page import AppPage
-from pages.utils import list_dirs, load_sample_metrics, selectbox_with_state
+from pages.utils import selectbox_with_state
 
 EXPLANATIONS_DIR = Path("explanations")
 
@@ -32,7 +32,7 @@ class AUROCComparisonViewer(AppPage):
 
     def create_selections(self) -> None:
         # Select subset
-        subset_dirs = list_dirs(self.base_dir)
+        subset_dirs = self.list_dirs(self.base_dir)
         subset_names = [p.name for p in subset_dirs]
         if not subset_names:
             st.error(f"No subsets found under `{self.base_dir}`.")
@@ -101,8 +101,8 @@ class AUROCComparisonViewer(AppPage):
         left_samples_path = self.subset_path / self.left_run_name / "sample_metrics.csv"
         right_samples_path = self.subset_path / self.right_run_name / "sample_metrics.csv"
         required = {"sample_index", "trial", "auroc"}
-        left_samples = load_sample_metrics(left_samples_path, required=required)
-        right_samples = load_sample_metrics(right_samples_path, required=required)
+        left_samples = self.load_sample_metrics(left_samples_path, required=required)
+        right_samples = self.load_sample_metrics(right_samples_path, required=required)
         if left_samples is None or right_samples is None:
             st.warning("Sample metrics are unavailable for one or both runs.")
             return

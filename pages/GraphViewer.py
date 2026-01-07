@@ -8,7 +8,6 @@ from pathlib import Path
 import streamlit as st
 
 from pages.Page import AppPage
-from pages.utils import list_dirs, load_sample_metrics
 
 EXPLANATIONS_DIR = Path("explanations")
 
@@ -71,7 +70,7 @@ class ExplanationGraphViewer(AppPage):
 
     def create_selections(self) -> None:
         # Select subset
-        subset_dirs = list_dirs(self.base_dir)
+        subset_dirs = self.list_dirs(self.base_dir)
         subset_names = [p.name for p in subset_dirs]
         # subset = selectbox_with_state("Subset", subset_names, "subset_name", container=st.sidebar)
         with st.sidebar:
@@ -80,7 +79,7 @@ class ExplanationGraphViewer(AppPage):
             st.session_state["subset"] = subset
 
         self.subset_path = self.base_dir / subset
-        run_dirs = list_dirs(self.subset_path)
+        run_dirs = self.list_dirs(self.subset_path)
         run_names = [p.name for p in run_dirs]
 
         # Select left / right runs
@@ -94,8 +93,8 @@ class ExplanationGraphViewer(AppPage):
             self.right_run_name = st.selectbox("Right run", run_names, index=right_idx)
             st.session_state["right_run_name"] = self.right_run_name
 
-        left_graphs = list_dirs(self.subset_path / self.left_run_name / "graphs")
-        right_graphs = list_dirs(self.subset_path / self.right_run_name / "graphs")
+        left_graphs = self.list_dirs(self.subset_path / self.left_run_name / "graphs")
+        right_graphs = self.list_dirs(self.subset_path / self.right_run_name / "graphs")
 
         common_graphs = sorted(
             {p.name for p in left_graphs} & {p.name for p in right_graphs},
@@ -217,7 +216,7 @@ class ExplanationGraphViewer(AppPage):
         self.embed_graph(file_path)
 
     def _load_graph_metrics(self, path: Path, graph_index: int, trial: int) -> dict[str, float] | None:
-        df = load_sample_metrics(path, required={"sample_index", "trial", "auroc", "auprc", "f1"})
+        df = self.load_sample_metrics(path, required={"sample_index", "trial", "auroc", "auprc", "f1"})
         if df is None:
             return None
         filtered = df[(df["sample_index"] == graph_index) & (df["trial"] == trial)]
