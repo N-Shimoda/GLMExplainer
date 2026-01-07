@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from pages.utils import list_dirs, load_sample_metrics
+from pages.utils import list_dirs, load_sample_metrics, selectbox_with_state
 
 EXPLANATIONS_DIR = Path("explanations")
 
@@ -34,7 +34,7 @@ class AUROCComparisonViewer:
         if not subset_names:
             st.error(f"No subsets found under `{self.base_dir}`.")
             st.stop()
-        subset = st.sidebar.selectbox("Subset", subset_names)
+        subset = selectbox_with_state("Subset", subset_names, "subset_name", container=st.sidebar)
         self.subset_path = self.base_dir / subset
 
         run_history_path = self.subset_path / "run_history.csv"
@@ -50,9 +50,15 @@ class AUROCComparisonViewer:
 
         left_col, right_col = st.columns(2)
         with left_col:
-            self.left_run_name = st.selectbox("Left run", run_names, index=0)
+            self.left_run_name = selectbox_with_state("Left run", run_names, "left_run_name", container=left_col)
         with right_col:
-            self.right_run_name = st.selectbox("Right run", run_names, index=min(1, len(run_names) - 1))
+            self.right_run_name = selectbox_with_state(
+                "Right run",
+                run_names,
+                "right_run_name",
+                default_index=min(1, len(run_names) - 1),
+                container=right_col,
+            )
 
         self.table_mode = st.sidebar.radio(
             "Table view",
@@ -123,16 +129,33 @@ class AUROCComparisonViewer:
                 merged["delta"] = merged["right_auroc"] - merged["left_auroc"]
                 merged = merged.sort_values(["sample_index", "trial"])
                 st.subheader("Per-trial AUROC comparison")
-        styled = merged.style.format(precision=4)
         column_config = {
             "sample_index": st.column_config.NumberColumn(width="small"),
+            "left_auroc": st.column_config.NumberColumn(format="%.4f"),
+            "right_auroc": st.column_config.NumberColumn(format="%.4f"),
             "delta": st.column_config.ProgressColumn(
                 "Delta", min_value=-1.0, max_value=1.0, format="%.4f", color="auto"
             ),
         }
         if "trial" in merged.columns:
             column_config["trial"] = st.column_config.NumberColumn(width="small")
-        st.dataframe(styled, width="stretch", hide_index=True, column_config=column_config)
+        selection = st.dataframe(
+            merged,
+            width="stretch",
+            hide_index=True,
+            column_config=column_config,
+            on_select="rerun",
+            selection_mode="single-row",
+        )
+        selected = selection.get("selection") if isinstance(selection, dict) else getattr(selection, "selection", None)
+        if selected and selected.get("rows"):
+            if "trial" not in merged.columns:
+                st.info("Switch to per-trial mode to open a graph for the selected sample.")
+                return
+            row = merged.iloc[selected["rows"][0]]
+            st.session_state["graph_index"] = int(row["sample_index"])
+            st.session_state["trial_index"] = int(row["trial"])
+            st.switch_page("pages/graph_viewer.py")
 
     def run(self) -> None:
         self.create_selections()

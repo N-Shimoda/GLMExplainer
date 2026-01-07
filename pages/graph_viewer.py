@@ -7,7 +7,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from pages.utils import list_dirs, load_sample_metrics
+from pages.utils import list_dirs, load_sample_metrics, selectbox_with_state
 
 EXPLANATIONS_DIR = Path("explanations")
 
@@ -72,7 +72,7 @@ class ExplanationGraphViewer:
     def create_selections(self) -> None:
         subset_dirs = list_dirs(self.base_dir)
         subset_names = [p.name for p in subset_dirs]
-        subset = st.sidebar.selectbox("Subset", subset_names)
+        subset = selectbox_with_state("Subset", subset_names, "subset_name", container=st.sidebar)
 
         self.subset_path = self.base_dir / subset
         run_dirs = list_dirs(self.subset_path)
@@ -80,9 +80,15 @@ class ExplanationGraphViewer:
 
         left_run, right_run = st.columns(2)
         with left_run:
-            self.left_run_name = st.selectbox("Left run", run_names, index=0)
+            self.left_run_name = selectbox_with_state("Left run", run_names, "left_run_name", container=left_run)
         with right_run:
-            self.right_run_name = st.selectbox("Right run", run_names, index=min(1, len(run_names) - 1))
+            self.right_run_name = selectbox_with_state(
+                "Right run",
+                run_names,
+                "right_run_name",
+                default_index=min(1, len(run_names) - 1),
+                container=right_run,
+            )
 
         left_graphs = list_dirs(self.subset_path / self.left_run_name / "graphs")
         right_graphs = list_dirs(self.subset_path / self.right_run_name / "graphs")
@@ -96,6 +102,11 @@ class ExplanationGraphViewer:
             st.warning("No common graphs found for the selected runs.")
             st.stop()
 
+        graph_index = st.session_state.get("graph_index")
+        if graph_index is not None:
+            candidate = f"graph_{graph_index}"
+            if candidate in common_graphs:
+                st.session_state["graph_name"] = candidate
         if "graph_name" not in st.session_state or st.session_state["graph_name"] not in common_graphs:
             st.session_state["graph_name"] = common_graphs[0]
         pick_random = st.sidebar.button("Pick a graph", icon="🎲")
