@@ -115,7 +115,7 @@ class AUROCComparisonViewer:
                     st.warning("No overlapping samples found between the selected runs.")
                     return
                 merged["delta"] = merged["right_auroc"] - merged["left_auroc"]
-                merged = merged.sort_values(["sample_index"])
+                merged = merged.sort_values(["delta"], ascending=False)
                 st.subheader("Average AUROC per sample")
             case "Per-trial":
                 left_trimmed = left_samples[["sample_index", "trial", "auroc"]].rename(columns={"auroc": "left_auroc"})
@@ -149,12 +149,12 @@ class AUROCComparisonViewer:
         )
         selected = selection.get("selection") if isinstance(selection, dict) else getattr(selection, "selection", None)
         if selected and selected.get("rows"):
-            if "trial" not in merged.columns:
-                st.info("Switch to per-trial mode to open a graph for the selected sample.")
-                return
             row = merged.iloc[selected["rows"][0]]
             st.session_state["graph_index"] = int(row["sample_index"])
-            st.session_state["trial_index"] = int(row["trial"])
+            if "trial" in merged.columns:
+                st.session_state["trial_index"] = int(row["trial"])
+            else:
+                st.session_state.pop("trial_index", None)
             st.switch_page("pages/graph_viewer.py")
 
     def run(self) -> None:
