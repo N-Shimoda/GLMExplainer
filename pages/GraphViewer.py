@@ -8,13 +8,14 @@ from pathlib import Path
 import streamlit as st
 
 from pages.Page import AppPage
-from pages.utils import list_dirs, load_sample_metrics, selectbox_with_state
+from pages.utils import list_dirs, load_sample_metrics
 
 EXPLANATIONS_DIR = Path("explanations")
 
 
 class ExplanationGraphViewer(AppPage):
     def __init__(self, base_dir: Path) -> None:
+        print("Initializing Graph Viewer")
         super().__init__(base_dir)
         self.subset_path: Path | None = None
         self.left_pdf_name: str | None = None
@@ -85,16 +86,12 @@ class ExplanationGraphViewer(AppPage):
         # Select left / right runs
         left_run, right_run = st.columns(2)
         with left_run:
-            self.left_run_name = selectbox_with_state("Left run", run_names, "left_run_name", container=left_run)
+            left_idx = run_names.index(self.left_run_name) if self.left_run_name in run_names else 0
+            self.left_run_name = st.selectbox("Left run", run_names, index=left_idx)
             st.session_state["left_run_name"] = self.left_run_name
         with right_run:
-            self.right_run_name = selectbox_with_state(
-                "Right run",
-                run_names,
-                "right_run_name",
-                default_index=min(1, len(run_names) - 1),
-                container=right_run,
-            )
+            right_idx = run_names.index(self.right_run_name) if self.right_run_name in run_names else 0
+            self.right_run_name = st.selectbox("Right run", run_names, index=right_idx)
             st.session_state["right_run_name"] = self.right_run_name
 
         left_graphs = list_dirs(self.subset_path / self.left_run_name / "graphs")

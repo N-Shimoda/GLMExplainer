@@ -37,8 +37,8 @@ class AUROCComparisonViewer(AppPage):
         if not subset_names:
             st.error(f"No subsets found under `{self.base_dir}`.")
             st.stop()
-        subset = selectbox_with_state("Subset", subset_names, "subset_name", container=st.sidebar)
-        st.session_state["subset_name"] = subset
+        subset = selectbox_with_state("Subset", subset_names, "subset", container=st.sidebar)
+        st.session_state["subset"] = subset
         self.subset_path = self.base_dir / subset
 
         # Load run history
@@ -164,7 +164,7 @@ class AUROCComparisonViewer(AppPage):
                 st.session_state["trial_index"] = int(row["trial"])
             else:
                 st.session_state.pop("trial_index", None)
-            st.switch_page("pages/graph_viewer.py")
+            st.switch_page("pages/GraphViewer.py")
 
     def run(self) -> None:
         self.create_selections()
