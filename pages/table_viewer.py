@@ -136,15 +136,13 @@ class AUROCComparisonViewer:
                 merged["delta"] = merged["right_auroc"] - merged["left_auroc"]
                 merged = merged.sort_values(["sample_index", "trial"])
                 st.subheader("Per-trial AUROC comparison")
-        styled = merged.style.format(precision=4).map(
-            lambda value: (
-                "background-color: #c8e6c9;"
-                if value > 0
-                else "background-color: #ffcdd2;" if value < 0 else "background-color: #eeeeee;"
+        styled = merged.style.format(precision=4)
+        column_config = {
+            "sample_index": st.column_config.NumberColumn(width="small"),
+            "delta": st.column_config.ProgressColumn(
+                "Delta", min_value=-1.0, max_value=1.0, format="%.4f", color="auto"
             ),
-            subset=["delta"],
-        )
-        column_config = {"sample_index": st.column_config.NumberColumn(width="small")}
+        }
         if "trial" in merged.columns:
             column_config["trial"] = st.column_config.NumberColumn(width="small")
         st.dataframe(styled, use_container_width=True, hide_index=True, column_config=column_config)
