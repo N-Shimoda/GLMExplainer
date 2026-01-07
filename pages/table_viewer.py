@@ -110,7 +110,14 @@ class AUROCComparisonViewer:
         merged = merged.sort_values(["sample_index", "trial"])
 
         st.subheader("Per-trial AUROC comparison")
-        st.dataframe(merged, use_container_width=True)
+        styled = (
+            merged.style.format(precision=4)
+            .map(
+                lambda value: "background-color: #c8e6c9;" if value > 0 else "background-color: #ffcdd2;" if value < 0 else "background-color: #eeeeee;",
+                subset=["delta"],
+            )
+        )
+        st.dataframe(styled, use_container_width=True, hide_index=True)
 
     def run(self) -> None:
         self.create_selections()
