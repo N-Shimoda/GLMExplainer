@@ -5,18 +5,20 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from pages.Page import AppPage
 from pages.utils import list_dirs, load_sample_metrics, selectbox_with_state
 
 EXPLANATIONS_DIR = Path("explanations")
 
 
-class AUROCComparisonViewer:
+class AUROCComparisonViewer(AppPage):
     def __init__(self, base_dir: Path) -> None:
-        self.base_dir = base_dir
+        print("Initializing AUROCComparisonViewer")
+        super().__init__(base_dir)
         self.subset_path: Path | None = None
         self.run_history: pd.DataFrame | None = None
-        self.left_run_name: str | None = None
-        self.right_run_name: str | None = None
+        # self.left_run_name: str | None = None
+        # self.right_run_name: str | None = None
         self.table_mode: str = "Per-trial"
 
     @staticmethod
@@ -29,20 +31,24 @@ class AUROCComparisonViewer:
         return df
 
     def create_selections(self) -> None:
+        # Select subset
         subset_dirs = list_dirs(self.base_dir)
         subset_names = [p.name for p in subset_dirs]
         if not subset_names:
             st.error(f"No subsets found under `{self.base_dir}`.")
             st.stop()
         subset = selectbox_with_state("Subset", subset_names, "subset_name", container=st.sidebar)
+        st.session_state["subset_name"] = subset
         self.subset_path = self.base_dir / subset
 
+        # Load run history
         run_history_path = self.subset_path / "run_history.csv"
         self.run_history = self.load_run_history(run_history_path)
         if self.run_history is None:
             st.error(f"Missing or invalid run history: `{run_history_path}`")
             st.stop()
 
+        # Select left / right runs
         run_names = self.run_history["run_name"].astype(str).tolist()
         if not run_names:
             st.warning("No runs available in run history.")
@@ -51,6 +57,7 @@ class AUROCComparisonViewer:
         left_col, right_col = st.columns(2)
         with left_col:
             self.left_run_name = selectbox_with_state("Left run", run_names, "left_run_name", container=left_col)
+            st.session_state["left_run_name"] = self.left_run_name
         with right_col:
             self.right_run_name = selectbox_with_state(
                 "Right run",
@@ -59,7 +66,9 @@ class AUROCComparisonViewer:
                 default_index=min(1, len(run_names) - 1),
                 container=right_col,
             )
+            st.session_state["right_run_name"] = self.right_run_name
 
+        # Select display mode
         self.table_mode = st.sidebar.radio(
             "Table view",
             options=["Average per sample", "Per-trial"],
@@ -160,6 +169,7 @@ class AUROCComparisonViewer:
     def run(self) -> None:
         self.create_selections()
         self.display_comparison()
+        print(self.subset_path)
 
 
 if __name__ == "__main__":
