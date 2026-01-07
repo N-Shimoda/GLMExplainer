@@ -1,0 +1,129 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pandas as pd
+import streamlit as st
+
+EXPLANATIONS_DIR = Path("explanations")
+
+
+class AUROCComparisonViewer:
+    def __init__(self, base_dir: Path) -> None:
+        self.base_dir = base_dir
+        self.subset_path: Path | None = None
+        self.run_history: pd.DataFrame | None = None
+        self.left_run_name: str | None = None
+        self.right_run_name: str | None = None
+
+    @staticmethod
+    def list_dirs(path: Path) -> list[Path]:
+        if not path.exists():
+            return []
+        return sorted([p for p in path.iterdir() if p.is_dir()])
+
+    @staticmethod
+    def load_run_history(path: Path) -> pd.DataFrame | None:
+        if not path.exists():
+            return None
+        df = pd.read_csv(path)
+        if "run_name" not in df.columns or "avg_auroc" not in df.columns:
+            return None
+        return df
+
+    @staticmethod
+    def load_sample_metrics(path: Path) -> pd.DataFrame | None:
+        if not path.exists():
+            return None
+        df = pd.read_csv(path)
+        required = {"sample_index", "trial", "auroc"}
+        if not required.issubset(df.columns):
+            return None
+        return df
+
+    def create_selections(self) -> None:
+        subset_dirs = self.list_dirs(self.base_dir)
+        subset_names = [p.name for p in subset_dirs]
+        if not subset_names:
+            st.error(f"No subsets found under `{self.base_dir}`.")
+            st.stop()
+        subset = st.sidebar.selectbox("Subset", subset_names)
+        self.subset_path = self.base_dir / subset
+
+        run_history_path = self.subset_path / "run_history.csv"
+        self.run_history = self.load_run_history(run_history_path)
+        if self.run_history is None:
+            st.error(f"Missing or invalid run history: `{run_history_path}`")
+            st.stop()
+
+        run_names = self.run_history["run_name"].astype(str).tolist()
+        if not run_names:
+            st.warning("No runs available in run history.")
+            st.stop()
+
+        left_col, right_col = st.columns(2)
+        with left_col:
+            self.left_run_name = st.selectbox("Left run", run_names, index=0)
+        with right_col:
+            self.right_run_name = st.selectbox("Right run", run_names, index=min(1, len(run_names) - 1))
+
+    def display_comparison(self) -> None:
+        if self.run_history is None or self.left_run_name is None or self.right_run_name is None:
+            st.error("Selections are incomplete.")
+            st.stop()
+
+        left_row = self.run_history[self.run_history["run_name"] == self.left_run_name]
+        right_row = self.run_history[self.run_history["run_name"] == self.right_run_name]
+        if left_row.empty or right_row.empty:
+            st.warning("Selected runs are missing from history.")
+            st.stop()
+
+        left_auroc = float(left_row["avg_auroc"].iloc[0])
+        right_auroc = float(right_row["avg_auroc"].iloc[0])
+
+        left_col, right_col = st.columns(2)
+        with left_col:
+            st.metric("AUROC", value=f"{left_auroc:.4f}")
+        with right_col:
+            st.metric("AUROC", value=f"{right_auroc:.4f}", delta=f"{right_auroc - left_auroc:+.4f}")
+
+        if self.subset_path is None:
+            st.error("Subset is unavailable for per-trial comparison.")
+            st.stop()
+
+        left_samples_path = self.subset_path / self.left_run_name / "sample_metrics.csv"
+        right_samples_path = self.subset_path / self.right_run_name / "sample_metrics.csv"
+        left_samples = self.load_sample_metrics(left_samples_path)
+        right_samples = self.load_sample_metrics(right_samples_path)
+        if left_samples is None or right_samples is None:
+            st.warning("Sample metrics are unavailable for one or both runs.")
+            return
+
+        left_trimmed = left_samples[["sample_index", "trial", "auroc"]].rename(columns={"auroc": "left_auroc"})
+        right_trimmed = right_samples[["sample_index", "trial", "auroc"]].rename(columns={"auroc": "right_auroc"})
+        merged = left_trimmed.merge(right_trimmed, on=["sample_index", "trial"], how="inner")
+        if merged.empty:
+            st.warning("No overlapping trials found between the selected runs.")
+            return
+
+        merged["delta"] = merged["right_auroc"] - merged["left_auroc"]
+        merged = merged.sort_values(["sample_index", "trial"])
+
+        st.subheader("Per-trial AUROC comparison")
+        st.dataframe(merged, use_container_width=True)
+
+    def run(self) -> None:
+        self.create_selections()
+        self.display_comparison()
+
+
+if __name__ == "__main__":
+    st.set_page_config(page_title="AUROC Comparison", layout="wide")
+    st.title("AUROC Comparison")
+
+    if not EXPLANATIONS_DIR.exists():
+        st.error(f"Missing explanations directory: `{EXPLANATIONS_DIR}`")
+        st.stop()
+
+    viewer = AUROCComparisonViewer(EXPLANATIONS_DIR)
+    viewer.run()
