@@ -15,13 +15,15 @@ class AUROCComparisonViewer(AppPage):
         self.subset_path: Path | None = None
         self.run_history: pd.DataFrame | None = None
         self.table_mode: str = "Per-trial"
+        self.metric_options = {"auroc": "AUROC", "auprc": "AUPRC", "f1": "F1 Score"}
 
     @staticmethod
     def load_run_history(path: Path) -> pd.DataFrame | None:
         if not path.exists():
             return None
         df = pd.read_csv(path)
-        if "run_name" not in df.columns or "avg_auroc" not in df.columns:
+        required = {"run_name", "avg_auroc", "avg_auprc", "avg_f1"}
+        if not required.issubset(df.columns):
             return None
         return df
 
@@ -60,6 +62,9 @@ class AUROCComparisonViewer(AppPage):
         # Display settings
         with st.sidebar:
             st.header("Display settings")
+            self.metric_key = st.radio(
+                "Metric", options=list(self.metric_options.keys()), format_func=lambda x: self.metric_options[x]
+            )
             self.table_mode = st.radio(
                 "Table view",
                 options=["Average per sample", "Per-trial"],
@@ -76,14 +81,19 @@ class AUROCComparisonViewer(AppPage):
             st.warning("Selected runs are missing from history.")
             st.stop()
 
-        left_auroc = float(left_row["avg_auroc"].iloc[0])
-        right_auroc = float(right_row["avg_auroc"].iloc[0])
+        avg_key = f"avg_{self.metric_key}"
+        left_avg = float(left_row[avg_key].iloc[0])
+        right_avg = float(right_row[avg_key].iloc[0])
 
         left_col, right_col = st.columns(2)
         with left_col:
-            st.metric("AUROC", value=f"{left_auroc:.4f}")
+            st.metric(self.metric_options[self.metric_key], value=f"{left_avg:.4f}")
         with right_col:
-            st.metric("AUROC", value=f"{right_auroc:.4f}", delta=f"{right_auroc - left_auroc:+.4f}")
+            st.metric(
+                self.metric_options[self.metric_key],
+                value=f"{right_avg:.4f}",
+                delta=f"{right_avg - left_avg:+.4f}",
+            )
 
         if self.subset_path is None:
             st.error("Subset is unavailable for per-trial comparison.")
@@ -91,49 +101,54 @@ class AUROCComparisonViewer(AppPage):
 
         left_samples_path = self.subset_path / self.left_run_name / "sample_metrics.csv"
         right_samples_path = self.subset_path / self.right_run_name / "sample_metrics.csv"
-        required = {"sample_index", "trial", "auroc"}
+        required = {"sample_index", "trial", self.metric_key}
         left_samples = self.load_sample_metrics(left_samples_path, required=required)
         right_samples = self.load_sample_metrics(right_samples_path, required=required)
         if left_samples is None or right_samples is None:
             st.warning("Sample metrics are unavailable for one or both runs.")
             return
 
+        left_metric = f"left_{self.metric_key}"
+        right_metric = f"right_{self.metric_key}"
+
         match self.table_mode:
             case "Average per sample":
                 left_trimmed = (
-                    left_samples.groupby("sample_index", as_index=False)["auroc"]
+                    left_samples.groupby("sample_index", as_index=False)[self.metric_key]
                     .mean()
-                    .rename(columns={"auroc": "left_auroc"})
+                    .rename(columns={self.metric_key: left_metric})
                 )
                 right_trimmed = (
-                    right_samples.groupby("sample_index", as_index=False)["auroc"]
+                    right_samples.groupby("sample_index", as_index=False)[self.metric_key]
                     .mean()
-                    .rename(columns={"auroc": "right_auroc"})
+                    .rename(columns={self.metric_key: right_metric})
                 )
                 merged = left_trimmed.merge(right_trimmed, on="sample_index", how="inner")
                 if merged.empty:
                     st.warning("No overlapping samples found between the selected runs.")
                     return
-                merged["delta"] = merged["right_auroc"] - merged["left_auroc"]
+                merged["delta"] = merged[right_metric] - merged[left_metric]
                 merged = merged.sort_values(["delta"], ascending=False)
-                st.subheader("Average AUROC per sample")
+                st.subheader(f"Average {self.metric_options[self.metric_key]} per sample")
             case "Per-trial":
-                left_trimmed = left_samples[["sample_index", "trial", "auroc"]].rename(columns={"auroc": "left_auroc"})
-                right_trimmed = right_samples[["sample_index", "trial", "auroc"]].rename(
-                    columns={"auroc": "right_auroc"}
+                left_trimmed = left_samples[["sample_index", "trial", self.metric_key]].rename(
+                    columns={self.metric_key: left_metric}
+                )
+                right_trimmed = right_samples[["sample_index", "trial", self.metric_key]].rename(
+                    columns={self.metric_key: right_metric}
                 )
                 merged = left_trimmed.merge(right_trimmed, on=["sample_index", "trial"], how="inner")
                 if merged.empty:
                     st.warning("No overlapping trials found between the selected runs.")
                     return
-                merged["delta"] = merged["right_auroc"] - merged["left_auroc"]
+                merged["delta"] = merged[right_metric] - merged[left_metric]
                 merged = merged.sort_values(["sample_index", "trial"])
-                st.subheader("Per-trial AUROC comparison")
+                st.subheader(f"Per-trial {self.metric_options[self.metric_key]} comparison")
 
         column_config = {
             "sample_index": st.column_config.NumberColumn(width="small"),
-            "left_auroc": st.column_config.NumberColumn(format="%.4f"),
-            "right_auroc": st.column_config.NumberColumn(format="%.4f"),
+            left_metric: st.column_config.NumberColumn(format="%.4f"),
+            right_metric: st.column_config.NumberColumn(format="%.4f"),
             "delta": st.column_config.ProgressColumn(
                 "Delta", min_value=-1.0, max_value=1.0, format="%.4f", color="auto"
             ),
