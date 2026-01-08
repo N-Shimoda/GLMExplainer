@@ -685,11 +685,11 @@ def main():
     )
     dataset = filter_dataset(
         dataset,
-        args.dataset,
-        args.sample_idx,
-        args.explain_pos_samples,
-        args.target_value,
-        args.num_samples,
+        dataset_name=args.dataset,
+        sample_idx=args.sample_idx,
+        explain_pos_samples=args.explain_pos_samples,
+        target_value=args.target_value,
+        num_samples=args.num_samples,
     )
     if len(dataset) == 0:
         if is_rank0:

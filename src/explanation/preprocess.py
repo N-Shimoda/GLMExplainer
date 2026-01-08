@@ -1,3 +1,5 @@
+from typing import Optional
+
 from datasets import arrow_dataset, load_dataset
 
 from src.preprocess import add_graph_column
@@ -26,10 +28,10 @@ def build_dataset(dataset: str, subset: str, split: str, node_feat_dim: int) -> 
 def filter_dataset(
     dataset: arrow_dataset.Dataset,
     dataset_name: str,
-    sample_idx: int,
-    explain_pos_samples: bool,
-    target_value: int,
-    num_samples: int,
+    explain_pos_samples: bool = False,
+    sample_idx: Optional[int] = None,
+    target_value: Optional[int] = None,
+    num_samples: Optional[int] = None,
 ) -> arrow_dataset.Dataset:
     """Filter dataset based on CLI args and return the filtered dataset."""
     if sample_idx is not None:
