@@ -658,6 +658,7 @@ def main():
     set_seed(42)
     args, explainer_args = build_args()
     run_name = f"{args.subset}_{datetime.now().strftime('%m%d-%H%M')}"
+    OUT_DIR = os.path.join("explanations", args.subset, run_name)
 
     # Setup DDP, random seed, and device
     rank, world_size, local_rank, is_distributed = _init_distributed_if_needed()
@@ -682,7 +683,14 @@ def main():
         args.split,
         node_feat_dim=model.config.node_feat_dim,
     )
-    dataset, OUT_DIR = filter_dataset(dataset, args, run_name)
+    dataset = filter_dataset(
+        dataset,
+        args.dataset,
+        args.sample_idx,
+        args.explain_pos_samples,
+        args.target_value,
+        args.num_samples,
+    )
     if len(dataset) == 0:
         if is_rank0:
             print("[INFO] No samples to explain after filtering. Exiting.")
