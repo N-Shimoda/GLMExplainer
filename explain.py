@@ -53,8 +53,16 @@ AVERAGE_METRIC_FIELDNAMES = [
 def _init_distributed_if_needed() -> tuple[int, int, int, bool]:
     """Initialize torch.distributed and return rank metadata if WORLD_SIZE > 1.
 
-    Returns:
-        A tuple of (rank, world_size, local_rank, initialized).
+    Returns
+    -------
+    rank : int
+        The global rank of the current process.
+    world_size : int
+        The total number of processes in the distributed setup.
+    local_rank : int
+        The local rank of the current process on its node.
+    is_distributed : bool
+        ``True`` if distributed training was initialized, ``False`` otherwise.
     """
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     if world_size <= 1:
@@ -646,6 +654,7 @@ def process_dataset(
 
 
 def main():
+    """Compute edge importance explanations for GraphTokenLM predictions on specified dataset samples."""
     set_seed(42)
     args, explainer_args = build_args()
     run_name = f"{args.subset}_{datetime.now().strftime('%m%d-%H%M')}"
