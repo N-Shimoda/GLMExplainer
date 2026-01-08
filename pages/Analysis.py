@@ -65,7 +65,7 @@ class AUROCComparisonViewer(AppPage):
             self.metric_key = st.radio(
                 "Metric", options=list(self.metric_options.keys()), format_func=lambda x: self.metric_options[x]
             )
-            self.average_mode = st.toggle("Average per sample", value=False)
+            self.average_mode = st.toggle("Average per sample", value=True)
 
     def display_comparison(self) -> None:
         if self.run_history is None or self.left_run_name is None or self.right_run_name is None:
@@ -159,6 +159,7 @@ class AUROCComparisonViewer(AppPage):
         selection = st.dataframe(
             merged,
             width="stretch",
+            height=640,
             hide_index=True,
             column_config=column_config,
             on_select="rerun",
