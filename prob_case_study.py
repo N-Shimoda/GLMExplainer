@@ -11,7 +11,7 @@ from src.glm import GraphTokenLM
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--subset", type=str, required=True, choices=MOTIFQA_SUBSETS)
-    p.add_argument("--sample-ids", type=int, required=True)
+    p.add_argument("--sample-idx", type=int, required=True)
     p.add_argument("--model-path", type=str, required=True)
     return p.parse_args()
 
@@ -24,8 +24,9 @@ def main():
     print("Loaded model from {}".format(ckpt_path))
 
     dataset = build_dataset("MotifQA", args.subset, "test", node_feat_dim=model.config.node_feat_dim)
-    dataset = filter_dataset(dataset, "MotifQA", sample_idx=args.sample_ids)
+    dataset = filter_dataset(dataset, "MotifQA", sample_idx=args.sample_idx)
     print(dataset)
+    print(dataset[0])
 
 
 if __name__ == "__main__":
