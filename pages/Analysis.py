@@ -33,6 +33,7 @@ class AUROCComparisonViewer(AppPage):
             st.error(f"No subsets found under `{self.base_dir}`.")
             st.stop()
         with st.sidebar:
+            st.header("Run selection")
             default_index = subset_names.index(self.subset) if self.subset in subset_names else 0
             subset = st.selectbox("Subset", subset_names, index=default_index)
         st.session_state["subset"] = subset
@@ -50,20 +51,19 @@ class AUROCComparisonViewer(AppPage):
         if not run_names:
             st.warning("No runs available in run history.")
             st.stop()
-
-        left_col, right_col = st.columns(2)
-        with left_col:
-            self.left_run_name = st.sidebar.selectbox("Left run", run_names)
+        with st.sidebar:
+            self.left_run_name = st.selectbox("Left run", run_names)
+            self.right_run_name = st.selectbox("Right run", run_names)
             st.session_state["left_run_name"] = self.left_run_name
-        with right_col:
-            self.right_run_name = st.sidebar.selectbox("Right run", run_names)
             st.session_state["right_run_name"] = self.right_run_name
 
-        # Select display mode
-        self.table_mode = st.sidebar.radio(
-            "Table view",
-            options=["Average per sample", "Per-trial"],
-        )
+        # Display settings
+        with st.sidebar:
+            st.header("Display settings")
+            self.table_mode = st.radio(
+                "Table view",
+                options=["Average per sample", "Per-trial"],
+            )
 
     def display_comparison(self) -> None:
         if self.run_history is None or self.left_run_name is None or self.right_run_name is None:
