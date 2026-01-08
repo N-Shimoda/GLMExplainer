@@ -14,6 +14,7 @@ from src.glm import GraphTokenLM
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--model-path", type=str, required=True)
+    p.add_argument("--ckpt-index", type=int, default=-1)
     p.add_argument("--subset", type=str, required=True, choices=MOTIFQA_SUBSETS)
     p.add_argument("--sample-idx", type=int, required=True)
     return p.parse_args()
@@ -23,7 +24,7 @@ def main():
     args = parse_args()
 
     # Load model and tokenizer
-    ckpt_path, run_name = _resolve_ckpt_path(args.model_path)
+    ckpt_path, run_name = _resolve_ckpt_path(args.model_path, ckpt_index=args.ckpt_index)
     model = GraphTokenLM.from_pretrained(ckpt_path)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
