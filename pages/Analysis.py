@@ -6,13 +6,13 @@ import pandas as pd
 import streamlit as st
 
 from pages.Page import AppPage
-from pages.utils import selectbox_with_state
 
 EXPLANATIONS_DIR = Path("explanations")
 
 
 class AUROCComparisonViewer(AppPage):
     def __init__(self, base_dir: Path) -> None:
+        print("Analysis Page:", st.session_state)
         super().__init__(base_dir)
         self.subset_path: Path | None = None
         self.run_history: pd.DataFrame | None = None
@@ -34,7 +34,9 @@ class AUROCComparisonViewer(AppPage):
         if not subset_names:
             st.error(f"No subsets found under `{self.base_dir}`.")
             st.stop()
-        subset = selectbox_with_state("Subset", subset_names, "subset", container=st.sidebar)
+        with st.sidebar:
+            default_index = subset_names.index(self.subset) if self.subset in subset_names else 0
+            subset = st.selectbox("Subset", subset_names, index=default_index)
         st.session_state["subset"] = subset
         self.subset_path = self.base_dir / subset
 
@@ -53,16 +55,10 @@ class AUROCComparisonViewer(AppPage):
 
         left_col, right_col = st.columns(2)
         with left_col:
-            self.left_run_name = selectbox_with_state("Left run", run_names, "left_run_name", container=left_col)
+            self.left_run_name = st.sidebar.selectbox("Left run", run_names)
             st.session_state["left_run_name"] = self.left_run_name
         with right_col:
-            self.right_run_name = selectbox_with_state(
-                "Right run",
-                run_names,
-                "right_run_name",
-                default_index=min(1, len(run_names) - 1),
-                container=right_col,
-            )
+            self.right_run_name = st.sidebar.selectbox("Right run", run_names)
             st.session_state["right_run_name"] = self.right_run_name
 
         # Select display mode
@@ -135,6 +131,7 @@ class AUROCComparisonViewer(AppPage):
                 merged["delta"] = merged["right_auroc"] - merged["left_auroc"]
                 merged = merged.sort_values(["sample_index", "trial"])
                 st.subheader("Per-trial AUROC comparison")
+
         column_config = {
             "sample_index": st.column_config.NumberColumn(width="small"),
             "left_auroc": st.column_config.NumberColumn(format="%.4f"),
@@ -145,6 +142,8 @@ class AUROCComparisonViewer(AppPage):
         }
         if "trial" in merged.columns:
             column_config["trial"] = st.column_config.NumberColumn(width="small")
+
+        # Display selectable dataframe
         selection = st.dataframe(
             merged,
             width="stretch",
@@ -153,6 +152,8 @@ class AUROCComparisonViewer(AppPage):
             on_select="rerun",
             selection_mode="single-row",
         )
+
+        # Switch to Graph Viewer when a row is selected
         selected = selection.get("selection") if isinstance(selection, dict) else getattr(selection, "selection", None)
         if selected and selected.get("rows"):
             row = merged.iloc[selected["rows"][0]]

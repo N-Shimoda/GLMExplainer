@@ -14,6 +14,7 @@ EXPLANATIONS_DIR = Path("explanations")
 
 class ExplanationGraphViewer(AppPage):
     def __init__(self, base_dir: Path) -> None:
+        print("Graph Viewer Page:", st.session_state)
         super().__init__(base_dir)
         self.subset_path: Path | None = None
         self.left_pdf_name: str | None = None
