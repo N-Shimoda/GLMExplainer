@@ -14,7 +14,7 @@ class AUROCComparisonViewer(AppPage):
         super().__init__()
         self.subset_path: Path | None = None
         self.run_history: pd.DataFrame | None = None
-        self.table_mode: str = "Per-trial"
+        self.average_mode: bool = False
         self.metric_options = {"auroc": "AUROC", "auprc": "AUPRC", "f1": "F1 Score"}
 
     @staticmethod
@@ -65,10 +65,7 @@ class AUROCComparisonViewer(AppPage):
             self.metric_key = st.radio(
                 "Metric", options=list(self.metric_options.keys()), format_func=lambda x: self.metric_options[x]
             )
-            self.table_mode = st.radio(
-                "Table view",
-                options=["Average per sample", "Per-trial"],
-            )
+            self.average_mode = st.toggle("Average per sample", value=False)
 
     def display_comparison(self) -> None:
         if self.run_history is None or self.left_run_name is None or self.right_run_name is None:
@@ -111,39 +108,41 @@ class AUROCComparisonViewer(AppPage):
         left_metric = f"left_{self.metric_key}"
         right_metric = f"right_{self.metric_key}"
 
-        match self.table_mode:
-            case "Average per sample":
-                left_trimmed = (
-                    left_samples.groupby("sample_index", as_index=False)[self.metric_key]
-                    .mean()
-                    .rename(columns={self.metric_key: left_metric})
-                )
-                right_trimmed = (
-                    right_samples.groupby("sample_index", as_index=False)[self.metric_key]
-                    .mean()
-                    .rename(columns={self.metric_key: right_metric})
-                )
-                merged = left_trimmed.merge(right_trimmed, on="sample_index", how="inner")
-                if merged.empty:
-                    st.warning("No overlapping samples found between the selected runs.")
-                    return
-                merged["delta"] = merged[right_metric] - merged[left_metric]
-                merged = merged.sort_values(["delta"], ascending=False)
-                st.subheader(f"Average {self.metric_options[self.metric_key]} per sample")
-            case "Per-trial":
-                left_trimmed = left_samples[["sample_index", "trial", self.metric_key]].rename(
-                    columns={self.metric_key: left_metric}
-                )
-                right_trimmed = right_samples[["sample_index", "trial", self.metric_key]].rename(
-                    columns={self.metric_key: right_metric}
-                )
-                merged = left_trimmed.merge(right_trimmed, on=["sample_index", "trial"], how="inner")
-                if merged.empty:
-                    st.warning("No overlapping trials found between the selected runs.")
-                    return
-                merged["delta"] = merged[right_metric] - merged[left_metric]
-                merged = merged.sort_values(["sample_index", "trial"])
-                st.subheader(f"Per-trial {self.metric_options[self.metric_key]} comparison")
+        # Prepare merged dataframe
+        if self.average_mode:
+            # Show average per sample across trials
+            left_trimmed = (
+                left_samples.groupby("sample_index", as_index=False)[self.metric_key]
+                .mean()
+                .rename(columns={self.metric_key: left_metric})
+            )
+            right_trimmed = (
+                right_samples.groupby("sample_index", as_index=False)[self.metric_key]
+                .mean()
+                .rename(columns={self.metric_key: right_metric})
+            )
+            merged = left_trimmed.merge(right_trimmed, on="sample_index", how="inner")
+            if merged.empty:
+                st.warning("No overlapping samples found between the selected runs.")
+                return
+            merged["delta"] = merged[right_metric] - merged[left_metric]
+            merged = merged.sort_values(["delta"], ascending=False)
+            st.subheader(f"Average {self.metric_options[self.metric_key]} per sample")
+        else:
+            # Show per-trial metrics
+            left_trimmed = left_samples[["sample_index", "trial", self.metric_key]].rename(
+                columns={self.metric_key: left_metric}
+            )
+            right_trimmed = right_samples[["sample_index", "trial", self.metric_key]].rename(
+                columns={self.metric_key: right_metric}
+            )
+            merged = left_trimmed.merge(right_trimmed, on=["sample_index", "trial"], how="inner")
+            if merged.empty:
+                st.warning("No overlapping trials found between the selected runs.")
+                return
+            merged["delta"] = merged[right_metric] - merged[left_metric]
+            merged = merged.sort_values(["sample_index", "trial"])
+            st.subheader(f"Per-trial {self.metric_options[self.metric_key]} comparison")
 
         column_config = {
             "sample_index": st.column_config.NumberColumn(width="small"),
