@@ -7,13 +7,11 @@ import streamlit as st
 
 from pages.Page import AppPage
 
-EXPLANATIONS_DIR = Path("explanations")
-
 
 class AUROCComparisonViewer(AppPage):
-    def __init__(self, base_dir: Path) -> None:
+    def __init__(self) -> None:
         print("Analysis Page:", st.session_state)
-        super().__init__(base_dir)
+        super().__init__()
         self.subset_path: Path | None = None
         self.run_history: pd.DataFrame | None = None
         self.table_mode: str = "Per-trial"
@@ -173,9 +171,5 @@ if __name__ == "__main__":
     st.set_page_config(page_title="AUROC Comparison", layout="wide")
     st.title("AUROC Comparison")
 
-    if not EXPLANATIONS_DIR.exists():
-        st.error(f"Missing explanations directory: `{EXPLANATIONS_DIR}`")
-        st.stop()
-
-    viewer = AUROCComparisonViewer(EXPLANATIONS_DIR)
+    viewer = AUROCComparisonViewer()
     viewer.run()

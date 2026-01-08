@@ -5,7 +5,13 @@ import streamlit as st
 
 
 class AppPage:
-    def __init__(self, base_dir: str) -> None:
+    def __init__(self, base_dir: Path = Path("explanations")) -> None:
+        if isinstance(base_dir, str):
+            base_dir = Path(base_dir)
+        if not base_dir.exists() or not base_dir.is_dir():
+            st.error(f"Base directory does not exist or is not a directory: `{base_dir}`")
+            st.stop()
+
         self.base_dir = base_dir
         self.subset = st.session_state.get("subset", None)
         self.left_run_name = st.session_state.get("left_run_name", None)

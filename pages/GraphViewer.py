@@ -9,13 +9,11 @@ import streamlit as st
 
 from pages.Page import AppPage
 
-EXPLANATIONS_DIR = Path("explanations")
-
 
 class ExplanationGraphViewer(AppPage):
-    def __init__(self, base_dir: Path) -> None:
+    def __init__(self) -> None:
         print("Graph Viewer Page:", st.session_state)
-        super().__init__(base_dir)
+        super().__init__()
         self.subset_path: Path | None = None
         self.left_pdf_name: str | None = None
         self.right_pdf_name: str | None = None
@@ -235,9 +233,5 @@ if __name__ == "__main__":
     st.title("Explanation Graph Viewer")
     st.set_page_config(page_title="Explanation Graph Viewer", layout="wide")
 
-    if not EXPLANATIONS_DIR.exists():
-        st.error(f"Missing explanations directory: `{EXPLANATIONS_DIR}`")
-        st.stop()
-
-    viewer = ExplanationGraphViewer(EXPLANATIONS_DIR)
+    viewer = ExplanationGraphViewer()
     viewer.run()
