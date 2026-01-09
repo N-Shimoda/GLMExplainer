@@ -7,6 +7,7 @@ from transformers import AutoTokenizer
 from eval import create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
 from src.constants import MOTIFQA_SUBSETS
+from src.explanation.args import check_non_negative_int
 from src.explanation.preprocess import build_dataset, filter_dataset
 from src.glm import GraphTokenLM
 
@@ -16,7 +17,20 @@ def parse_args():
     p.add_argument("--model-path", type=str, required=True)
     p.add_argument("--ckpt-index", type=int, default=-1)
     p.add_argument("--subset", type=str, required=True, choices=MOTIFQA_SUBSETS)
-    p.add_argument("--sample-idx", type=int, required=True)
+    p.add_argument(
+        "--target-pos-samples",
+        action="store_true",
+        help="If set, only explain positive samples (graphs containing house motifs).",
+    )
+    p.add_argument(
+        "--num-samples", type=check_non_negative_int, default=None, help="Number of samples to explain (default: None)"
+    )
+    p.add_argument(
+        "--sample-idx",
+        type=check_non_negative_int,
+        default=None,
+        help="Specify the index of the sample to explain (default: None)",
+    )
     return p.parse_args()
 
 
@@ -78,7 +92,13 @@ def main():
 
     # Prepare dataset sample
     dataset = build_dataset("MotifQA", args.subset, "test", node_feat_dim=model.config.node_feat_dim)
-    dataset = filter_dataset(dataset, "MotifQA", sample_idx=args.sample_idx)
+    dataset = filter_dataset(
+        dataset,
+        "MotifQA",
+        target_pos_samples=args.target_pos_samples,
+        sample_idx=args.sample_idx,
+        num_samples=args.num_samples,
+    )
 
     for sample in dataset:
         comp_token_probs(model, tok, sample, device)
