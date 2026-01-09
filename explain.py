@@ -108,7 +108,7 @@ def validate_args(args: argparse.Namespace) -> None:
     # Sample filtering
     if args.target_value is not None and args.sample_idx is not None:
         raise ValueError("Only one of `target_value` or `sample_idx` should be specified.")
-    if args.explain_pos_samples and args.dataset != "MotifQA":
+    if args.target_pos_samples and args.dataset != "MotifQA":
         raise ValueError("`--explain-pos-sample` is only supported for the MotifQA dataset.")
     if args.num_samples is not None and args.sample_idx is not None:
         raise ValueError("Only one of `num_samples` or `sample_idx` should be specified.")
@@ -146,7 +146,7 @@ def build_args():
 
     # Sample filtering
     p.add_argument(
-        "--explain-pos-samples",
+        "--target-pos-samples",
         action="store_true",
         help="If set, only explain positive samples (graphs containing house motifs).",
     )
@@ -679,7 +679,7 @@ def main():
         dataset,
         dataset_name=args.dataset,
         sample_idx=args.sample_idx,
-        explain_pos_samples=args.explain_pos_samples,
+        target_pos_samples=args.target_pos_samples,
         target_value=args.target_value,
         num_samples=args.num_samples,
     )

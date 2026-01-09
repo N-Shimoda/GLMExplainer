@@ -28,7 +28,7 @@ run_explain_loop() {
 		torchrun --nproc_per_node=2 explain.py
 		--dataset MotifQA --subset "${subset}"
 		--model-path outputs/"${subset}"
-		--explain-pos-samples
+		--target-pos-samples
 		--num-trials 5
 		--epochs $epochs --lr $lr
 		--edge-size $edge_size --edge-ent $edge_ent

@@ -28,7 +28,7 @@ def build_dataset(dataset: str, subset: str, split: str, node_feat_dim: int) -> 
 def filter_dataset(
     dataset: arrow_dataset.Dataset,
     dataset_name: str,
-    explain_pos_samples: bool = False,
+    target_pos_samples: bool = False,
     sample_idx: Optional[int] = None,
     target_value: Optional[int] = None,
     num_samples: Optional[int] = None,
@@ -39,7 +39,7 @@ def filter_dataset(
 
     match dataset_name:
         case "MotifQA":
-            if explain_pos_samples:
+            if target_pos_samples:
                 dataset = dataset.filter(lambda x: len(x["motif_nodes"]) > 0)
                 print("Extracted positive samples: len(dataset) =", len(dataset))
         case "GraphQA":
