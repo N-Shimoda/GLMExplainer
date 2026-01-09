@@ -20,21 +20,7 @@ def parse_args():
     return p.parse_args()
 
 
-def main():
-    args = parse_args()
-
-    # Load model and tokenizer
-    ckpt_path, run_name = _resolve_ckpt_path(args.model_path, ckpt_index=args.ckpt_index)
-    model = GraphTokenLM.from_pretrained(ckpt_path)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = model.to(device)
-    tok = AutoTokenizer.from_pretrained(model.config.llm_name, trust_remote_code=True)
-    print("Loaded model from {}".format(ckpt_path))
-
-    # Prepare dataset sample
-    dataset = build_dataset("MotifQA", args.subset, "test", node_feat_dim=model.config.node_feat_dim)
-    dataset = filter_dataset(dataset, "MotifQA", sample_idx=args.sample_idx)
-    sample = dataset[0]
+def comp_token_probs(model: GraphTokenLM, tok: AutoTokenizer, sample: dict, device: torch.device):
     prompt = sample["prompt"]
     completion = sample["completion"]
     graph = create_pyg_batch(sample["graph"], device)
@@ -47,17 +33,18 @@ def main():
     input_ids = torch.tensor([prompt_ids + completion_ids], dtype=torch.long, device=device)
     attention_mask = torch.ones_like(input_ids)
 
-    model.eval()
     with torch.no_grad():
         outputs = model(input_ids=input_ids, attention_mask=attention_mask, graph=graph)
 
     log_probs = torch.log_softmax(outputs.logits, dim=-1)[0]
-    num_graph_tokens = int(model.config.num_graph_tokens)
+    print("log_probs:", log_probs)
+    print("log_probs shape:", log_probs.shape)
+    num_graph_tokens = model.config.num_graph_tokens
     base_pos = num_graph_tokens + len(prompt_ids) - 1
     if base_pos < 0:
         raise ValueError("Prompt is empty and graph tokens are disabled; cannot score completion tokens.")
 
-    token_rows = []
+    token_rows: list[tuple[int, float, float]] = []
     for idx, token_id in enumerate(completion_ids):
         pos = base_pos + idx
         if pos >= log_probs.size(0):
@@ -75,6 +62,26 @@ def main():
     mean_log_prob = total_log_prob / len(token_rows)
     print(f"Total log_prob: {total_log_prob:.6g}")
     print(f"Mean log_prob/token: {mean_log_prob:.6g}")
+
+
+def main():
+    args = parse_args()
+
+    # Load model and tokenizer
+    ckpt_path, run_name = _resolve_ckpt_path(args.model_path, ckpt_index=args.ckpt_index)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = GraphTokenLM.from_pretrained(ckpt_path)
+    model = model.to(device)
+    model.eval()
+    tok = AutoTokenizer.from_pretrained(model.config.llm_name, trust_remote_code=True)
+    print("Loaded model from {}".format(ckpt_path))
+
+    # Prepare dataset sample
+    dataset = build_dataset("MotifQA", args.subset, "test", node_feat_dim=model.config.node_feat_dim)
+    dataset = filter_dataset(dataset, "MotifQA", sample_idx=args.sample_idx)
+
+    for sample in dataset:
+        comp_token_probs(model, tok, sample, device)
 
 
 if __name__ == "__main__":
