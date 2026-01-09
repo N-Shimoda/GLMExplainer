@@ -4,6 +4,7 @@ import os
 
 import matplotlib.pyplot as plt
 import torch
+from torch_geometric.utils import dense_to_sparse
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
@@ -163,7 +164,12 @@ def main():
                 edges = torch.combinations(torch.arange(num_nodes), r=2).t()
                 sample["graph"]["edge_index"] = torch.cat([edges, edges.flip(0)], dim=1)
             case "random":
-                sample["graph"]["edge_index"] = ...
+                p = 0.3
+                adj = torch.rand(num_nodes, num_nodes) < p
+                adj = torch.triu(adj, diagonal=1)
+                adj = adj + adj.t()
+                sample["graph"]["edge_index"], _ = dense_to_sparse(adj)
+
         base_token_probs = comp_token_probs(model, tok, sample)
 
         # Verbose output
