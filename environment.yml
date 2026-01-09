@@ -23,4 +23,5 @@ dependencies:
     - bitsandbytes
     - flash_attn
     - wandb>=0.22.3
+    - streamlit
     
