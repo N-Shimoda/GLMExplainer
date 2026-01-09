@@ -10,8 +10,8 @@ import pandas as pd
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Plot AUROC distribution from a civ/csv file.")
-    parser.add_argument("input", type=str, help="Path to .civ (csv-like) file")
+    parser = argparse.ArgumentParser(description="Plot AUROC distribution from a CSV-formatted file.")
+    parser.add_argument("input", type=str, help="Path to a CSV-formatted file (e.g. .csv or .civ)")
     parser.add_argument("--out", type=str, default="", help="Output image path (png). Default: <input>_auroc_dist.png")
     parser.add_argument("--bins", type=int, default=20, help="Number of histogram bins")
     parser.add_argument("--title", type=str, default="AUROC distribution", help="Plot title")
