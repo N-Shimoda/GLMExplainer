@@ -64,17 +64,14 @@ def comp_token_probs(model: GraphTokenLM, tok: AutoTokenizer, sample: dict):
         log_prob = log_probs[pos, token_id].item()
         token_rows.append((token_id, log_prob, math.exp(log_prob)))
 
-    print(f"======== Sample ID: {sample['index']} ========")
-    print("- Prompt:", repr(prompt))
-    print("- Completion:", repr(completion))
     print("Completion token probabilities:")
     for token_id, log_prob, prob in token_rows:
         token_str = tok.convert_ids_to_tokens([token_id])[0]
         print(f"{token_str}\t(id={token_id})\tprob={prob:.6g}\tlog_prob={log_prob:.6g}")
-    total_log_prob = sum(lp for _, lp, _ in token_rows)
-    mean_log_prob = total_log_prob / len(token_rows)
-    print(f"Total log_prob: {total_log_prob:.6g}")
-    print(f"Mean log_prob/token: {mean_log_prob:.6g}")
+    # total_log_prob = sum(lp for _, lp, _ in token_rows)
+    # mean_log_prob = total_log_prob / len(token_rows)
+    # print(f"Total log_prob: {total_log_prob:.6g}")
+    # print(f"Mean log_prob/token: {mean_log_prob:.6g}")
 
 
 def main():
@@ -100,6 +97,15 @@ def main():
     )
 
     for sample in dataset:
+        print(f"\n======== Sample ID: {sample['index']} ========")
+        print("- Prompt:", repr(sample["prompt"]))
+        print("- Completion:", repr(sample["completion"]))
+
+        # Original input
+        comp_token_probs(model, tok, sample)
+
+        # Replaced graph input
+        sample["graph"]["edge_index"] = torch.empty((2, 0), dtype=torch.long)
         comp_token_probs(model, tok, sample)
 
 

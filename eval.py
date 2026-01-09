@@ -113,10 +113,16 @@ def create_pyg_batch(
 ) -> PygBatch:
     if isinstance(graph_dicts, dict):
         graph_dicts = [graph_dicts]
+
+    def _as_tensor(value, *, dtype: torch.dtype) -> torch.Tensor:
+        if torch.is_tensor(value):
+            return value.detach().clone().to(dtype=dtype)
+        return torch.tensor(value, dtype=dtype)
+
     data_list = [
         PygData(
-            x=torch.tensor(d["x"], dtype=torch.float),
-            edge_index=torch.tensor(d["edge_index"], dtype=torch.long),
+            x=_as_tensor(d["x"], dtype=torch.float),
+            edge_index=_as_tensor(d["edge_index"], dtype=torch.long),
         )
         for d in graph_dicts
     ]
