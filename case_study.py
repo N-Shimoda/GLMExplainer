@@ -21,13 +21,6 @@ def parse_args():
     p.add_argument("--ckpt-index", type=int, default=-1)
     p.add_argument("--subset", type=str, required=True, choices=MOTIFQA_SUBSETS)
     p.add_argument(
-        "--split",
-        type=str,
-        default="test",
-        choices=["train", "val", "test"],
-        help="Dataset split to use (default: test)",
-    )
-    p.add_argument(
         "--target-pos-samples",
         action="store_true",
         help="If set, only explain positive samples (graphs containing house motifs).",
@@ -40,6 +33,13 @@ def parse_args():
         type=check_non_negative_int,
         default=None,
         help="Specify the index of the sample to explain (default: None)",
+    )
+    p.add_argument(
+        "--baseline-graph",
+        type=str,
+        default="empty",
+        choices=["empty", "complete", "random"],
+        help="Type of baseline graph to use.",
     )
     p.add_argument("--output-dir", type=str, default="plots/", help="Directory to save output plots.")
     p.add_argument("--verbose", action="store_true", help="If set, print token probabilities.")
@@ -128,7 +128,7 @@ def comp_token_probs(model: GraphTokenLM, tok: AutoTokenizer, sample: dict) -> l
 
 def main():
     args = parse_args()
-    OUT_DIR = os.path.join(args.output_dir, args.subset, args.split)
+    OUT_DIR = os.path.join(args.output_dir, args.subset, args.baseline_graph)
     os.makedirs(OUT_DIR, exist_ok=True)
 
     # Load model and tokenizer
@@ -141,7 +141,7 @@ def main():
     print("Loaded model from {}".format(ckpt_path))
 
     # Prepare dataset sample
-    dataset = build_dataset("MotifQA", args.subset, args.split, node_feat_dim=model.config.node_feat_dim)
+    dataset = build_dataset("MotifQA", args.subset, "test", node_feat_dim=model.config.node_feat_dim)
     dataset = filter_dataset(
         dataset,
         "MotifQA",
@@ -150,12 +150,20 @@ def main():
         num_samples=args.num_samples,
     )
 
-    for sample in tqdm(dataset, desc=f"Processing {args.split} samples"):
+    for sample in tqdm(dataset, desc="Processing samples"):
         # Original input
         org_token_probs = comp_token_probs(model, tok, sample)
 
         # Alternated input
-        sample["graph"]["edge_index"] = torch.empty((2, 0), dtype=torch.long)
+        num_nodes = len(set(sample["nodes"]))
+        match args.baseline_graph:
+            case "empty":
+                sample["graph"]["edge_index"] = torch.empty((2, 0))
+            case "complete":
+                edges = torch.combinations(torch.arange(num_nodes), r=2).t()
+                sample["graph"]["edge_index"] = torch.cat([edges, edges.flip(0)], dim=1)
+            case "random":
+                sample["graph"]["edge_index"] = ...
         base_token_probs = comp_token_probs(model, tok, sample)
 
         # Verbose output
