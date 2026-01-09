@@ -1,6 +1,8 @@
 import argparse
 import math
+import os
 
+import matplotlib.pyplot as plt
 import torch
 from transformers import AutoTokenizer
 
@@ -31,10 +33,58 @@ def parse_args():
         default=None,
         help="Specify the index of the sample to explain (default: None)",
     )
+    p.add_argument("--output-dir", type=str, default="plots/", help="Directory to save output plots.")
     return p.parse_args()
 
 
-def comp_token_probs(model: GraphTokenLM, tok: AutoTokenizer, sample: dict):
+def plot_prob_comparison(org_token_probs, base_token_probs, output_path: str = "plots/token_prob_comparison.png"):
+    if len(org_token_probs) != len(base_token_probs):
+        raise ValueError("Token probability lists must be the same length.")
+
+    tokens = []
+    org_probs = []
+    base_probs = []
+    for org_row, base_row in zip(org_token_probs, base_token_probs):
+        org_id, org_token, _, org_prob = org_row
+        base_id, base_token, _, base_prob = base_row
+        if org_id != base_id or org_token != base_token:
+            raise ValueError("Token sequences do not match between runs.")
+        tokens.append(org_token)
+        org_probs.append(org_prob)
+        base_probs.append(base_prob)
+
+    xs = list(range(len(tokens)))
+    plt.figure(figsize=(10, 4))
+    plt.plot(xs, org_probs, marker="o", linewidth=1.5, label="w/ graph")
+    plt.plot(xs, base_probs, marker="x", linewidth=1.5, label="w/o graph")
+    plt.xticks(xs, tokens, rotation=40, ha="right")
+    plt.ylabel("Probability")
+    plt.title("Token Probability Comparison")
+    plt.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.6)
+    plt.legend()
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    plt.savefig(output_path, dpi=200)
+    plt.close()
+
+
+def comp_token_probs(model: GraphTokenLM, tok: AutoTokenizer, sample: dict) -> list[tuple[int, str, float, float]]:
+    """Compute token probabilities for the completion tokens given the prompt and graph.
+
+    Parameters
+    ----------
+    model : GraphTokenLM
+        Graph-Language Model based on GraphToken architecture.
+    tok : AutoTokenizer
+        Tokenizer corresponding to the language model.
+    sample : dict
+        A data sample containing "prompt", "completion", and "graph".
+
+    Returns
+    -------
+    list[tuple[int, str, float, float]]
+        A list of tuples for each completion token: (token_id, token_str, log_prob, prob).
+    """
     prompt = sample["prompt"]
     completion = sample["completion"]
     graph = create_pyg_batch(sample["graph"], model.device)
@@ -43,7 +93,6 @@ def comp_token_probs(model: GraphTokenLM, tok: AutoTokenizer, sample: dict):
     completion_ids = tok.encode(completion, add_special_tokens=False)
     if not completion_ids:
         raise ValueError("Completion encodes to zero tokens. Provide a non-empty completion.")
-
     input_ids = torch.tensor([prompt_ids + completion_ids], dtype=torch.long, device=model.device)
     attention_mask = torch.ones_like(input_ids)
 
@@ -56,26 +105,26 @@ def comp_token_probs(model: GraphTokenLM, tok: AutoTokenizer, sample: dict):
     if base_pos < 0:
         raise ValueError("Prompt is empty and graph tokens are disabled; cannot score completion tokens.")
 
-    token_rows: list[tuple[int, float, float]] = []
+    token_rows = []
     for idx, token_id in enumerate(completion_ids):
         pos = base_pos + idx
         if pos >= log_probs.size(0):
             raise ValueError("Token position exceeds model logits length.")
         log_prob = log_probs[pos, token_id].item()
-        token_rows.append((token_id, log_prob, math.exp(log_prob)))
+        token_str = tok.convert_ids_to_tokens([token_id])[0]
+        token_rows.append((token_id, token_str, log_prob, math.exp(log_prob)))
 
     print("Completion token probabilities:")
-    for token_id, log_prob, prob in token_rows:
-        token_str = tok.convert_ids_to_tokens([token_id])[0]
+    for token_id, token_str, log_prob, prob in token_rows:
         print(f"{token_str}\t(id={token_id})\tprob={prob:.6g}\tlog_prob={log_prob:.6g}")
-    # total_log_prob = sum(lp for _, lp, _ in token_rows)
-    # mean_log_prob = total_log_prob / len(token_rows)
-    # print(f"Total log_prob: {total_log_prob:.6g}")
-    # print(f"Mean log_prob/token: {mean_log_prob:.6g}")
+
+    return token_rows
 
 
 def main():
     args = parse_args()
+    OUT_DIR = args.output_dir
+    os.makedirs(OUT_DIR, exist_ok=True)
 
     # Load model and tokenizer
     ckpt_path, _ = _resolve_ckpt_path(args.model_path, ckpt_index=args.ckpt_index)
@@ -102,11 +151,19 @@ def main():
         print("- Completion:", repr(sample["completion"]))
 
         # Original input
-        comp_token_probs(model, tok, sample)
+        org_token_probs = comp_token_probs(model, tok, sample)
 
-        # Replaced graph input
+        # Alternated input
         sample["graph"]["edge_index"] = torch.empty((2, 0), dtype=torch.long)
-        comp_token_probs(model, tok, sample)
+        base_token_probs = comp_token_probs(model, tok, sample)
+
+        print(org_token_probs)
+        print(base_token_probs)
+        plot_prob_comparison(
+            org_token_probs,
+            base_token_probs,
+            output_path=os.path.join(OUT_DIR, f"tok_probs_{sample['index']}.png"),
+        )
 
 
 if __name__ == "__main__":
