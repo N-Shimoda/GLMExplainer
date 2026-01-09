@@ -22,7 +22,7 @@ def main():
 
     out_path = Path(args.out) if args.out else in_path.with_name(in_path.stem + "_auroc_dist.png")
 
-    # Read as CSV (your civ file looks like CSV with header)
+    # Read as CSV (assuming the file has a header row)
     df = pd.read_csv(in_path)
 
     if "auroc" not in df.columns:
