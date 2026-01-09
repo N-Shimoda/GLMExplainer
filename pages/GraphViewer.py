@@ -230,8 +230,8 @@ class ExplanationGraphViewer(AppPage):
 
 
 if __name__ == "__main__":
-    st.title("Explanation Graph Viewer")
     st.set_page_config(page_title="Explanation Graph Viewer", layout="wide")
+    st.title("Explanation Graph Viewer")
 
     viewer = ExplanationGraphViewer()
     viewer.run()
