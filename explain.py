@@ -24,6 +24,7 @@ from transformers.trainer_utils import set_seed
 from eval import create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
+from src.explanation.args import check_non_negative_int
 from src.explanation.logging import (
     _record_sample_average_metrics,
     _write_metrics_header,
@@ -116,15 +117,6 @@ def validate_args(args: argparse.Namespace) -> None:
 
 
 def build_args():
-    def check_non_negative_int(value: str) -> int:
-        try:
-            ivalue = int(value)
-        except ValueError:
-            raise argparse.ArgumentTypeError(f"`{value}` is not an integer.")
-        if ivalue < 0:
-            raise argparse.ArgumentTypeError("Value must be non-negative.")
-        return ivalue
-
     p = argparse.ArgumentParser(description="Explain GraphTokenLM predictions using GNNExplainer")
 
     # Model checkpoint
@@ -907,4 +899,5 @@ def main():
 
 
 if __name__ == "__main__":
+    main()
     main()
