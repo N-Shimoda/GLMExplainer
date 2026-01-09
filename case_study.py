@@ -1,8 +1,10 @@
 import argparse
 import math
 import os
+from typing import Optional
 
 import matplotlib.pyplot as plt
+import networkx as nx
 import torch
 from torch_geometric.utils import dense_to_sparse
 from tqdm import tqdm
@@ -47,7 +49,48 @@ def parse_args():
     return p.parse_args()
 
 
-def plot_prob_comparison(org_token_probs, base_token_probs, output_path: str = "plots/token_prob_comparison.png"):
+def _build_nx_graph(edge_index: torch.Tensor, num_nodes: int) -> nx.Graph:
+    graph = nx.Graph()
+    graph.add_nodes_from(range(num_nodes))
+    if edge_index.numel() > 0:
+        edges = edge_index.t().tolist()
+        graph.add_edges_from((int(src), int(dst)) for src, dst in edges)
+    return graph
+
+
+def plot_prob_comparison(
+    org_token_probs: list[tuple[int, str, float, float]],
+    base_token_probs: list[tuple[int, str, float, float]],
+    org_edge_index: torch.Tensor,
+    base_edge_index: torch.Tensor,
+    num_nodes: int,
+    node_labels: Optional[list[int]] = None,
+    output_path: str = "plots/token_prob_comparison.png",
+):
+    """Plot token probability comparison with original and baseline graphs.
+
+    Parameters
+    ----------
+    org_token_probs : list[tuple[int, str, float, float]]
+        Token rows for the original graph run, as (token_id, token_str, log_prob, prob).
+    base_token_probs : list[tuple[int, str, float, float]]
+        Token rows for the baseline graph run, as (token_id, token_str, log_prob, prob).
+    org_edge_index : torch.Tensor
+        Edge index for the original graph, shape (2, E).
+    base_edge_index : torch.Tensor
+        Edge index for the baseline graph, shape (2, E).
+    num_nodes : int
+        Number of nodes in both graphs.
+    node_labels : list[int] | None, optional
+        Optional node labels to render; length must match ``num_nodes`` when provided.
+    output_path : str, optional
+        Path to save the rendered figure.
+
+    Returns
+    -------
+    None
+        The figure is saved to ``output_path``.
+    """
     if len(org_token_probs) != len(base_token_probs):
         raise ValueError("Token probability lists must be the same length.")
 
@@ -63,17 +106,48 @@ def plot_prob_comparison(org_token_probs, base_token_probs, output_path: str = "
         org_probs.append(org_prob)
         base_probs.append(base_prob)
 
+    # Build two graphs
+    org_edge_index = torch.as_tensor(org_edge_index, dtype=torch.long)
+    base_edge_index = torch.as_tensor(base_edge_index, dtype=torch.long)
+    org_graph = _build_nx_graph(org_edge_index, num_nodes)
+    base_graph = _build_nx_graph(base_edge_index, num_nodes)
+    labels = None
+    if node_labels is not None and len(node_labels) == num_nodes:
+        labels = {idx: str(node_labels[idx]) for idx in range(num_nodes)}
+
+    pos = nx.spring_layout(org_graph if org_graph.number_of_edges() else base_graph, seed=42) if num_nodes else {}
+
+    # Plotting
+    fig = plt.figure(figsize=(10, 6))
+    gs = fig.add_gridspec(nrows=2, ncols=2, height_ratios=[1.2, 2.2])
+    ax_org = fig.add_subplot(gs[0, 0])
+    ax_base = fig.add_subplot(gs[0, 1])
+    ax_prob = fig.add_subplot(gs[1, :])
+
+    ax_org.set_title("Original graph")
+    ax_base.set_title("Baseline graph")
+    for ax, graph in [(ax_org, org_graph), (ax_base, base_graph)]:
+        ax.axis("off")
+        if num_nodes == 0:
+            ax.text(0.5, 0.5, "Empty graph", ha="center", va="center")
+            continue
+        if graph.number_of_edges() == 0:
+            ax.text(0.5, 0.5, "No edges", ha="center", va="center")
+        nx.draw_networkx_edges(graph, pos, ax=ax, width=1.2, alpha=0.7)
+        nx.draw_networkx_nodes(graph, pos, ax=ax, node_size=220, node_color="#87ceeb", edgecolors="#333333")
+        if labels is not None:
+            nx.draw_networkx_labels(graph, pos, labels=labels, ax=ax, font_size=8, font_color="white")
+
     xs = list(range(len(tokens)))
-    plt.figure(figsize=(10, 4))
-    plt.plot(xs, org_probs, marker="o", linewidth=1.5, label="w/ graph")
-    plt.plot(xs, base_probs, marker="x", linewidth=1.5, label="w/o graph")
-    plt.xticks(xs, tokens, rotation=40, ha="right")
-    plt.ylabel("Probability")
-    plt.title("Token Probability Comparison")
-    plt.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.6)
-    plt.legend()
-    plt.tight_layout()
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    ax_prob.plot(xs, org_probs, marker="o", linewidth=1.5, label="w/ graph")
+    ax_prob.plot(xs, base_probs, marker="x", linewidth=1.5, label="w/o graph")
+    ax_prob.set_xticks(xs)
+    ax_prob.set_xticklabels(tokens, rotation=40, ha="right")
+    ax_prob.set_ylabel("Probability")
+    ax_prob.set_title("Token Probability Comparison")
+    ax_prob.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.6)
+    ax_prob.legend()
+    fig.tight_layout()
     plt.savefig(output_path, dpi=200)
     plt.close()
 
@@ -153,6 +227,7 @@ def main():
 
     for sample in tqdm(dataset, desc="Processing samples"):
         # Original input
+        org_edge_index = sample["graph"]["edge_index"]
         org_token_probs = comp_token_probs(model, tok, sample)
 
         # Alternated input
@@ -170,6 +245,7 @@ def main():
                 adj = adj + adj.t()
                 sample["graph"]["edge_index"], _ = dense_to_sparse(adj)
 
+        base_edge_index = sample["graph"]["edge_index"]
         base_token_probs = comp_token_probs(model, tok, sample)
 
         # Verbose output
@@ -187,6 +263,10 @@ def main():
         plot_prob_comparison(
             org_token_probs,
             base_token_probs,
+            org_edge_index,
+            base_edge_index,
+            num_nodes,
+            node_labels=sample["nodes"],
             output_path=os.path.join(OUT_DIR, f"tok_probs_{sample['index']}.png"),
         )
 
