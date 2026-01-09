@@ -1,7 +1,10 @@
-for baseline_type in empty complete random; do
-	python case_study.py \
-		--subset ba_shapes \
-		--model-path masters/ba_shapes/ \
-		--num-samples 10 \
-		--baseline-graph $baseline_type
+for subset in ba_shapes ba_two_motifs tree_cycle tree_grid; do
+	for baseline_type in complete empty random; do
+		echo -e "\nsubset: $subset, baseline: $baseline_type"
+		python case_study.py \
+			--subset $subset \
+			--model-path outputs/$subset/ --ckpt-index -2 \
+			--num-samples 12 \
+			--baseline-graph $baseline_type
+	done
 done

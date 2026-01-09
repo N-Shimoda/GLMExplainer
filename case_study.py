@@ -139,6 +139,7 @@ def plot_prob_comparison(
             nx.draw_networkx_labels(graph, pos, labels=labels, ax=ax, font_size=8, font_color="white")
 
     xs = list(range(len(tokens)))
+    ax_prob.set_ylim(0, 1.05)
     ax_prob.plot(xs, org_probs, marker="o", linewidth=1.5, label="w/ graph")
     ax_prob.plot(xs, base_probs, marker="x", linewidth=1.5, label="w/o graph")
     ax_prob.set_xticks(xs)
