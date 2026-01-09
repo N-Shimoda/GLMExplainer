@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# plot_auroc_distribution.py
 
 import argparse
 from pathlib import Path
