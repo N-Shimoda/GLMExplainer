@@ -236,23 +236,25 @@ def main():
         org_edge_index = sample["graph"]["edge_index"]
         org_token_probs = comp_token_probs(model, tok, sample)
 
-        # Alternated input
+        # Alternated input (work on a copy to avoid mutating the original sample)
         num_nodes = len(set(sample["nodes"]))
+        base_sample = dict(sample)
+        base_sample["graph"] = dict(sample["graph"])
         match args.baseline_graph:
             case "empty":
-                sample["graph"]["edge_index"] = torch.empty((2, 0))
+                base_sample["graph"]["edge_index"] = torch.empty((2, 0))
             case "complete":
                 edges = torch.combinations(torch.arange(num_nodes), r=2).t()
-                sample["graph"]["edge_index"] = torch.cat([edges, edges.flip(0)], dim=1)
+                base_sample["graph"]["edge_index"] = torch.cat([edges, edges.flip(0)], dim=1)
             case "random":
                 p = 0.3
                 adj = torch.rand(num_nodes, num_nodes) < p
                 adj = torch.triu(adj, diagonal=1)
                 adj = adj + adj.t()
-                sample["graph"]["edge_index"], _ = dense_to_sparse(adj)
+                base_sample["graph"]["edge_index"], _ = dense_to_sparse(adj)
 
-        base_edge_index = sample["graph"]["edge_index"]
-        base_token_probs = comp_token_probs(model, tok, sample)
+        base_edge_index = base_sample["graph"]["edge_index"]
+        base_token_probs = comp_token_probs(model, tok, base_sample)
 
         # Verbose output
         if args.verbose:
