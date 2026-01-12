@@ -208,6 +208,40 @@ def comp_token_probs(model: GraphTokenLM, tok: AutoTokenizer, sample: dict) -> l
 
 
 def main():
+    """Run the case study comparing token probabilities with original vs. baseline graphs.
+
+    This script loads a pre-trained GraphToken model and evaluates token prediction
+    probabilities for completion text under two conditions:
+    1. With the original graph structure from the dataset
+    2. With a baseline graph (empty, complete, or random)
+
+    The script processes samples from the MotifQA dataset, computes token probabilities
+    for both graph conditions, and generates comparison plots showing how graph structure
+    affects the model's token predictions.
+
+    Side Effects
+    ------------
+    - Loads model checkpoint from disk
+    - Creates output directory structure if it doesn't exist
+    - Saves probability comparison plots to the output directory
+    - Prints progress and optional verbose output to stdout
+
+    Outputs
+    -------
+    PNG files
+        Token probability comparison plots saved to:
+        {output_dir}/{subset}/{baseline_graph}/tok_probs_{sample_index}.png
+
+    Notes
+    -----
+    Command-line arguments control the behavior via parse_args():
+    - --model-path: Path to the model checkpoint
+    - --subset: MotifQA subset to use
+    - --baseline-graph: Type of baseline graph (empty/complete/random)
+    - --output-dir: Directory for saving plots
+    - --verbose: Enable detailed probability output
+    And other filtering/selection arguments.
+    """
     args = parse_args()
     OUT_DIR = os.path.join(args.output_dir, args.subset, args.baseline_graph)
     os.makedirs(OUT_DIR, exist_ok=True)
