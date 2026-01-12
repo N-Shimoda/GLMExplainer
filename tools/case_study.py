@@ -1,6 +1,7 @@
 import argparse
 import math
 import os
+import sys
 from typing import Optional
 
 import matplotlib.pyplot as plt
@@ -10,12 +11,16 @@ from torch_geometric.utils import dense_to_sparse
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
-from eval import create_pyg_batch
-from src.ckpt import _resolve_ckpt_path
-from src.constants import MOTIFQA_SUBSETS
-from src.explanation.args import check_non_negative_int
-from src.explanation.preprocess import build_dataset, filter_dataset
-from src.glm import GraphTokenLM
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+
+from eval import create_pyg_batch  # noqa: E402
+from src.ckpt import _resolve_ckpt_path  # noqa: E402
+from src.constants import MOTIFQA_SUBSETS  # noqa: E402
+from src.explanation.args import check_non_negative_int  # noqa: E402
+from src.explanation.preprocess import build_dataset, filter_dataset  # noqa: E402
+from src.glm import GraphTokenLM  # noqa: E402
 
 
 def parse_args():
