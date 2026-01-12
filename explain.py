@@ -24,6 +24,7 @@ from transformers.trainer_utils import set_seed
 from eval import create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
+from src.explanation.args import check_non_negative_int
 from src.explanation.logging import (
     _record_sample_average_metrics,
     _write_metrics_header,
@@ -53,8 +54,16 @@ AVERAGE_METRIC_FIELDNAMES = [
 def _init_distributed_if_needed() -> tuple[int, int, int, bool]:
     """Initialize torch.distributed and return rank metadata if WORLD_SIZE > 1.
 
-    Returns:
-        A tuple of (rank, world_size, local_rank, initialized).
+    Returns
+    -------
+    rank : int
+        The global rank of the current process.
+    world_size : int
+        The total number of processes in the distributed setup.
+    local_rank : int
+        The local rank of the current process on its node.
+    is_distributed : bool
+        ``True`` if distributed training was initialized, ``False`` otherwise.
     """
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     if world_size <= 1:
@@ -99,8 +108,8 @@ def validate_args(args: argparse.Namespace) -> None:
     # Sample filtering
     if args.target_value is not None and args.sample_idx is not None:
         raise ValueError("Only one of `target_value` or `sample_idx` should be specified.")
-    if args.explain_pos_samples and args.dataset != "MotifQA":
-        raise ValueError("`--explain-pos-sample` is only supported for the MotifQA dataset.")
+    if args.target_pos_samples and args.dataset != "MotifQA":
+        raise ValueError("`--target-pos-samples` is only supported for the MotifQA dataset.")
     if args.num_samples is not None and args.sample_idx is not None:
         raise ValueError("Only one of `num_samples` or `sample_idx` should be specified.")
     if args.num_trials < 1:
@@ -108,15 +117,6 @@ def validate_args(args: argparse.Namespace) -> None:
 
 
 def build_args():
-    def check_non_negative_int(value: str) -> int:
-        try:
-            ivalue = int(value)
-        except ValueError:
-            raise argparse.ArgumentTypeError(f"`{value}` is not an integer.")
-        if ivalue < 0:
-            raise argparse.ArgumentTypeError("Value must be non-negative.")
-        return ivalue
-
     p = argparse.ArgumentParser(description="Explain GraphTokenLM predictions using GNNExplainer")
 
     # Model checkpoint
@@ -146,7 +146,7 @@ def build_args():
 
     # Sample filtering
     p.add_argument(
-        "--explain-pos-samples",
+        "--target-pos-samples",
         action="store_true",
         help="If set, only explain positive samples (graphs containing house motifs).",
     )
@@ -646,9 +646,11 @@ def process_dataset(
 
 
 def main():
+    """Compute edge importance explanations for GraphTokenLM predictions on specified dataset samples."""
     set_seed(42)
     args, explainer_args = build_args()
     run_name = f"{args.subset}_{datetime.now().strftime('%m%d-%H%M')}"
+    OUT_DIR = os.path.join("explanations", args.subset, run_name)
 
     # Setup DDP, random seed, and device
     rank, world_size, local_rank, is_distributed = _init_distributed_if_needed()
@@ -673,7 +675,14 @@ def main():
         args.split,
         node_feat_dim=model.config.node_feat_dim,
     )
-    dataset, OUT_DIR = filter_dataset(dataset, args, run_name)
+    dataset = filter_dataset(
+        dataset,
+        dataset_name=args.dataset,
+        sample_idx=args.sample_idx,
+        target_pos_samples=args.target_pos_samples,
+        target_value=args.target_value,
+        num_samples=args.num_samples,
+    )
     if len(dataset) == 0:
         if is_rank0:
             print("[INFO] No samples to explain after filtering. Exiting.")
