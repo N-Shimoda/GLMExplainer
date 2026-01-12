@@ -11,7 +11,13 @@ VALID_AGGR_METHODS = ["normal"]
 
 
 class GLMWrapper(torch.nn.Module):
-    def __init__(self, model: GraphTokenLM, tokenizer: AutoTokenizer, aggr_method: Literal["normal"] = "normal"):
+    def __init__(
+        self,
+        model: GraphTokenLM,
+        tokenizer: AutoTokenizer,
+        aggr_method: Literal["normal"] = "normal",
+        per_device_gen_batch_size: int = 4,
+    ):
         """
         A wrapper class for GraphTokenLM to be compatible with PyG explanation API.
 
@@ -23,6 +29,8 @@ class GLMWrapper(torch.nn.Module):
             The tokenizer corresponding to the LLM used in the model.
         aggr_method : Literal["normal"], optional
             The aggregation method for computing representative value, by default "normal".
+        per_device_gen_batch_size : int, optional
+            The batch size per device for output generation, by default 4.
         """
         super().__init__()
         self.model = model
@@ -31,13 +39,14 @@ class GLMWrapper(torch.nn.Module):
         self.generated_ids = None
         self._graph_template: Optional[PygBatch] = None
         self.aggr_method = aggr_method
+        self.per_device_gen_batch_size = per_device_gen_batch_size
 
     def forward(self, x: torch.Tensor, edge_index: torch.Tensor, batch: Optional[torch.Tensor] = None):
         """Pseudo forward method for explainer compatibility."""
         if self.input_text is None:
-            raise ValueError("Input text is not set. Please run `set_input` first.")
+            raise ValueError("Input text is not set. Please run `gen_output` first.")
         if self.generated_ids is None:
-            raise ValueError("No generated output available. Please run `set_input` first.")
+            raise ValueError("No generated output available. Please run `gen_output` first.")
 
         # Text input
         prompt_inputs = self.tokenizer(self.input_text, return_tensors="pt").to(self.model.device)
@@ -113,7 +122,9 @@ class GLMWrapper(torch.nn.Module):
 
         return cumulative_log_likelihood
 
-    def set_input(self, input_text: str, graph: PygBatch, gen_cfg: GenerationConfig):
+    def gen_output(
+        self, input_text: str, graph: PygBatch, gen_cfg: GenerationConfig, num_trials: int = 1
+    ) -> list[str]:
         """Sets the input text and generates output text based on the graph.
 
         Parameters
@@ -124,34 +135,54 @@ class GLMWrapper(torch.nn.Module):
             The graph data in PyG Batch format.
         gen_cfg : GenerationConfig
             Configuration for text generation.
+        num_trials : int, optional
+            Number of generation trials to perform, by default 1.
 
         Returns
         -------
-        output_text : str
-            The generated output text.
+        output_text : list[str]
+            The generated output text for each trial.
         """
         if not isinstance(input_text, str):
             raise ValueError("Input text must be a string.")
         if input_text.strip() == "":
             raise ValueError("Input text cannot be empty.")
+        if num_trials < 1:
+            raise ValueError("Number of trials must be at least 1.")
 
         self._graph_template = graph.clone()
         self.input_text = input_text
 
         input_ids = self.tokenizer(input_text, return_tensors="pt").to(self.model.device)
-        outputs = self.model.generate(**input_ids, graph=graph, generation_config=gen_cfg)
         prompt_length = input_ids["input_ids"].shape[-1]
-        generated_ids = outputs[:, prompt_length:][0]
 
-        if generated_ids.numel() == 0:
-            output_text = ""
-        else:
-            output_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
-        return output_text
+        output_texts: list[str] = []
+        data_list = graph.to_data_list()
+        if len(data_list) != 1 and len(data_list) != num_trials:
+            raise ValueError("Graph batch must contain a single graph or match the number of trials.")
+
+        for offset in range(0, num_trials, self.per_device_gen_batch_size):
+            batch_size = min(self.per_device_gen_batch_size, num_trials - offset)
+            batched_inputs = {k: v.repeat(batch_size, 1) for k, v in input_ids.items()}
+            if len(data_list) == num_trials:
+                graph_batch = PygBatch.from_data_list(
+                    [data.clone() for data in data_list[offset : offset + batch_size]]
+                )
+            else:
+                graph_batch = PygBatch.from_data_list([data_list[0].clone() for _ in range(batch_size)])
+            outputs = self.model.generate(**batched_inputs, graph=graph_batch, generation_config=gen_cfg)
+            generated_ids_batch = outputs[:, prompt_length:]
+            for row in generated_ids_batch:
+                if row.numel() == 0:
+                    output_texts.append("")
+                else:
+                    output_texts.append(self.tokenizer.decode(row, skip_special_tokens=True))
+
+        return output_texts
 
     def set_output(self, output_text: str):
         """Overwrites the generated output text with a custom output.
-        `set_input` must be called before this method.
+        `gen_output` must be called before this method.
 
         Parameters
         ----------
@@ -164,7 +195,7 @@ class GLMWrapper(torch.nn.Module):
             raise ValueError("Output text cannot be empty.")
         if self.input_text is None or self._graph_template is None:
             raise ValueError(
-                "Input text and graph template must be set before setting output. Please call `set_input` first."
+                "Input text and graph template must be set before setting output. Please call `gen_output` first."
             )
         else:
             output_ids = self.tokenizer(output_text, return_tensors="pt")["input_ids"].squeeze(0)

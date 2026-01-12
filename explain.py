@@ -326,13 +326,15 @@ def _generate_explanation(
         Ratio of correct generations within ``num_trials``.
     """
     # Generate output and verify correctness
-    generated = [wrapper.set_input(sample["prompt"], pyg_batch, gen_cfg) for _ in range(num_gen_trials)]
+    output_texts = wrapper.gen_output(
+        input_text=sample["prompt"], graph=pyg_batch, gen_cfg=gen_cfg, num_trials=num_gen_trials
+    )
 
     # Update output_text to the first correct generation
-    acc, _, correct_mask = comp_accuracy(generated, [sample["completion"]] * len(generated), subset)
+    acc, _, correct_mask = comp_accuracy(output_texts, [sample["completion"]] * len(output_texts), subset)
     try:
         first_correct_idx = correct_mask.index(True)
-        wrapper.set_output(generated[first_correct_idx])
+        wrapper.set_output(output_texts[first_correct_idx])
     except ValueError:
         print(
             f"[WARN] Failed to generate the correct answer for sample[index={sample['index']}] "
