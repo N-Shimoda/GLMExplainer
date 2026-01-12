@@ -1,4 +1,4 @@
-from typing import Literal, Optional
+from typing import Optional
 
 import torch
 from torch_geometric.data import Batch as PygBatch
@@ -7,15 +7,12 @@ from transformers import AutoTokenizer, GenerationConfig
 
 from src.glm import GraphTokenLM
 
-VALID_AGGR_METHODS = ["normal"]
-
 
 class GLMWrapper(torch.nn.Module):
     def __init__(
         self,
         model: GraphTokenLM,
         tokenizer: AutoTokenizer,
-        aggr_method: Literal["normal"] = "normal",
         per_device_gen_batch_size: int = 4,
     ):
         """
@@ -27,8 +24,6 @@ class GLMWrapper(torch.nn.Module):
             The GraphTokenLM model to be wrapped.
         tokenizer : AutoTokenizer
             The tokenizer corresponding to the LLM used in the model.
-        aggr_method : Literal["normal"], optional
-            The aggregation method for computing representative value, by default "normal".
         per_device_gen_batch_size : int, optional
             The batch size per device for output generation, by default 4.
         """
@@ -38,7 +33,6 @@ class GLMWrapper(torch.nn.Module):
         self.input_text = None
         self.generated_ids = None
         self._graph_template: Optional[PygBatch] = None
-        self.aggr_method = aggr_method
         self.per_device_gen_batch_size = per_device_gen_batch_size
 
     def forward(self, x: torch.Tensor, edge_index: torch.Tensor, batch: Optional[torch.Tensor] = None):
@@ -85,34 +79,30 @@ class GLMWrapper(torch.nn.Module):
         outputs = self.model(**inputs, graph=graph, labels=labels)
 
         # Compute representative value
-        match self.aggr_method:
-            case "normal":
-                log_probs = torch.log_softmax(outputs.logits, dim=-1)
-                shift_log_probs = log_probs[:, :-1, :]
-                shift_token_ids = inputs["input_ids"][:, 1:]
-                token_log_probs = shift_log_probs.gather(dim=-1, index=shift_token_ids.unsqueeze(-1)).squeeze(-1)
+        log_probs = torch.log_softmax(outputs.logits, dim=-1)
+        shift_log_probs = log_probs[:, :-1, :]
+        shift_token_ids = inputs["input_ids"][:, 1:]
+        token_log_probs = shift_log_probs.gather(dim=-1, index=shift_token_ids.unsqueeze(-1)).squeeze(-1)
 
-                gen_len = generated_ids.size(1)
-                output_log_probs = token_log_probs[:, -gen_len:-1] if gen_len > 0 else token_log_probs[:, :0]
+        gen_len = generated_ids.size(1)
+        output_log_probs = token_log_probs[:, -gen_len:-1] if gen_len > 0 else token_log_probs[:, :0]
 
-                if output_log_probs.numel() == 0:
-                    cumulative_log_likelihood = torch.zeros((), device=self.model.device)
-                    # log_prob_values = []
-                    # out_token_probs = []
-                else:
-                    cumulative_log_likelihood = output_log_probs.sum()
-                    # output_log_probs_flat = output_log_probs.squeeze(0)
-                    # log_prob_values = output_log_probs_flat.detach().cpu().tolist()
-                    # out_token_probs = output_log_probs_flat.exp().detach().cpu().tolist()
+        if output_log_probs.numel() == 0:
+            cumulative_log_likelihood = torch.zeros((), device=self.model.device)
+            # log_prob_values = []
+            # out_token_probs = []
+        else:
+            cumulative_log_likelihood = output_log_probs.sum()
+            # output_log_probs_flat = output_log_probs.squeeze(0)
+            # log_prob_values = output_log_probs_flat.detach().cpu().tolist()
+            # out_token_probs = output_log_probs_flat.exp().detach().cpu().tolist()
 
-                # generated_token_ids = self.generated_ids.detach().cpu().tolist()
-                # generated_tokens = self.tokenizer.convert_ids_to_tokens(generated_token_ids)
-                # print("Output tokens:", [t.replace("Ġ", " ") for t in generated_tokens])
-                # print("Sum of log probabilities:", cumulative_log_likelihood.item())
-                # for t, p, lp in zip(generated_tokens, out_token_probs, log_prob_values):
-                #     print(f"{t:>16s}: {p:.12f} (log={lp:.12f})")
-            case _:
-                raise NotImplementedError(f"Aggregation method '{self.aggr_method}' is not implemented.")
+        # generated_token_ids = self.generated_ids.detach().cpu().tolist()
+        # generated_tokens = self.tokenizer.convert_ids_to_tokens(generated_token_ids)
+        # print("Output tokens:", [t.replace("Ġ", " ") for t in generated_tokens])
+        # print("Sum of log probabilities:", cumulative_log_likelihood.item())
+        # for t, p, lp in zip(generated_tokens, out_token_probs, log_prob_values):
+        #     print(f"{t:>16s}: {p:.12f} (log={lp:.12f})")
 
         return cumulative_log_likelihood
 
@@ -194,15 +184,3 @@ class GLMWrapper(torch.nn.Module):
         else:
             output_ids = self.tokenizer(output_text, return_tensors="pt")["input_ids"].squeeze(0)
             self.generated_ids = output_ids.to(self.model.device)
-
-    def set_aggregation_method(self, method: Literal["normal"]):
-        """Sets the aggregation method for computing representative value.
-
-        Parameters
-        ----------
-        method : Literal["normal"]
-            The aggregation method to use.
-        """
-        if method not in VALID_AGGR_METHODS:
-            raise ValueError(f"Invalid aggregation method '{method}'. Valid methods are: {VALID_AGGR_METHODS}")
-        self.aggr_method = method
