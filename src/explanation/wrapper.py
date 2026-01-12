@@ -1,4 +1,5 @@
-from typing import Optional
+import math
+from typing import Literal, Optional
 
 import torch
 from torch_geometric.data import Batch as PygBatch
@@ -32,6 +33,7 @@ class GLMWrapper(torch.nn.Module):
         self.tokenizer = tokenizer
         self.input_text = None
         self.generated_ids = None
+        self.gen_relevant_ids = None
         self._graph_template: Optional[PygBatch] = None
         self.per_device_gen_batch_size = per_device_gen_batch_size
 
@@ -172,3 +174,46 @@ class GLMWrapper(torch.nn.Module):
         else:
             output_ids = self.tokenizer(output_text, return_tensors="pt")["input_ids"].squeeze(0)
             self.generated_ids = output_ids.to(self.model.device)
+
+    def set_relevant_ids(self, baseline_graph_type: Literal["complete", "empty"]):
+        if self.input_text is None:
+            raise ValueError("Input text is not set. Please run `gen_output` first.")
+        if self._graph_template is None:
+            raise ValueError("Graph template is not set. Please run `gen_output` first.")
+        if self.generated_ids is None:
+            raise ValueError("No generated output available. Please run `set_generated_ids` first.")
+        org_token_probs = self.comp_token_probs(
+            prompt=self.input_text,
+            completion=self.tokenizer.decode(self.generated_ids, skip_special_tokens=True),
+            graph=self._graph_template,
+        )
+
+    def comp_token_probs(self, prompt: str, completion: str, graph: PygBatch):
+        """Compute token probabilities for the completion tokens given the prompt and graph."""
+        prompt_ids = self.tokenizer.encode(prompt, add_special_tokens=False)
+        completion_ids = self.tokenizer.encode(completion, add_special_tokens=False)
+        if not completion_ids:
+            raise ValueError("Completion encodes to zero tokens. Provide a non-empty completion.")
+
+        input_ids = torch.tensor([prompt_ids + completion_ids], dtype=torch.long, device=self.model.device)
+        attention_mask = torch.ones_like(input_ids)
+        graph = graph.to(self.model.device)
+
+        with torch.no_grad():
+            outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, graph=graph)
+
+        log_probs = torch.log_softmax(outputs.logits, dim=-1)[0]
+        base_pos = self.model.config.num_graph_tokens + len(prompt_ids) - 1
+        if base_pos < 0:
+            raise ValueError("Prompt is empty and graph tokens are disabled; cannot score completion tokens.")
+
+        token_rows = []
+        for idx, token_id in enumerate(completion_ids):
+            pos = base_pos + idx
+            if pos >= log_probs.size(0):
+                raise ValueError("Token position exceeds model logits length.")
+            log_prob = log_probs[pos, token_id].item()
+            token_str = self.tokenizer.convert_ids_to_tokens([token_id])[0]
+            token_rows.append((token_id, token_str, math.exp(log_prob)))
+
+        return token_rows
