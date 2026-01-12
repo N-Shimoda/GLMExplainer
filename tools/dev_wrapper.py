@@ -11,6 +11,7 @@ if ROOT_DIR not in sys.path:
 
 from eval import create_pyg_batch  # noqa: E402
 from src.ckpt import _resolve_ckpt_path  # noqa: E402
+from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS  # noqa: E402
 from src.explanation.preprocess import build_dataset, filter_dataset  # noqa: E402
 from src.explanation.wrapper import GLMWrapper  # noqa: E402
 from src.glm import GraphTokenLM  # noqa: E402
@@ -28,10 +29,10 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Validate GLMWrapper.set_relevant_ids() behavior.")
     p.add_argument("--model-path", type=str, default="outputs/ba_shapes")
     p.add_argument("--dataset", type=str, default="MotifQA", choices=["MotifQA", "GraphQA"])
-    p.add_argument("--subset", type=str, default="ba_shapes")
-    p.add_argument("--split", type=str, default="test")
+    p.add_argument("--subset", type=str, default="ba_shapes", choices=MOTIFQA_SUBSETS + GRAPHQA_SUBSETS)
+    p.add_argument("--split", type=str, default="test", choices=["train", "val", "test"])
     p.add_argument("--sample-idx", type=int, default=None)
-    p.add_argument("--baseline-graph", type=str, default="complete", choices=["empty", "complete"])
+    p.add_argument("--baseline-graph", type=str, default="complete", choices=["complete", "empty"])
     p.add_argument("--max-new-tokens", type=int, default=4)
     return p.parse_args()
 
@@ -71,7 +72,8 @@ def main() -> None:
     # Initialize wrapper state.
     _ = wrapper.gen_output(sample["prompt"], pyg_batch, gen_cfg, num_trials=1)
     wrapper.set_generated_ids(sample["completion"])
-    wrapper.set_relevant_ids(args.baseline_graph)
+    relevant_ids = wrapper.set_relevant_ids(args.baseline_graph, llr_threshold=3.0)
+    print(f"\n[RESULT] Relevant token IDs: {relevant_ids}")
 
 
 if __name__ == "__main__":

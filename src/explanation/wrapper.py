@@ -33,7 +33,7 @@ class GLMWrapper(torch.nn.Module):
         self.tokenizer = tokenizer
         self.input_text = None
         self.generated_ids = None
-        self.gen_relevant_ids = None
+        self.gen_relevant_ids: Optional[list[int]] = None
         self._graph_template: Optional[PygBatch] = None
         self.per_device_gen_batch_size = per_device_gen_batch_size
 
@@ -175,18 +175,60 @@ class GLMWrapper(torch.nn.Module):
             output_ids = self.tokenizer(output_text, return_tensors="pt")["input_ids"].squeeze(0)
             self.generated_ids = output_ids.to(self.model.device)
 
-    def set_relevant_ids(self, baseline_graph_type: Literal["complete", "empty"]):
+    def set_relevant_ids(self, baseline_graph_type: Literal["complete", "empty"], llr_threshold: float = 0.0):
         if self.input_text is None:
             raise ValueError("Input text is not set. Please run `gen_output` first.")
         if self._graph_template is None:
             raise ValueError("Graph template is not set. Please run `gen_output` first.")
         if self.generated_ids is None:
             raise ValueError("No generated output available. Please run `set_generated_ids` first.")
+
+        # Compute original token probabilities
         org_token_probs = self.comp_token_probs(
             prompt=self.input_text,
             completion=self.tokenizer.decode(self.generated_ids, skip_special_tokens=True),
             graph=self._graph_template,
         )
+
+        # Compute baseline token probabilities
+        base_graph = self._graph_template.clone()
+        num_nodes = base_graph.num_nodes
+        match baseline_graph_type:
+            case "complete":
+                edges = torch.combinations(torch.arange(num_nodes, device=base_graph.edge_index.device), r=2).t()
+                base_graph["edge_index"] = torch.cat([edges, edges.flip(0)], dim=1)
+            case "empty":
+                base_graph["edge_index"] = torch.empty((2, 0), dtype=torch.long, device=base_graph.edge_index.device)
+        base_token_probs = self.comp_token_probs(
+            prompt=self.input_text,
+            completion=self.tokenizer.decode(self.generated_ids, skip_special_tokens=True),
+            graph=base_graph,
+        )
+
+        print("\n[INFO] Token probabilities comparison:")
+        print(
+            f"{'Token ID':>8} | {'Token':>12} | {'Original Prob.':>15}"
+            f" | {'Baseline Prob.':>15} | {'LLR':>10} | {'Relevant':>8}"
+        )
+        print("-" * 85)
+        print_rows = []
+        self.gen_relevant_ids = []
+        eps = 1e-12
+        for idx, ((org_id, org_token, org_prob), (base_id, base_token, base_prob)) in enumerate(
+            zip(org_token_probs, base_token_probs)
+        ):
+            if org_id != base_id or org_token != base_token:
+                raise ValueError("Token sequences do not match between original and baseline runs.")
+            llr = math.log(org_prob + eps) - math.log(base_prob + eps)
+            print_rows.append(
+                f"{org_id:8d} | {org_token:12s} | {org_prob:15.8f} | "
+                f"{base_prob:15.8f} | {llr:10.6f} | {'*' if llr > llr_threshold else '':>8}"
+            )
+            if llr > llr_threshold:
+                self.gen_relevant_ids.append(idx)
+        print("\n".join(print_rows))
+
+        return self.gen_relevant_ids
 
     def comp_token_probs(self, prompt: str, completion: str, graph: PygBatch):
         """Compute token probabilities for the completion tokens given the prompt and graph."""
