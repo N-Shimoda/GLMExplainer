@@ -89,20 +89,8 @@ class GLMWrapper(torch.nn.Module):
 
         if output_log_probs.numel() == 0:
             cumulative_log_likelihood = torch.zeros((), device=self.model.device)
-            # log_prob_values = []
-            # out_token_probs = []
         else:
             cumulative_log_likelihood = output_log_probs.sum()
-            # output_log_probs_flat = output_log_probs.squeeze(0)
-            # log_prob_values = output_log_probs_flat.detach().cpu().tolist()
-            # out_token_probs = output_log_probs_flat.exp().detach().cpu().tolist()
-
-        # generated_token_ids = self.generated_ids.detach().cpu().tolist()
-        # generated_tokens = self.tokenizer.convert_ids_to_tokens(generated_token_ids)
-        # print("Output tokens:", [t.replace("Ġ", " ") for t in generated_tokens])
-        # print("Sum of log probabilities:", cumulative_log_likelihood.item())
-        # for t, p, lp in zip(generated_tokens, out_token_probs, log_prob_values):
-        #     print(f"{t:>16s}: {p:.12f} (log={lp:.12f})")
 
         return cumulative_log_likelihood
 
