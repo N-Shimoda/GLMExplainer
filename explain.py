@@ -178,6 +178,16 @@ def build_args():
     p.add_argument("--epochs", type=int, default=200, help="GNNExplainer optimization epochs (default: 200)")
     p.add_argument("--lr", type=float, default=0.01, help="GNNExplainer learning rate (default: 0.01)")
 
+    # Relevant token selection
+    p.add_argument("--llr-threshold", type=float, default=None, help="LLR threshold for relevant token selection.")
+    p.add_argument(
+        "--baseline-graph",
+        type=str,
+        default="complete",
+        choices=["complete", "empty"],
+        help="Baseline graph type for LLR computation.",
+    )
+
     # Logging
     p.add_argument(
         "--wandb",
@@ -296,6 +306,8 @@ def _generate_explanation(
     subset: str,
     gen_cfg: GenerationConfig,
     explainer_args: dict[str, float | int],
+    llr_threshold: float,
+    baseline_graph: str,
     num_gen_trials: int = 10,
 ) -> tuple[Explanation | None, float]:
     """Generates output for the given sample and explains it using GNNExplainer.
@@ -314,6 +326,10 @@ def _generate_explanation(
         Configuration for text generation.
     explainer_args : dict[str, float | int]
         Keyword arguments forwarded to :class:`GNNExplainer` controlling its optimization.
+    llr_threshold : Optional[float]
+        LLR threshold for selecting relevant tokens before running the explainer.
+    baseline_graph : str
+        Baseline graph type used for LLR computation.
     num_gen_trials : int, optional
         Maximum number of trials to generate the correct answer, by default 10.
 
@@ -341,6 +357,10 @@ def _generate_explanation(
             f"(correct answer: `{sample['completion']}`)."
         )
         return None, acc
+
+    wrapper.relevant_idx = None
+    if llr_threshold is not None and llr_threshold > 0.0:
+        wrapper.set_relevant_ids(baseline_graph, llr_threshold=llr_threshold)
 
     # Generate explanation by GNNExplainer
     explainer = Explainer(
@@ -371,6 +391,8 @@ def explain_sample(
     fieldnames: list[str],
     dataset_name: str,
     explainer_args: dict[str, float | int],
+    llr_threshold: float,
+    baseline_graph: str,
 ) -> tuple[bool, dict[str, float], float, torch.Tensor | None]:
     """Explain a single dataset sample, collect metrics, and persist trial artifacts.
 
@@ -401,6 +423,10 @@ def explain_sample(
         Name of the dataset being processed (e.g., ``"MotifQA"``).
     explainer_args : dict[str, float | int]
         Keyword arguments forwarded to the explainer factory.
+    llr_threshold : Optional[float]
+        LLR threshold for selecting relevant tokens before running the explainer.
+    baseline_graph : str
+        Baseline graph type used for LLR computation.
 
     Returns
     -------
@@ -418,7 +444,15 @@ def explain_sample(
     model_device = wrapper.model.device
     pyg_batch = create_pyg_batch(sample["graph"], device=model_device)
     explanation, ans_accuracy = _generate_explanation(
-        wrapper, sample, pyg_batch, subset, gen_cfg, explainer_args=explainer_args, num_gen_trials=num_gen_trials
+        wrapper,
+        sample,
+        pyg_batch,
+        subset,
+        gen_cfg,
+        explainer_args=explainer_args,
+        llr_threshold=llr_threshold,
+        baseline_graph=baseline_graph,
+        num_gen_trials=num_gen_trials,
     )
 
     if explanation is None:
@@ -601,6 +635,8 @@ def process_dataset(
                 fieldnames=fieldnames,
                 dataset_name=args.dataset,
                 explainer_args=explainer_args,
+                llr_threshold=args.llr_threshold,
+                baseline_graph=args.baseline_graph,
             )
             if edge_mask is not None:
                 sample_edge_masks[sample_idx].append(edge_mask)
