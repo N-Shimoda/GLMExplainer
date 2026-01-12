@@ -7,7 +7,7 @@ from transformers import AutoTokenizer, GenerationConfig
 
 from src.glm import GraphTokenLM
 
-VALIDE_AGGR_METHODS = ["normal"]
+VALID_AGGR_METHODS = ["normal"]
 
 
 class GLMWrapper(torch.nn.Module):
@@ -141,12 +141,12 @@ class GLMWrapper(torch.nn.Module):
         input_ids = self.tokenizer(input_text, return_tensors="pt").to(self.model.device)
         outputs = self.model.generate(**input_ids, graph=graph, generation_config=gen_cfg)
         prompt_length = input_ids["input_ids"].shape[-1]
-        self.generated_ids = outputs[:, prompt_length:][0]
+        generated_ids = outputs[:, prompt_length:][0]
 
-        if self.generated_ids.numel() == 0:
+        if generated_ids.numel() == 0:
             output_text = ""
         else:
-            output_text = self.tokenizer.decode(self.generated_ids, skip_special_tokens=True)
+            output_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
         return output_text
 
     def set_output(self, output_text: str):
@@ -178,6 +178,6 @@ class GLMWrapper(torch.nn.Module):
         method : Literal["normal"]
             The aggregation method to use.
         """
-        if method not in VALIDE_AGGR_METHODS:
-            raise ValueError(f"Invalid aggregation method '{method}'. Valid methods are: {VALIDE_AGGR_METHODS}")
+        if method not in VALID_AGGR_METHODS:
+            raise ValueError(f"Invalid aggregation method '{method}'. Valid methods are: {VALID_AGGR_METHODS}")
         self.aggr_method = method
