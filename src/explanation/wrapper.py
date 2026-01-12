@@ -8,6 +8,8 @@ from transformers import AutoTokenizer, GenerationConfig
 
 from src.glm import GraphTokenLM
 
+VALID_BASELINE_GRAPH_TYPES = ["complete", "empty"]
+
 
 class GLMWrapper(torch.nn.Module):
     def __init__(
@@ -175,13 +177,35 @@ class GLMWrapper(torch.nn.Module):
             output_ids = self.tokenizer(output_text, return_tensors="pt")["input_ids"].squeeze(0)
             self.generated_ids = output_ids.to(self.model.device)
 
-    def set_relevant_ids(self, baseline_graph_type: Literal["complete", "empty"], llr_threshold: float = 0.0):
+    def set_relevant_ids(
+        self, baseline_graph_type: Literal["complete", "empty"], llr_threshold: float = 0.0
+    ) -> list[int]:
+        """Set relevant token ids based on log-likelihood ratio (LLR) between original and baseline graphs.
+        `gen_output` and `set_generated_ids` must be called before this method.
+
+        Parameters
+        ----------
+        baseline_graph_type : Literal["complete", "empty"]
+            The type of baseline graph to use for comparison.
+        llr_threshold : float, optional
+            The LLR threshold above which tokens are considered relevant, by default 0.0.
+
+        Returns
+        -------
+        relevant_ids : list[int]
+            The list of relevant token ids based on the LLR threshold.
+            This function also sets the same indices to `self.gen_relevant_ids`.
+        """
         if self.input_text is None:
             raise ValueError("Input text is not set. Please run `gen_output` first.")
         if self._graph_template is None:
             raise ValueError("Graph template is not set. Please run `gen_output` first.")
         if self.generated_ids is None:
             raise ValueError("No generated output available. Please run `set_generated_ids` first.")
+        if baseline_graph_type not in VALID_BASELINE_GRAPH_TYPES:
+            raise ValueError(
+                f"Invalid baseline_graph_type: {baseline_graph_type}. " f"Must be one of {VALID_BASELINE_GRAPH_TYPES}."
+            )
 
         # Compute original token probabilities
         org_token_probs = self.comp_token_probs(
