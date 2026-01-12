@@ -691,8 +691,9 @@ def main():
     """Compute edge importance explanations for GraphTokenLM predictions on specified dataset samples."""
     set_seed(42)
     args, explainer_args = build_args()
-    run_name = f"{args.subset}_{datetime.now().strftime('%m%d-%H%M')}"
-    OUT_DIR = os.path.join("explanations", args.subset, run_name)
+    date_str = datetime.now().strftime("%m%d-%H%M")
+    run_name = f"{args.subset}_{date_str}"
+    OUT_DIR = os.path.join("explanations", args.subset, date_str)
 
     # Setup DDP, random seed, and device
     rank, world_size, local_rank, is_distributed = _init_distributed_if_needed()
