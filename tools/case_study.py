@@ -10,6 +10,7 @@ import torch
 from torch_geometric.utils import dense_to_sparse
 from tqdm import tqdm
 from transformers import AutoTokenizer
+from transformers.trainer_utils import set_seed
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
@@ -51,6 +52,7 @@ def parse_args():
     )
     p.add_argument("--output-dir", type=str, default="plots/", help="Directory to save output plots.")
     p.add_argument("--verbose", action="store_true", help="If set, print token probabilities.")
+    p.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility (default: 42).")
     return p.parse_args()
 
 
@@ -209,6 +211,7 @@ def comp_token_probs(model: GraphTokenLM, tok: AutoTokenizer, sample: dict) -> l
 
 def main():
     args = parse_args()
+    set_seed(args.seed)
     OUT_DIR = os.path.join(args.output_dir, args.subset, args.baseline_graph)
     os.makedirs(OUT_DIR, exist_ok=True)
 
