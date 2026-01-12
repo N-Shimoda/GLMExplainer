@@ -190,6 +190,9 @@ def build_args():
 
     # Logging
     p.add_argument(
+        "--outdir-base", type=str, default="explanations", help="Base path of output directory (default: explanations)"
+    )
+    p.add_argument(
         "--wandb",
         action="store_true",
         help="Log per-sample explanation metrics to Weights & Biases.",
@@ -693,7 +696,7 @@ def main():
     args, explainer_args = build_args()
     date_str = datetime.now().strftime("%m%d-%H%M")
     run_name = f"{args.subset}_{date_str}"
-    OUT_DIR = os.path.join("explanations", args.subset, date_str)
+    OUT_DIR = os.path.join(args.outdir_base, args.subset, date_str)
 
     # Setup DDP, random seed, and device
     rank, world_size, local_rank, is_distributed = _init_distributed_if_needed()
