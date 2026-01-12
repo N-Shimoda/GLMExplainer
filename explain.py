@@ -168,6 +168,9 @@ def build_args():
     p.add_argument(
         "--num-trials", type=int, default=1, help="Number of trials for explaining each sample (default: 1)"
     )
+    p.add_argument(
+        "--num-gen-trials", type=int, default=10, help="Number of generation trials per explanation (default: 10)"
+    )
 
     # Hyper-parameters for GNNExplainer
     p.add_argument("--edge-size", type=float, default=0.005, help="GNNExplainer edge size parameter (default: 0.005)")
@@ -293,7 +296,7 @@ def _generate_explanation(
     subset: str,
     gen_cfg: GenerationConfig,
     explainer_args: dict[str, float | int],
-    num_trials: int = 10,
+    num_gen_trials: int = 10,
 ) -> tuple[Explanation | None, float]:
     """Generates output for the given sample and explains it using GNNExplainer.
 
@@ -311,7 +314,7 @@ def _generate_explanation(
         Configuration for text generation.
     explainer_args : dict[str, float | int]
         Keyword arguments forwarded to :class:`GNNExplainer` controlling its optimization.
-    num_trials : int, optional
+    num_gen_trials : int, optional
         Maximum number of trials to generate the correct answer, by default 10.
 
     Returns
@@ -323,7 +326,7 @@ def _generate_explanation(
         Ratio of correct generations within ``num_trials``.
     """
     # Generate output and verify correctness
-    generated = [wrapper.set_input(sample["prompt"], pyg_batch, gen_cfg) for _ in range(num_trials)]
+    generated = [wrapper.set_input(sample["prompt"], pyg_batch, gen_cfg) for _ in range(num_gen_trials)]
 
     # Update output_text to the first correct generation
     acc, _, correct_mask = comp_accuracy(generated, [sample["completion"]] * len(generated), subset)
@@ -360,12 +363,12 @@ def explain_sample(
     subset: str,
     trial_idx: int,
     num_trials: int,
+    num_gen_trials: int,
     gen_cfg: GenerationConfig,
     log_path: str,
     fieldnames: list[str],
     dataset_name: str,
     explainer_args: dict[str, float | int],
-    num_gen_trials: int = 10,
 ) -> tuple[bool, dict[str, float], float, torch.Tensor | None]:
     """Explain a single dataset sample, collect metrics, and persist trial artifacts.
 
@@ -382,7 +385,10 @@ def explain_sample(
     trial_idx : int
         Index of the current trial for the given ``sample``.
     num_trials : int
-        Total number of trials that will be executed for the ``sample``.
+        Total number of explanation trials that will be executed for the ``sample``.
+    num_gen_trials : int
+        Maximum number of explanation generation trials passed to
+        :func:`_generate_explanation`.
     gen_cfg : GenerationConfig
         Configuration controlling the language-model generation step.
     log_path : str
@@ -393,9 +399,6 @@ def explain_sample(
         Name of the dataset being processed (e.g., ``"MotifQA"``).
     explainer_args : dict[str, float | int]
         Keyword arguments forwarded to the explainer factory.
-    num_gen_trials : int, default=10
-        Maximum number of explanation generation trials passed to
-        :func:`_generate_explanation`.
 
     Returns
     -------
@@ -413,7 +416,7 @@ def explain_sample(
     model_device = wrapper.model.device
     pyg_batch = create_pyg_batch(sample["graph"], device=model_device)
     explanation, ans_accuracy = _generate_explanation(
-        wrapper, sample, pyg_batch, subset, gen_cfg, explainer_args=explainer_args, num_trials=num_gen_trials
+        wrapper, sample, pyg_batch, subset, gen_cfg, explainer_args=explainer_args, num_gen_trials=num_gen_trials
     )
 
     if explanation is None:
@@ -590,6 +593,7 @@ def process_dataset(
                 subset=subset,
                 trial_idx=i,
                 num_trials=args.num_trials,
+                num_gen_trials=args.num_gen_trials,
                 gen_cfg=gen_cfg,
                 log_path=log_path,
                 fieldnames=fieldnames,
