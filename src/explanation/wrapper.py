@@ -35,7 +35,7 @@ class GLMWrapper(torch.nn.Module):
         self.tokenizer = tokenizer
         self.input_text = None
         self.generated_ids = None
-        self.gen_relevant_ids: Optional[list[int]] = None
+        self.relevant_idx: Optional[list[int]] = None
         self._graph_template: Optional[PygBatch] = None
         self.per_device_gen_batch_size = per_device_gen_batch_size
 
@@ -94,7 +94,15 @@ class GLMWrapper(torch.nn.Module):
         if output_log_probs.numel() == 0:
             cumulative_log_likelihood = torch.zeros((), device=self.model.device)
         else:
-            cumulative_log_likelihood = output_log_probs.sum()
+            if self.relevant_idx is not None and len(self.relevant_idx) > 0:
+                relevant_idx = [idx for idx in self.relevant_idx if idx < output_log_probs.size(1)]
+                if not relevant_idx:
+                    cumulative_log_likelihood = torch.zeros((), device=self.model.device)
+                else:
+                    idx_tensor = torch.tensor(relevant_idx, device=output_log_probs.device, dtype=torch.long)
+                    cumulative_log_likelihood = output_log_probs.index_select(1, idx_tensor).sum()
+            else:
+                cumulative_log_likelihood = output_log_probs.sum()
 
         return cumulative_log_likelihood
 
@@ -194,7 +202,7 @@ class GLMWrapper(torch.nn.Module):
         -------
         relevant_ids : list[int]
             The list of relevant token ids based on the LLR threshold.
-            This function also sets the same indices to `self.gen_relevant_ids`.
+            This function also sets the same indices to `self.relevant_idx`.
         """
         if self.input_text is None:
             raise ValueError("Input text is not set. Please run `gen_output` first.")
@@ -206,7 +214,6 @@ class GLMWrapper(torch.nn.Module):
             raise ValueError(
                 f"Invalid baseline_graph_type: {baseline_graph_type}. " f"Must be one of {VALID_BASELINE_GRAPH_TYPES}."
             )
-
         # Compute original token probabilities
         org_token_probs = self.comp_token_probs(
             prompt=self.input_text,
@@ -236,7 +243,7 @@ class GLMWrapper(torch.nn.Module):
         )
         print("-" * 85)
         print_rows = []
-        self.gen_relevant_ids = []
+        self.relevant_idx = []
         eps = 1e-12
         for idx, ((org_id, org_token, org_prob), (base_id, base_token, base_prob)) in enumerate(
             zip(org_token_probs, base_token_probs)
@@ -249,10 +256,9 @@ class GLMWrapper(torch.nn.Module):
                 f"{base_prob:15.8f} | {llr:10.6f} | {'*' if llr > llr_threshold else '':>8}"
             )
             if llr > llr_threshold:
-                self.gen_relevant_ids.append(idx)
+                self.relevant_idx.append(idx)
         print("\n".join(print_rows))
-
-        return self.gen_relevant_ids
+        return self.relevant_idx
 
     def comp_token_probs(self, prompt: str, completion: str, graph: PygBatch):
         """Compute token probabilities for the completion tokens given the prompt and graph."""

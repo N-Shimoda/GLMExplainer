@@ -72,8 +72,17 @@ def main() -> None:
     # Initialize wrapper state.
     _ = wrapper.gen_output(sample["prompt"], pyg_batch, gen_cfg, num_trials=1)
     wrapper.set_generated_ids(sample["completion"])
-    relevant_ids = wrapper.set_relevant_ids(args.baseline_graph, llr_threshold=3.0)
-    print(f"\n[RESULT] Relevant token IDs: {relevant_ids}")
+
+    # Compute log-likelihood without and with relevant token filtering.
+    with torch.no_grad():
+        wrapper.relevant_idx = None
+        ll_full = wrapper.forward(pyg_batch.x, pyg_batch.edge_index, pyg_batch.batch)
+        relevant_ids = wrapper.set_relevant_ids(args.baseline_graph, llr_threshold=3.0)
+        ll_relevant = wrapper.forward(pyg_batch.x, pyg_batch.edge_index, pyg_batch.batch)
+
+    print(f"\n[RESULT] Full cumulative log-likelihood: {ll_full.item():.6f}")
+    print(f"[RESULT] Relevant-only log-likelihood: {ll_relevant.item():.6f}")
+    print(f"[RESULT] Relevant token IDs: {relevant_ids}")
 
 
 if __name__ == "__main__":
