@@ -7,5 +7,6 @@ for thresh in 0.0 1.5 3.0 4.5; do
 		--llr-threshold $thresh --baseline-graph "complete" \
 		--num-gen-trials 10 \
 		--epochs 200 --lr 0.01 \
-		--edge-size 96 --edge-ent 1.0
+		--edge-size 96 --edge-ent 1.0 \
+		--wandb --tags "thresh_search"
 done

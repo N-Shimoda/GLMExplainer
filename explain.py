@@ -197,6 +197,12 @@ def build_args():
         action="store_true",
         help="Log per-sample explanation metrics to Weights & Biases.",
     )
+    p.add_argument(
+        "--tags",
+        nargs="*",
+        default=None,
+        help="Optional W&B tags (space-separated).",
+    )
 
     # Parse and validate args
     args = p.parse_args()
@@ -764,6 +770,7 @@ def main():
             project="MotifQA-Explainer",
             name=run_name,
             config={**vars(args), **explainer_args},
+            tags=args.tags,
             dir=OUT_DIR,
         )
 
