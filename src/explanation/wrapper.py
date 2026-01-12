@@ -186,7 +186,10 @@ class GLMWrapper(torch.nn.Module):
             self.generated_ids = output_ids.to(self.model.device)
 
     def set_relevant_ids(
-        self, baseline_graph_type: Literal["complete", "empty"], llr_threshold: float = 0.0
+        self,
+        baseline_graph_type: Literal["complete", "empty"],
+        llr_threshold: float = 0.0,
+        verbose: bool = False,
     ) -> list[int]:
         """Set relevant token ids based on log-likelihood ratio (LLR) between original and baseline graphs.
         `gen_output` and `set_generated_ids` must be called before this method.
@@ -197,6 +200,8 @@ class GLMWrapper(torch.nn.Module):
             The type of baseline graph to use for comparison.
         llr_threshold : float, optional
             The LLR threshold above which tokens are considered relevant, by default 0.0.
+        verbose : bool, optional
+            Whether to print the token probability comparison table, by default False.
 
         Returns
         -------
@@ -236,14 +241,9 @@ class GLMWrapper(torch.nn.Module):
             graph=base_graph,
         )
 
-        print("\n[INFO] Token probabilities comparison:")
-        print(
-            f"{'Token ID':>8} | {'Token':>12} | {'Original Prob.':>15}"
-            f" | {'Baseline Prob.':>15} | {'LLR':>10} | {'Relevant':>8}"
-        )
-        print("-" * 85)
-        print_rows = []
+        # Compute LLR and determine relevant tokens
         self.relevant_idx = []
+        print_rows = []
         eps = 1e-12
         for idx, ((org_id, org_token, org_prob), (base_id, base_token, base_prob)) in enumerate(
             zip(org_token_probs, base_token_probs)
@@ -251,13 +251,24 @@ class GLMWrapper(torch.nn.Module):
             if org_id != base_id or org_token != base_token:
                 raise ValueError("Token sequences do not match between original and baseline runs.")
             llr = math.log(org_prob + eps) - math.log(base_prob + eps)
-            print_rows.append(
-                f"{org_id:8d} | {org_token:12s} | {org_prob:15.8f} | "
-                f"{base_prob:15.8f} | {llr:10.6f} | {'*' if llr > llr_threshold else '':>8}"
-            )
             if llr > llr_threshold:
                 self.relevant_idx.append(idx)
-        print("\n".join(print_rows))
+            if verbose:
+                print_rows.append(
+                    f"{org_id:8d} | {org_token:12s} | {org_prob:15.8f} | "
+                    f"{base_prob:15.8f} | {llr:10.6f} | {'*' if llr > llr_threshold else '':>8}"
+                )
+
+        # Print token probability comparison table
+        if verbose:
+            print("\n[INFO] Token probabilities comparison:")
+            print(
+                f"{'Token ID':>8} | {'Token':>12} | {'Original Prob.':>15}"
+                f" | {'Baseline Prob.':>15} | {'LLR':>10} | {'Relevant':>8}"
+            )
+            print("-" * 85)
+            print("\n".join(print_rows))
+
         return self.relevant_idx
 
     def comp_token_probs(self, prompt: str, completion: str, graph: PygBatch):
