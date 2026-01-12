@@ -334,7 +334,7 @@ def _generate_explanation(
     acc, _, correct_mask = comp_accuracy(output_texts, [sample["completion"]] * len(output_texts), subset)
     try:
         first_correct_idx = correct_mask.index(True)
-        wrapper.set_output(output_texts[first_correct_idx])
+        wrapper.set_generated_ids(output_texts[first_correct_idx])
     except ValueError:
         print(
             f"[WARN] Failed to generate the correct answer for sample[index={sample['index']}] "

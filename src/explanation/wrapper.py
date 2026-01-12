@@ -45,10 +45,12 @@ class GLMWrapper(torch.nn.Module):
         """Pseudo forward method for explainer compatibility."""
         if self.input_text is None:
             raise ValueError("Input text is not set. Please run `gen_output` first.")
+        if self._graph_template is None:
+            raise ValueError("Graph template is not set. Please run `gen_output` first.")
         if self.generated_ids is None:
-            raise ValueError("No generated output available. Please run `gen_output` first.")
+            raise ValueError("No generated output available. Please run `set_generated_ids` first.")
 
-        # Text input
+        # Preprocess text input (prompt + generated tokens)
         prompt_inputs = self.tokenizer(self.input_text, return_tensors="pt").to(self.model.device)
         prompt_ids = prompt_inputs["input_ids"]
         generated_ids = self.generated_ids.to(self.model.device).unsqueeze(0)
@@ -61,24 +63,16 @@ class GLMWrapper(torch.nn.Module):
             )
             inputs["attention_mask"] = torch.cat([prompt_inputs["attention_mask"], gen_attention], dim=1)
 
-        # Graph input
+        # Prepare graph input
         if batch is None:
             batch = torch.zeros(x.size(0), dtype=torch.long, device=x.device)
-
-        if self._graph_template is not None:
-            graph = self._graph_template.clone()
-            graph = graph.to(self.model.device)
-            graph.x = x.to(self.model.device)
-            graph.edge_index = edge_index.to(self.model.device)
-            graph.batch = batch.to(self.model.device)
-            graph.num_nodes = x.size(0)
-        else:
-            data = PygData(x=x, edge_index=edge_index)
-            data.num_nodes = x.size(0)
-            data.batch = batch
-            graph = PygBatch.from_data_list([data]).to(self.model.device)
+        data = PygData(x=x, edge_index=edge_index)
+        data.num_nodes = x.size(0)
+        data.batch = batch
+        graph = PygBatch.from_data_list([data]).to(self.model.device)
 
         # Labels for loss calculation
+        # NOTE: Setting -100 for prompt and graph tokens to ignore them in loss computation
         X_len = prompt_ids.size(1)
         labels = inputs["input_ids"].clone()
         labels[:, :X_len] = -100
@@ -180,9 +174,9 @@ class GLMWrapper(torch.nn.Module):
 
         return output_texts
 
-    def set_output(self, output_text: str):
-        """Overwrites the generated output text with a custom output.
-        `gen_output` must be called before this method.
+    def set_generated_ids(self, output_text: str):
+        """Set the generated token ids to GLMWrapper given the output text.
+        `gen_output` must be called before this method to set the input text and graph template.
 
         Parameters
         ----------
