@@ -109,7 +109,7 @@ def validate_args(args: argparse.Namespace) -> None:
     if args.target_value is not None and args.sample_idx is not None:
         raise ValueError("Only one of `target_value` or `sample_idx` should be specified.")
     if args.target_pos_samples and args.dataset != "MotifQA":
-        raise ValueError("`--explain-pos-sample` is only supported for the MotifQA dataset.")
+        raise ValueError("`--target-pos-samples` is only supported for the MotifQA dataset.")
     if args.num_samples is not None and args.sample_idx is not None:
         raise ValueError("Only one of `num_samples` or `sample_idx` should be specified.")
     if args.num_trials < 1:
