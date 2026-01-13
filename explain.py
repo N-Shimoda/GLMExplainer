@@ -24,7 +24,7 @@ from transformers.trainer_utils import set_seed
 from eval import create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
-from src.explanation.args import check_non_negative_int
+from src.explanation.args import check_non_negative_int, validate_args
 from src.explanation.logging import (
     _record_sample_average_metrics,
     _write_metrics_header,
@@ -95,25 +95,6 @@ def _cleanup_distributed() -> None:
     """Destroy the torch.distributed process group if it is currently active."""
     if dist.is_available() and dist.is_initialized():
         dist.destroy_process_group()
-
-
-def validate_args(args: argparse.Namespace) -> None:
-    """Validates the parsed command-line arguments."""
-    # Dataset and subset
-    if args.dataset == "MotifQA" and args.subset not in MOTIFQA_SUBSETS:
-        raise ValueError(f"Available MotifQA subsets are {MOTIFQA_SUBSETS} ({args.subset} was given).")
-    if args.dataset == "GraphQA" and args.subset not in GRAPHQA_SUBSETS:
-        raise ValueError(f"Available GraphQA subsets are {GRAPHQA_SUBSETS} ({args.subset} was given).")
-
-    # Sample filtering
-    if args.target_value is not None and args.sample_idx is not None:
-        raise ValueError("Only one of `target_value` or `sample_idx` should be specified.")
-    if args.target_pos_samples and args.dataset != "MotifQA":
-        raise ValueError("`--target-pos-samples` is only supported for the MotifQA dataset.")
-    if args.num_samples is not None and args.sample_idx is not None:
-        raise ValueError("Only one of `num_samples` or `sample_idx` should be specified.")
-    if args.num_trials < 1:
-        raise ValueError("`num_trials` must be at least 1.")
 
 
 def build_args():
