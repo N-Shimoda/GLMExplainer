@@ -16,8 +16,9 @@ class GraphViewerPage(AppPage):
         self.subset_path: Path | None = None
         self.left_pdf_name: str | None = None
         self.right_pdf_name: str | None = None
-        self.graph_name: str | None = None
         self.trial: int | None = None
+
+        self.graph_index = st.session_state.get("graph_index", None)
 
     @staticmethod
     def list_graph_files(path: Path) -> list[Path]:
@@ -92,29 +93,24 @@ class GraphViewerPage(AppPage):
         left_graphs = self.list_dirs(self.subset_path / self.left_run_name / "graphs")
         right_graphs = self.list_dirs(self.subset_path / self.right_run_name / "graphs")
 
+        # Find common graphs
         common_graphs = sorted(
             {p.name for p in left_graphs} & {p.name for p in right_graphs},
             key=self.graph_sort_key,
         )
-
-        if not common_graphs:
+        common_graph_indices = [int(p.split("_")[1]) for p in common_graphs]
+        if not common_graph_indices:
             st.warning("No common graphs found for the selected runs.")
             st.stop()
 
-        graph_index = st.session_state.get("graph_index")
-        if graph_index is not None:
-            candidate = f"graph_{graph_index}"
-            if candidate in common_graphs:
-                st.session_state["graph_name"] = candidate
-        if "graph_name" not in st.session_state or st.session_state["graph_name"] not in common_graphs:
-            st.session_state["graph_name"] = common_graphs[0]
+        # Random pick button
         pick_random = st.sidebar.button("Pick a graph", icon="🎲")
         if pick_random:
-            st.session_state["graph_name"] = random.choice(common_graphs)
-        self.graph_name = st.sidebar.selectbox("Graph", common_graphs, key="graph_name")
+            st.session_state["graph_index"] = random.choice(common_graph_indices)
+        self.graph_index = st.sidebar.selectbox("Graph", common_graph_indices, key="graph_index")
 
-        left_graph_path = self.subset_path / self.left_run_name / "graphs" / self.graph_name
-        right_graph_path = self.subset_path / self.right_run_name / "graphs" / self.graph_name
+        left_graph_path = self.subset_path / self.left_run_name / "graphs" / Path(f"graph_{self.graph_index}")
+        right_graph_path = self.subset_path / self.right_run_name / "graphs" / Path(f"graph_{self.graph_index}")
 
         left_files = self.list_graph_files(left_graph_path)
         right_files = self.list_graph_files(right_graph_path)
@@ -165,26 +161,25 @@ class GraphViewerPage(AppPage):
             or self.right_run_name is None
             or self.left_pdf_name is None
             or self.right_pdf_name is None
-            or self.graph_name is None
+            or self.graph_index is None
             or self.trial is None
         ):
             st.error("Selections are incomplete.")
             st.stop()
 
-        left_graph_path = self.subset_path / self.left_run_name / "graphs" / self.graph_name
-        right_graph_path = self.subset_path / self.right_run_name / "graphs" / self.graph_name
+        left_graph_path = self.subset_path / self.left_run_name / "graphs" / Path(f"graph_{self.graph_index}")
+        right_graph_path = self.subset_path / self.right_run_name / "graphs" / Path(f"graph_{self.graph_index}")
 
         left_pdf = left_graph_path / self.left_pdf_name
         right_pdf = right_graph_path / self.right_pdf_name
 
-        graph_index = self.graph_index(self.graph_name)
-        if graph_index is None:
+        if self.graph_index is None:
             st.warning("Unable to extract graph index for metric comparison.")
             return
         left_metrics_path = self.subset_path / self.left_run_name / "sample_metrics.csv"
         right_metrics_path = self.subset_path / self.right_run_name / "sample_metrics.csv"
-        left_metrics = self._load_graph_metrics(left_metrics_path, graph_index, self.trial)
-        right_metrics = self._load_graph_metrics(right_metrics_path, graph_index, self.trial)
+        left_metrics = self._load_graph_metrics(left_metrics_path, self.graph_index, self.trial)
+        right_metrics = self._load_graph_metrics(right_metrics_path, self.graph_index, self.trial)
         if left_metrics is None or right_metrics is None:
             st.warning("Metrics unavailable for the selected graph.")
             return
