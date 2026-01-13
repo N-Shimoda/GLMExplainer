@@ -17,8 +17,7 @@ class GraphViewerPage(AppPage):
         self.left_pdf_name: str | None = None
         self.right_pdf_name: str | None = None
         self.trial: int | None = None
-
-        self.graph_index = st.session_state.get("graph_index", None)
+        self.graph_index = st.session_state.get("graph_index", 0)
 
     @staticmethod
     def list_graph_files(path: Path) -> list[Path]:
@@ -55,13 +54,6 @@ class GraphViewerPage(AppPage):
     @staticmethod
     def graph_file_counter(name: str) -> int | None:
         match = re.match(r".*_(\d+)\.(pdf|svg)$", name)
-        if match:
-            return int(match.group(1))
-        return None
-
-    @staticmethod
-    def graph_index(name: str) -> int | None:
-        match = re.match(r"graph_(\d+)$", name)
         if match:
             return int(match.group(1))
         return None
@@ -156,27 +148,15 @@ class GraphViewerPage(AppPage):
         self.trial = int(pdf_counter_value)
 
     def create_graphs(self) -> None:
-        if (
-            self.subset_path is None
-            or self.left_run_name is None
-            or self.right_run_name is None
-            or self.left_pdf_name is None
-            or self.right_pdf_name is None
-            or self.graph_index is None
-            or self.trial is None
-        ):
-            st.error("Selections are incomplete.")
-            st.stop()
-
         left_graph_path = self.subset_path / self.left_run_name / "graphs" / Path(f"graph_{self.graph_index}")
         right_graph_path = self.subset_path / self.right_run_name / "graphs" / Path(f"graph_{self.graph_index}")
 
         left_pdf = left_graph_path / self.left_pdf_name
         right_pdf = right_graph_path / self.right_pdf_name
 
-        if self.graph_index is None:
-            st.warning("Unable to extract graph index for metric comparison.")
-            return
+        # if self.graph_index is None:
+        #     st.warning("Unable to extract graph index for metric comparison.")
+        #     return
         left_metrics_path = self.subset_path / self.left_run_name / "sample_metrics.csv"
         right_metrics_path = self.subset_path / self.right_run_name / "sample_metrics.csv"
         left_metrics = self._load_graph_metrics(left_metrics_path, self.graph_index, self.trial)
