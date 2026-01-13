@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from pages.Page import AppPage
+from viewer.Page import AppPage
 
 
 class AUROCComparisonViewer(AppPage):
@@ -175,7 +175,7 @@ class AUROCComparisonViewer(AppPage):
                 st.session_state["trial_index"] = int(row["trial"])
             else:
                 st.session_state.pop("trial_index", None)
-            st.switch_page("pages/GraphViewer.py")
+            st.switch_page("viewer/GraphViewer.py")
 
     def run(self) -> None:
         self.create_selections()

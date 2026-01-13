@@ -7,7 +7,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from pages.Page import AppPage
+from viewer.Page import AppPage
 
 
 class ExplanationGraphViewer(AppPage):
