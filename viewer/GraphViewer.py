@@ -143,6 +143,7 @@ class GraphViewerPage(AppPage):
             max_value=max(common_counters),
             value=st.session_state["trial_index"],
             step=1,
+            help=f"Available indices are {common_counters}",
             key="trial_index",
         )
 
