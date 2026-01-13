@@ -211,6 +211,48 @@ def comp_token_probs(model: GraphTokenLM, tok: AutoTokenizer, sample: dict) -> l
     return token_rows
 
 
+def comp_log_likelihood_ratio(
+    org_token_probs: list[tuple[int, str, float, float]],
+    base_token_probs: list[tuple[int, str, float, float]],
+) -> tuple[list[tuple[str, int, float]], float]:
+    """Compute per-token log likelihood ratios between two runs.
+
+    Parameters
+    ----------
+    org_token_probs : list[tuple[int, str, float, float]]
+        Original run token probabilities as (token_id, token_str, log_prob, prob).
+    base_token_probs : list[tuple[int, str, float, float]]
+        Baseline run token probabilities as (token_id, token_str, log_prob, prob).
+
+    Returns
+    -------
+    list[tuple[str, int, float]]
+        Per-token rows as (token_str, token_id, llr).
+    float
+        Total log likelihood ratio across tokens.
+
+    Notes
+    -----
+    Log likelihood ratio (LLR) for each token is computed as:
+        LLR(token) = log_prob_org(token) - log_prob_base(token)
+    """
+    if len(org_token_probs) != len(base_token_probs):
+        raise ValueError("Token probability lists must be the same length for LLR.")
+
+    llr_rows = []
+    total_llr = 0.0
+    for org_row, base_row in zip(org_token_probs, base_token_probs):
+        org_id, org_token, org_log_prob, _ = org_row
+        base_id, base_token, base_log_prob, _ = base_row
+        if org_id != base_id or org_token != base_token:
+            raise ValueError("Token sequences do not match between runs for LLR.")
+        llr = org_log_prob - base_log_prob
+        llr_rows.append((org_token, org_id, llr))
+        total_llr += llr
+
+    return llr_rows, total_llr
+
+
 def main():
     """Run the case study comparing token probabilities with original vs. baseline graphs.
 
@@ -270,12 +312,12 @@ def main():
         num_samples=args.num_samples,
     )
 
-    for sample in tqdm(dataset, desc="Processing samples"):
+    for sample in tqdm(dataset, desc="Processing samples", disable=args.verbose):
         # Original input
         org_edge_index = sample["graph"]["edge_index"]
         org_token_probs = comp_token_probs(model, tok, sample)
 
-        # Alternated input (work on a copy to avoid mutating the original sample)
+        # Alternated input
         num_nodes = len(set(sample["nodes"]))
         base_sample = dict(sample)
         base_sample["graph"] = dict(sample["graph"])
@@ -300,11 +342,15 @@ def main():
             print(f"\n======== Sample ID: {sample['index']} ========")
             print("- Prompt:", repr(sample["prompt"]))
             print("- Completion:", repr(sample["completion"]))
-            print("Completion token probabilities:")
-            for label, token_rows in [("w/ graph", org_token_probs), ("w/o graph", base_token_probs)]:
-                print(f"\n-- {label} --")
-                for token_id, token_str, log_prob, prob in token_rows:
-                    print(f"{token_str}\t(id={token_id})\tprob={prob:.6g}\tlog_prob={log_prob:.6g}")
+            print("\nCompletion token probabilities:")
+            llr_rows, total_llr = comp_log_likelihood_ratio(org_token_probs, base_token_probs)
+            print(f"{'Token':<8} {'ID':>6} {'Org prob':>10} {'Base prob':>10} {'LLR':>10}")
+            print("-" * 50)
+            for (token_str, token_id, llr), org_row, base_row in zip(llr_rows, org_token_probs, base_token_probs):
+                org_prob = org_row[3]
+                base_prob = base_row[3]
+                print(f"{token_str:<8} {token_id:>6} {org_prob:>10.4g} {base_prob:>10.4g} {llr:>10.4g}")
+            print(f"\nTotal LLR: {total_llr:.4g}")
 
         # Plot probabilities
         plot_prob_comparison(
