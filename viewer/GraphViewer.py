@@ -10,9 +10,8 @@ import streamlit as st
 from viewer.Page import AppPage
 
 
-class ExplanationGraphViewer(AppPage):
+class GraphViewerPage(AppPage):
     def __init__(self) -> None:
-        print("Graph Viewer Page:", st.session_state)
         super().__init__()
         self.subset_path: Path | None = None
         self.left_pdf_name: str | None = None
@@ -233,5 +232,5 @@ if __name__ == "__main__":
     st.set_page_config(page_title="Explanation Graph Viewer", layout="wide")
     st.title("Explanation Graph Viewer")
 
-    viewer = ExplanationGraphViewer()
+    viewer = GraphViewerPage()
     viewer.run()

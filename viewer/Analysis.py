@@ -8,9 +8,8 @@ import streamlit as st
 from viewer.Page import AppPage
 
 
-class AUROCComparisonViewer(AppPage):
+class AnalysisPage(AppPage):
     def __init__(self) -> None:
-        print("Analysis Page:", st.session_state)
         super().__init__()
         self.subset_path: Path | None = None
         self.run_history: pd.DataFrame | None = None
@@ -54,8 +53,10 @@ class AUROCComparisonViewer(AppPage):
             st.warning("No runs available in run history.")
             st.stop()
         with st.sidebar:
-            self.left_run_name = st.selectbox("Left run", run_names)
-            self.right_run_name = st.selectbox("Right run", run_names)
+            left_default = run_names.index(self.left_run_name) if self.left_run_name in run_names else 0
+            right_default = run_names.index(self.right_run_name) if self.right_run_name in run_names else 0
+            self.left_run_name = st.selectbox("Left run", run_names, index=left_default)
+            self.right_run_name = st.selectbox("Right run", run_names, index=right_default)
             st.session_state["left_run_name"] = self.left_run_name
             st.session_state["right_run_name"] = self.right_run_name
 
@@ -186,5 +187,5 @@ if __name__ == "__main__":
     st.set_page_config(page_title="AUROC Comparison", layout="wide")
     st.title("AUROC Comparison")
 
-    viewer = AUROCComparisonViewer()
+    viewer = AnalysisPage()
     viewer.run()

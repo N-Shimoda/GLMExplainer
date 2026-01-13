@@ -12,10 +12,12 @@ class AppPage:
             st.error(f"Base directory does not exist or is not a directory: `{base_dir}`")
             st.stop()
 
+        print(f"{self.__class__.__name__}: {st.session_state}")
         self.base_dir = base_dir
         self.subset = st.session_state.get("subset", None)
         self.left_run_name = st.session_state.get("left_run_name", None)
         self.right_run_name = st.session_state.get("right_run_name", None)
+        print(self.left_run_name, self.right_run_name)
 
     @staticmethod
     def list_dirs(path: Path) -> list[Path]:
