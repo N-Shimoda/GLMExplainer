@@ -94,6 +94,7 @@ def visualize_motif_explanation(
     fig, ax_graph = plt.subplots(figsize=(7, 4))
     fig.subplots_adjust(right=0.78)
 
+    cbar = None
     if len(G) > 0:
         xs = [coord[0] for coord in pos.values()]
         ys = [coord[1] for coord in pos.values()]
@@ -127,7 +128,7 @@ def visualize_motif_explanation(
         nx.draw_networkx_labels(G, pos, labels=labels, font_color="white", ax=ax_graph)
         if norm_weights:
             sm = plt.cm.ScalarMappable(cmap=plt.cm.Blues, norm=mcolors.Normalize(vmin=0.0, vmax=1.0))
-            cbar = fig.colorbar(sm, ax=ax_graph, orientation="horizontal", fraction=0.046, pad=0.08)
+            cbar = fig.colorbar(sm, ax=ax_graph, location="bottom", fraction=0.046, pad=0.08)
             cbar.set_label("Edge importance")
     else:
         ax_graph.text(0.5, 0.5, "Empty graph", ha="center", va="center", fontsize=12)
@@ -143,16 +144,30 @@ def visualize_motif_explanation(
         f"AUROC: {auroc_score:.3f}",
         f"AUPRC: {auprc_score:.3f}",
     ]
-    fig.text(
-        0.98,
-        0.98,
-        "\n".join(textbox_lines),
-        transform=fig.transFigure,
-        ha="right",
-        va="top",
-        fontsize=10,
-        bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.85),
-    )
+    textbox_text = "\n".join(textbox_lines)
+    if cbar is not None:
+        cbar_pos = cbar.ax.get_position()
+        fig.text(
+            0.98,
+            cbar_pos.y0 + cbar_pos.height / 2,
+            textbox_text,
+            transform=fig.transFigure,
+            ha="right",
+            va="center",
+            fontsize=10,
+            bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.85),
+        )
+    else:
+        fig.text(
+            0.98,
+            0.98,
+            textbox_text,
+            transform=fig.transFigure,
+            ha="right",
+            va="top",
+            fontsize=10,
+            bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.85),
+        )
 
     ax_graph.set_axis_off()
     fig.tight_layout()
@@ -162,6 +177,7 @@ def visualize_motif_explanation(
 
 
 if __name__ == "__main__":
+    output_path = "motif_explanation_example.svg"
     sample = {
         "index": 0,
         "nodes": [0, 1, 2, 3],
@@ -180,7 +196,8 @@ if __name__ == "__main__":
     visualize_motif_explanation(
         sample=sample,
         explanation=explanation,
-        graph_path="motif_explanation_example.svg",
+        graph_path=output_path,
         exp_accuracy=exp_accuracy,
         ans_accuracy=ans_accuracy,
     )
+    print("Visualization saved to", output_path)
