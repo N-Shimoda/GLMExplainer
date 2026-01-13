@@ -168,8 +168,8 @@ class AnalysisPage(AppPage):
         )
 
         # Switch to Graph Viewer when a row is selected
-        selected = selection.get("selection") if isinstance(selection, dict) else getattr(selection, "selection", None)
-        if selected and selected.get("rows"):
+        selected = selection["selection"]
+        if selected and selected["rows"]:
             row = merged.iloc[selected["rows"][0]]
             st.session_state["graph_index"] = int(row["sample_index"])
             if "trial" in merged.columns:
