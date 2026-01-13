@@ -46,11 +46,13 @@ def parse_args():
     p.add_argument(
         "--baseline-graph",
         type=str,
-        default="empty",
-        choices=["empty", "complete", "random"],
-        help="Type of baseline graph to use.",
+        default="complete",
+        choices=["complete", "empty", "random"],
+        help="Type of baseline graph to use (default: complete).",
     )
-    p.add_argument("--output-dir", type=str, default="case_study", help="Directory to save output plots.")
+    p.add_argument(
+        "--output-dir", type=str, default="case_study", help="Directory to save output plots (default: case_study)."
+    )
     p.add_argument("--verbose", action="store_true", help="If set, print token probabilities.")
     p.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility (default: 42).")
     return p.parse_args()
