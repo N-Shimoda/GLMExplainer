@@ -13,8 +13,10 @@ class AnalysisPage(AppPage):
         super().__init__()
         self.subset_path: Path | None = None
         self.run_history: pd.DataFrame | None = None
-        self.average_mode: bool = False
         self.metric_options = {"auroc": "AUROC", "auprc": "AUPRC", "f1": "F1 Score"}
+
+        if "average_mode" not in st.session_state:
+            st.session_state["average_mode"] = True
 
     @staticmethod
     def load_run_history(path: Path) -> pd.DataFrame | None:
@@ -66,7 +68,7 @@ class AnalysisPage(AppPage):
             self.metric_key = st.radio(
                 "Metric", options=list(self.metric_options.keys()), format_func=lambda x: self.metric_options[x]
             )
-            self.average_mode = st.toggle("Average per sample", value=True)
+            st.session_state["average_mode"] = st.toggle("Average per sample", value=st.session_state["average_mode"])
 
     def display_comparison(self) -> None:
         if self.run_history is None or self.left_run_name is None or self.right_run_name is None:
@@ -110,7 +112,7 @@ class AnalysisPage(AppPage):
         right_metric = f"right_{self.metric_key}"
 
         # Prepare merged dataframe
-        if self.average_mode:
+        if st.session_state["average_mode"]:
             # Show average per sample across trials
             left_trimmed = (
                 left_samples.groupby("sample_index", as_index=False)[self.metric_key]
