@@ -17,6 +17,8 @@ class GraphViewerPage(AppPage):
         self.left_pdf_name: str | None = None
         self.right_pdf_name: str | None = None
         self.trial: int | None = None
+        self.left_has_graph = False
+        self.right_has_graph = False
         self.graph_index = st.session_state.get("graph_index", 0)
 
     @staticmethod
@@ -58,6 +60,13 @@ class GraphViewerPage(AppPage):
             return int(match.group(1))
         return None
 
+    @staticmethod
+    def parse_graph_index(name: str) -> int | None:
+        match = re.match(r"graph_(\d+)$", name)
+        if match:
+            return int(match.group(1))
+        return None
+
     def create_selections(self) -> None:
         # Select subset
         subset_dirs = self.list_dirs(self.base_dir)
@@ -85,24 +94,25 @@ class GraphViewerPage(AppPage):
         left_graphs = self.list_dirs(self.subset_path / self.left_run_name / "graphs")
         right_graphs = self.list_dirs(self.subset_path / self.right_run_name / "graphs")
 
-        # Find common graphs
-        common_graphs = sorted(
-            {p.name for p in left_graphs} & {p.name for p in right_graphs},
-            key=self.graph_sort_key,
+        left_indices = [self.parse_graph_index(p.name) for p in left_graphs]
+        right_indices = [self.parse_graph_index(p.name) for p in right_graphs]
+        all_graph_indices = sorted(
+            {idx for idx in left_indices + right_indices if idx is not None}
         )
-        common_graph_indices = [int(p.split("_")[1]) for p in common_graphs]
-        if not common_graph_indices:
-            st.warning("No common graphs found for the selected runs.")
+        if not all_graph_indices:
+            st.warning("No graphs found for the selected runs.")
             st.stop()
 
         # Random pick button
         pick_random = st.sidebar.button("Pick a graph", icon="🎲")
         if pick_random:
-            st.session_state["graph_index"] = random.choice(common_graph_indices)
-        self.graph_index = st.sidebar.selectbox("Graph", common_graph_indices, key="graph_index")
+            st.session_state["graph_index"] = random.choice(all_graph_indices)
+        self.graph_index = st.sidebar.selectbox("Graph", all_graph_indices, key="graph_index")
 
         left_graph_path = self.subset_path / self.left_run_name / "graphs" / Path(f"graph_{self.graph_index}")
         right_graph_path = self.subset_path / self.right_run_name / "graphs" / Path(f"graph_{self.graph_index}")
+        self.left_has_graph = left_graph_path.exists()
+        self.right_has_graph = right_graph_path.exists()
 
         left_files = self.list_graph_files(left_graph_path)
         right_files = self.list_graph_files(right_graph_path)
@@ -119,57 +129,90 @@ class GraphViewerPage(AppPage):
             if counter is not None and counter not in right_pdf_by_counter:
                 right_pdf_by_counter[counter] = name
 
-        common_counters = sorted(set(left_pdf_by_counter) & set(right_pdf_by_counter))
-
-        if not common_counters:
-            st.warning("No common PDF files found in the selected graph.")
-            st.stop()
+        if self.left_has_graph and self.right_has_graph:
+            available_counters = sorted(set(left_pdf_by_counter) & set(right_pdf_by_counter))
+            if not available_counters:
+                st.warning("No common PDF files found in the selected graph.")
+                st.stop()
+        elif self.left_has_graph:
+            available_counters = sorted(left_pdf_by_counter)
+            if not available_counters:
+                st.warning("No PDF files found in the selected left graph.")
+                st.stop()
+        else:
+            available_counters = sorted(right_pdf_by_counter)
+            if not available_counters:
+                st.warning("No PDF files found in the selected right graph.")
+                st.stop()
 
         if pick_random:
-            st.session_state["trial_index"] = random.choice(common_counters)
-        if "trial_index" not in st.session_state or st.session_state["trial_index"] not in common_counters:
-            st.session_state["trial_index"] = common_counters[0]
+            st.session_state["trial_index"] = random.choice(available_counters)
+        if "trial_index" not in st.session_state or st.session_state["trial_index"] not in available_counters:
+            st.session_state["trial_index"] = available_counters[0]
         pdf_counter_value = st.sidebar.number_input(
             "Trial index",
-            min_value=min(common_counters),
-            max_value=max(common_counters),
+            min_value=min(available_counters),
+            max_value=max(available_counters),
             value=st.session_state["trial_index"],
             step=1,
-            help=f"Available indices are {common_counters}",
+            help=f"Available indices are {available_counters}",
             key="trial_index",
         )
 
-        if pdf_counter_value not in left_pdf_by_counter or pdf_counter_value not in right_pdf_by_counter:
-            st.warning("Selected PDF index is not available in both runs.")
-            st.stop()
-
-        self.left_pdf_name = left_pdf_by_counter[pdf_counter_value]
-        self.right_pdf_name = right_pdf_by_counter[pdf_counter_value]
+        self.left_pdf_name = left_pdf_by_counter.get(pdf_counter_value)
+        self.right_pdf_name = right_pdf_by_counter.get(pdf_counter_value)
         self.trial = int(pdf_counter_value)
 
     def create_graphs(self) -> None:
         left_graph_path = self.subset_path / self.left_run_name / "graphs" / Path(f"graph_{self.graph_index}")
         right_graph_path = self.subset_path / self.right_run_name / "graphs" / Path(f"graph_{self.graph_index}")
 
-        left_pdf = left_graph_path / self.left_pdf_name
-        right_pdf = right_graph_path / self.right_pdf_name
+        left_pdf = left_graph_path / self.left_pdf_name if self.left_pdf_name else None
+        right_pdf = right_graph_path / self.right_pdf_name if self.right_pdf_name else None
 
-        # if self.graph_index is None:
-        #     st.warning("Unable to extract graph index for metric comparison.")
-        #     return
         left_metrics_path = self.subset_path / self.left_run_name / "sample_metrics.csv"
         right_metrics_path = self.subset_path / self.right_run_name / "sample_metrics.csv"
-        left_metrics = self._load_graph_metrics(left_metrics_path, self.graph_index, self.trial)
-        right_metrics = self._load_graph_metrics(right_metrics_path, self.graph_index, self.trial)
-        if left_metrics is None or right_metrics is None:
-            st.warning("Metrics unavailable for the selected graph.")
-            return
+        left_metrics = (
+            self._load_graph_metrics(left_metrics_path, self.graph_index, self.trial)
+            if self.left_has_graph
+            else None
+        )
+        right_metrics = (
+            self._load_graph_metrics(right_metrics_path, self.graph_index, self.trial)
+            if self.right_has_graph
+            else None
+        )
 
         left_col, right_col = st.columns(2)
-        with left_col:
-            self.display_graph(left_pdf, left_metrics, left_metrics, delta_color="off")
-        with right_col:
-            self.display_graph(right_pdf, right_metrics, left_metrics)
+        both_have_graph = self.left_has_graph and self.right_has_graph
+
+        if self.left_has_graph and left_metrics is None:
+            with left_col:
+                st.warning("Metrics unavailable for the selected graph.")
+        if self.right_has_graph and right_metrics is None:
+            with right_col:
+                st.warning("Metrics unavailable for the selected graph.")
+
+        if both_have_graph and left_metrics is not None and right_metrics is not None:
+            with left_col:
+                self.display_graph(left_pdf, left_metrics, left_metrics, delta_color="off")
+            with right_col:
+                self.display_graph(right_pdf, right_metrics, left_metrics)
+            return
+
+        if self.left_has_graph and left_metrics is not None:
+            with left_col:
+                self.display_graph(left_pdf, left_metrics, left_metrics, delta_color="off")
+        elif not self.left_has_graph:
+            with left_col:
+                st.info("Graph is not available in the left run.")
+
+        if self.right_has_graph and right_metrics is not None:
+            with right_col:
+                self.display_graph(right_pdf, right_metrics, right_metrics, delta_color="off")
+        elif not self.right_has_graph:
+            with right_col:
+                st.info("Graph is not available in the right run.")
 
     def display_graph(
         self,
