@@ -757,12 +757,14 @@ def main():
 
     # Setup wandb logging (rank 0 only)
     args.model_path = ckpt_path
+    wandb_tags = args.tags
+    delattr(args, "tags")
     if args.wandb and is_rank0:
         wandb.init(
             project="MotifQA-Explainer",
             name=run_name,
             config={**vars(args), **explainer_args},
-            tags=args.tags,
+            tags=wandb_tags,
             dir=OUT_DIR,
         )
 
