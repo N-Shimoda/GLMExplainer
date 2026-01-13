@@ -86,11 +86,15 @@ class AnalysisPage(AppPage):
         right_avg = float(right_row[avg_key].iloc[0])
 
         left_col, right_col = st.columns(2)
+        icon_str = ":material/select_check_box:"
         with left_col:
-            st.metric(self.metric_options[self.metric_key], value=f"{left_avg:.4f}")
+            st.metric(
+                f"{self.metric_options[self.metric_key]} for :blue-badge[{icon_str} {self.left_run_name}]",
+                value=f"{left_avg:.4f}",
+            )
         with right_col:
             st.metric(
-                self.metric_options[self.metric_key],
+                f"{self.metric_options[self.metric_key]} for :blue-badge[{icon_str} {self.right_run_name}]",
                 value=f"{right_avg:.4f}",
                 delta=f"{right_avg - left_avg:+.4f}",
             )
