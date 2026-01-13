@@ -921,7 +921,7 @@ def main():
         append_run_history_row(
             history_path,
             {
-                "run_name": run_name,
+                "run_name": date_str,
                 "avg_answer_accuracy": avg_answer_accuracy,
                 "avg_auroc": avg_auroc,
                 "avg_auprc": avg_auprc,
