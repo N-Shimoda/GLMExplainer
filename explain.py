@@ -4,7 +4,7 @@ import os
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import Iterable
+from typing import Iterable, Literal
 
 import torch
 import torch.distributed as dist
@@ -172,6 +172,13 @@ def build_args():
     # Logging
     p.add_argument(
         "--outdir-base", type=str, default="explanations", help="Base path of output directory (default: explanations)"
+    )
+    p.add_argument(
+        "--output-file-type",
+        type=str,
+        default="svg",
+        choices=["svg", "pdf"],
+        help="File type for saved figures (default: svg)",
     )
     p.add_argument(
         "--wandb",
@@ -383,6 +390,7 @@ def explain_sample(
     explainer_args: dict[str, float | int],
     llr_threshold: float,
     baseline_graph: str,
+    file_type: Literal["svg", "pdf"],
 ) -> tuple[bool, dict[str, float], float, torch.Tensor | None]:
     """Explain a single dataset sample, collect metrics, and persist trial artifacts.
 
@@ -417,6 +425,8 @@ def explain_sample(
         LLR threshold for selecting relevant tokens before running the explainer.
     baseline_graph : str
         Baseline graph type used for LLR computation.
+    file_type : Literal["svg", "pdf"]
+        File type for saved figures.
 
     Returns
     -------
@@ -481,7 +491,7 @@ def explain_sample(
     os.makedirs(node_feat_dir, exist_ok=True)
 
     # Save visualizations
-    graph_path = os.path.join(graph_dir, f"{suffix}.pdf")
+    graph_path = os.path.join(graph_dir, f"{suffix}.{file_type}")
     if dataset_name == "MotifQA":
         visualize_motif_explanation(
             sample=sample,
@@ -492,7 +502,7 @@ def explain_sample(
         )
     else:
         explanation.visualize_graph(graph_path)
-    feature_path = os.path.join(node_feat_dir, f"node_feat_{suffix}.pdf")
+    feature_path = os.path.join(node_feat_dir, f"node_feat_{suffix}.{file_type}")
     explanation.visualize_feature_importance(feature_path)
 
     return metrics_logged, exp_accuracy, ans_accuracy_val, pred_edge_mask
@@ -627,6 +637,7 @@ def process_dataset(
                 explainer_args=explainer_args,
                 llr_threshold=args.llr_threshold,
                 baseline_graph=args.baseline_graph,
+                file_type=args.output_file_type,
             )
             if edge_mask is not None:
                 sample_edge_masks[sample_idx].append(edge_mask)
