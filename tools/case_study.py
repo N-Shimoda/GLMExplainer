@@ -2,7 +2,7 @@ import argparse
 import math
 import os
 import sys
-from typing import Optional
+from typing import Literal, Optional
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -26,6 +26,7 @@ from src.glm import GraphTokenLM  # noqa: E402
 
 def parse_args():
     p = argparse.ArgumentParser()
+
     p.add_argument("--model-path", type=str, required=True)
     p.add_argument("--ckpt-index", type=int, default=-1)
     p.add_argument("--subset", type=str, required=True, choices=MOTIFQA_SUBSETS)
@@ -55,6 +56,7 @@ def parse_args():
     )
     p.add_argument("--verbose", action="store_true", help="If set, print token probabilities.")
     p.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility (default: 42).")
+
     return p.parse_args()
 
 
@@ -72,6 +74,7 @@ def plot_prob_comparison(
     base_token_probs: list[tuple[int, str, float, float]],
     org_edge_index: torch.Tensor,
     base_edge_index: torch.Tensor,
+    basegraph_type: Literal["complete", "empty", "random"],
     num_nodes: int,
     node_labels: Optional[list[int]] = None,
     output_path: str = "plots/token_prob_comparison.png",
@@ -88,17 +91,14 @@ def plot_prob_comparison(
         Edge index for the original graph, shape (2, E).
     base_edge_index : torch.Tensor
         Edge index for the baseline graph, shape (2, E).
+    basegraph_type: Literal["complete", "empty", "random"]
+        Type of baseline graph used.
     num_nodes : int
         Number of nodes in both graphs.
     node_labels : list[int] | None, optional
         Optional node labels to render; length must match ``num_nodes`` when provided.
     output_path : str, optional
         Path to save the rendered figure.
-
-    Returns
-    -------
-    None
-        The figure is saved to ``output_path``.
     """
     if len(org_token_probs) != len(base_token_probs):
         raise ValueError("Token probability lists must be the same length.")
@@ -134,7 +134,7 @@ def plot_prob_comparison(
     ax_prob = fig.add_subplot(gs[1, :])
 
     ax_org.set_title("Original graph")
-    ax_base.set_title("Baseline graph")
+    ax_base.set_title(f"{basegraph_type.capitalize()} graph")
     for ax, graph in [(ax_org, org_graph), (ax_base, base_graph)]:
         ax.axis("off")
         if num_nodes == 0:
@@ -358,6 +358,7 @@ def main():
             base_token_probs,
             org_edge_index,
             base_edge_index,
+            args.baseline_graph,
             num_nodes,
             node_labels=sample["nodes"],
             output_path=os.path.join(OUT_DIR, f"tok_probs_{sample['index']}.png"),
