@@ -131,13 +131,13 @@ def plot_prob_comparison(
 
     # Plotting
     fig = plt.figure(figsize=(10, 6))
-    gs = fig.add_gridspec(nrows=2, ncols=2, height_ratios=[1.2, 2.2])
+    gs = fig.add_gridspec(nrows=2, ncols=2, height_ratios=[1.2, 2.2], hspace=0.35)
     ax_org = fig.add_subplot(gs[0, 0])
     ax_base = fig.add_subplot(gs[0, 1])
     ax_prob = fig.add_subplot(gs[1, :])
 
-    ax_org.set_title("Original graph")
-    ax_base.set_title(f"{basegraph_type.capitalize()} graph")
+    ax_org.set_title("Original graph", fontsize=15)
+    ax_base.set_title(f"{basegraph_type.capitalize()} graph", fontsize=15)
     for ax, graph in [(ax_org, org_graph), (ax_base, base_graph)]:
         ax.axis("off")
         if num_nodes == 0:
@@ -155,11 +155,12 @@ def plot_prob_comparison(
     ax_prob.plot(xs, org_probs, marker="o", linewidth=1.5, label="w/ graph")
     ax_prob.plot(xs, base_probs, marker="x", linewidth=1.5, label="w/o graph")
     ax_prob.set_xticks(xs)
-    ax_prob.set_xticklabels(tokens, rotation=40, ha="right")
-    ax_prob.set_ylabel("Probability")
-    ax_prob.set_title("Token Probability Comparison")
+    ax_prob.set_xticklabels(tokens, rotation=40, ha="right", fontsize=14)
+    ax_prob.tick_params(axis="y", labelsize=12)
+    ax_prob.set_ylabel("Probability", fontsize=14)
+    ax_prob.set_title("Token Probability Comparison", fontsize=15)
     ax_prob.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.6)
-    ax_prob.legend()
+    ax_prob.legend(fontsize=12)
     fig.tight_layout()
     plt.savefig(output_path, dpi=200)
     plt.close()
