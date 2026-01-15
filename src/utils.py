@@ -171,7 +171,9 @@ def visualize_motif_explanation(
 
     ax_graph.set_axis_off()
     fig.tight_layout()
-    os.makedirs(os.path.dirname(os.path.abspath(graph_path)), exist_ok=True)
+    dirpath = os.path.dirname(os.path.abspath(graph_path))
+    if dirpath:
+        os.makedirs(dirpath, exist_ok=True)
     fig.savefig(graph_path)
     plt.close(fig)
 
