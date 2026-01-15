@@ -77,7 +77,7 @@ def plot_prob_comparison(
     base_token_probs: list[tuple[int, str, float, float]],
     org_edge_index: torch.Tensor,
     base_edge_index: torch.Tensor,
-    basegraph_type: Literal["complete", "empty", "random"],
+    baseline_graph_type: Literal["complete", "empty", "random"],
     num_nodes: int,
     node_labels: Optional[list[int]] = None,
     output_path: str = "plots/token_prob_comparison.png",
@@ -94,7 +94,7 @@ def plot_prob_comparison(
         Edge index for the original graph, shape (2, E).
     base_edge_index : torch.Tensor
         Edge index for the baseline graph, shape (2, E).
-    basegraph_type: Literal["complete", "empty", "random"]
+    baseline_graph_type: Literal["complete", "empty", "random"]
         Type of baseline graph used.
     num_nodes : int
         Number of nodes in both graphs.
@@ -137,7 +137,7 @@ def plot_prob_comparison(
     ax_prob = fig.add_subplot(gs[1, :])
 
     ax_org.set_title("Original graph", fontsize=15)
-    ax_base.set_title(f"{basegraph_type.capitalize()} graph", fontsize=15)
+    ax_base.set_title(f"{baseline_graph_type.capitalize()} graph", fontsize=15)
     for ax, graph in [(ax_org, org_graph), (ax_base, base_graph)]:
         ax.axis("off")
         if num_nodes == 0:
