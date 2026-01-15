@@ -55,6 +55,8 @@ def comp_accuracy(
     """
     if subset not in GRAPHQA_SUBSETS + MOTIFQA_SUBSETS:
         raise ValueError(f"Unknown subset was given: {subset}")
+    if len(preds) != len(refs):
+        raise ValueError("The number of predictions and references must be the same.")
 
     numeric_subsets = {"node_count": int, "edge_count": int, "triangle_counting": int, "node_degree": int}
     classification_subsets = {
@@ -67,26 +69,35 @@ def comp_accuracy(
         "ba_two_motifs": {"house", "cycle"},
     }
 
+    num_unknown = 0
+
     if subset in numeric_subsets.keys():
-        digit_ans_li = [int(matches[-1]) if (matches := re.findall(r"\d+", ref)) else -100 for ref in refs]
-        pred_nums = [int(matches[-1]) if (matches := re.findall(r"\d+", pred)) else -1 for pred in preds]
-        correct_mask = [False] * len(preds)
-        for idx, (ans, pred_val) in enumerate(zip(digit_ans_li, pred_nums)):
-            correct_mask[idx] = ans == pred_val and not (ans < 0 or pred_val < 0)
-        acc = sum(correct_mask[: len(digit_ans_li)]) / max(1, len(refs))
-        num_unknown = 0
+        # -100 and -1 indicates references and predictions with no digits, respectively
+        ref_digits = [int(matches[-1]) if (matches := re.findall(r"\d+", ref)) else -100 for ref in refs]
+        pred_digits = [int(matches[-1]) if (matches := re.findall(r"\d+", pred)) else -1 for pred in preds]
+        correct_mask = [False] * len(pred_digits)
+        for idx, (ref_d, pred_d) in enumerate(zip(ref_digits, pred_digits)):
+            correct_mask[idx] = ref_d == pred_d and not (ref_d < 0 or pred_d < 0)
+        acc = sum(correct_mask[: len(ref_digits)]) / max(1, len(refs))
 
     elif subset in classification_subsets:
         class_labels = classification_subsets[subset]
         preds_class = [get_class(class_labels, pred) for pred in preds]
         refs_class = [get_class(class_labels, ref) for ref in refs]
-        correct_mask = [False] * len(preds)
+        correct_mask = [False] * len(preds_class)
         for idx, (pred_label, ref_label) in enumerate(zip(preds_class, refs_class)):
             correct_mask[idx] = pred_label == ref_label and pred_label in class_labels
         acc = sum(correct_mask[: len(refs_class)]) / max(1, len(refs_class))
         num_unknown = sum(p not in class_labels for p in preds_class)
 
+    elif subset == "shortest_path":
+        # -1 indicates "no path" for this subset
+        ref_digits = [int(matches[-1]) if (matches := re.findall(r"\d+", ref)) else -1 for ref in refs]
+        pred_digits = [int(matches[-1]) if (matches := re.findall(r"\d+", pred)) else -1 for pred in preds]
+        correct_mask = [ref_d == pred_d for ref_d, pred_d in zip(ref_digits, pred_digits)]
+        acc = sum(correct_mask[: len(ref_digits)]) / max(1, len(refs))
+
     else:
-        raise ValueError(f"Unknown subset: {subset}")
+        raise NotImplementedError(f"Accuracy computation for subset '{subset}' is not implemented.")
 
     return acc, num_unknown, correct_mask
