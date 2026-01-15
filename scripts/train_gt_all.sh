@@ -30,10 +30,11 @@ graphqa_subsets=(
 )
 
 motifqa_subsets=(
-	ba_shapes
-	tree_cycle
-	tree_grid
-	ba_two_motifs
+	# ba_shapes
+	# tree_cycle
+	# tree_grid
+	# ba_two_motifs
+	shortest_path
 )
 
 gnns=(
