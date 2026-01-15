@@ -160,7 +160,15 @@ def build_args():
     p.add_argument("--lr", type=float, default=0.01, help="GNNExplainer learning rate (default: 0.01)")
 
     # Relevant token selection
-    p.add_argument("--llr-threshold", type=float, default=None, help="LLR threshold for relevant token selection.")
+    p.add_argument(
+        "--llr-threshold",
+        type=float,
+        default=None,
+        help=(
+            "Log-likelihood ratio threshold for selecting relevant tokens. "
+            "Only tokens with LLR above this value will be included in the explanation."
+        ),
+    )
     p.add_argument(
         "--baseline-graph",
         type=str,
