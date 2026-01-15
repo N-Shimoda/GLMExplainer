@@ -128,7 +128,7 @@ def visualize_motif_explanation(
         nx.draw_networkx_labels(G, pos, labels=labels, font_color="white", ax=ax_graph)
         if norm_weights:
             sm = plt.cm.ScalarMappable(cmap=plt.cm.Blues, norm=mcolors.Normalize(vmin=0.0, vmax=1.0))
-            cbar = fig.colorbar(sm, ax=ax_graph, location="bottom", fraction=0.046, pad=0.08)
+            cbar = fig.colorbar(sm, ax=ax_graph, orientation="horizontal", fraction=0.046, pad=0.08)
             cbar.set_label("Edge importance")
     else:
         ax_graph.text(0.5, 0.5, "Empty graph", ha="center", va="center", fontsize=12)
