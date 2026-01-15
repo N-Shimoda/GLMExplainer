@@ -5,17 +5,18 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from pages.Page import AppPage
+from viewer.Page import AppPage
 
 
-class AUROCComparisonViewer(AppPage):
+class AnalysisPage(AppPage):
     def __init__(self) -> None:
-        print("Analysis Page:", st.session_state)
         super().__init__()
         self.subset_path: Path | None = None
         self.run_history: pd.DataFrame | None = None
-        self.average_mode: bool = False
         self.metric_options = {"auroc": "AUROC", "auprc": "AUPRC", "f1": "F1 Score"}
+
+        if "average_mode" not in st.session_state:
+            st.session_state["average_mode"] = True
 
     @staticmethod
     def load_run_history(path: Path) -> pd.DataFrame | None:
@@ -54,8 +55,10 @@ class AUROCComparisonViewer(AppPage):
             st.warning("No runs available in run history.")
             st.stop()
         with st.sidebar:
-            self.left_run_name = st.selectbox("Left run", run_names)
-            self.right_run_name = st.selectbox("Right run", run_names)
+            left_default = run_names.index(self.left_run_name) if self.left_run_name in run_names else 0
+            right_default = run_names.index(self.right_run_name) if self.right_run_name in run_names else 0
+            self.left_run_name = st.selectbox("Left run", run_names, index=left_default)
+            self.right_run_name = st.selectbox("Right run", run_names, index=right_default)
             st.session_state["left_run_name"] = self.left_run_name
             st.session_state["right_run_name"] = self.right_run_name
 
@@ -65,7 +68,7 @@ class AUROCComparisonViewer(AppPage):
             self.metric_key = st.radio(
                 "Metric", options=list(self.metric_options.keys()), format_func=lambda x: self.metric_options[x]
             )
-            self.average_mode = st.toggle("Average per sample", value=True)
+            st.session_state["average_mode"] = st.toggle("Average per sample", value=st.session_state["average_mode"])
 
     def display_comparison(self) -> None:
         if self.run_history is None or self.left_run_name is None or self.right_run_name is None:
@@ -83,11 +86,15 @@ class AUROCComparisonViewer(AppPage):
         right_avg = float(right_row[avg_key].iloc[0])
 
         left_col, right_col = st.columns(2)
+        icon_str = ":material/select_check_box:"
         with left_col:
-            st.metric(self.metric_options[self.metric_key], value=f"{left_avg:.4f}")
+            st.metric(
+                f"{self.metric_options[self.metric_key]} for :blue-badge[{icon_str} {self.left_run_name}]",
+                value=f"{left_avg:.4f}",
+            )
         with right_col:
             st.metric(
-                self.metric_options[self.metric_key],
+                f"{self.metric_options[self.metric_key]} for :blue-badge[{icon_str} {self.right_run_name}]",
                 value=f"{right_avg:.4f}",
                 delta=f"{right_avg - left_avg:+.4f}",
             )
@@ -109,7 +116,7 @@ class AUROCComparisonViewer(AppPage):
         right_metric = f"right_{self.metric_key}"
 
         # Prepare merged dataframe
-        if self.average_mode:
+        if st.session_state["average_mode"]:
             # Show average per sample across trials
             left_trimmed = (
                 left_samples.groupby("sample_index", as_index=False)[self.metric_key]
@@ -167,15 +174,15 @@ class AUROCComparisonViewer(AppPage):
         )
 
         # Switch to Graph Viewer when a row is selected
-        selected = selection.get("selection") if isinstance(selection, dict) else getattr(selection, "selection", None)
-        if selected and selected.get("rows"):
+        selected = selection["selection"]
+        if selected and selected["rows"]:
             row = merged.iloc[selected["rows"][0]]
             st.session_state["graph_index"] = int(row["sample_index"])
             if "trial" in merged.columns:
                 st.session_state["trial_index"] = int(row["trial"])
             else:
                 st.session_state.pop("trial_index", None)
-            st.switch_page("pages/GraphViewer.py")
+            st.switch_page("viewer/GraphViewer.py")
 
     def run(self) -> None:
         self.create_selections()
@@ -186,5 +193,5 @@ if __name__ == "__main__":
     st.set_page_config(page_title="AUROC Comparison", layout="wide")
     st.title("AUROC Comparison")
 
-    viewer = AUROCComparisonViewer()
+    viewer = AnalysisPage()
     viewer.run()

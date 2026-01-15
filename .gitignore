@@ -19,7 +19,7 @@ fine-tuning/models/
 
 # GNNExplainer
 explanations/
-plots/
+case_study/
 
 # logs
 logs/

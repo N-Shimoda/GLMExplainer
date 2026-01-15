@@ -2,7 +2,7 @@ import argparse
 import math
 import os
 import sys
-from typing import Optional
+from typing import Literal, Optional
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -26,6 +26,7 @@ from src.glm import GraphTokenLM  # noqa: E402
 
 def parse_args():
     p = argparse.ArgumentParser()
+
     p.add_argument("--model-path", type=str, required=True)
     p.add_argument("--ckpt-index", type=int, default=-1)
     p.add_argument("--subset", type=str, required=True, choices=MOTIFQA_SUBSETS)
@@ -46,13 +47,19 @@ def parse_args():
     p.add_argument(
         "--baseline-graph",
         type=str,
-        default="empty",
-        choices=["empty", "complete", "random"],
-        help="Type of baseline graph to use.",
+        default="complete",
+        choices=["complete", "empty", "random"],
+        help="Type of baseline graph to use (default: complete).",
     )
-    p.add_argument("--output-dir", type=str, default="plots/", help="Directory to save output plots.")
+    p.add_argument(
+        "--output-dir", type=str, default="case_study", help="Directory to save output plots (default: case_study)."
+    )
+    p.add_argument(
+        "--output-format", type=str, default="svg", choices=["svg", "png"], help="Output plot format (default: svg)."
+    )
     p.add_argument("--verbose", action="store_true", help="If set, print token probabilities.")
     p.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility (default: 42).")
+
     return p.parse_args()
 
 
@@ -70,6 +77,7 @@ def plot_prob_comparison(
     base_token_probs: list[tuple[int, str, float, float]],
     org_edge_index: torch.Tensor,
     base_edge_index: torch.Tensor,
+    baseline_graph: Literal["complete", "empty", "random"],
     num_nodes: int,
     node_labels: Optional[list[int]] = None,
     output_path: str = "plots/token_prob_comparison.png",
@@ -86,17 +94,14 @@ def plot_prob_comparison(
         Edge index for the original graph, shape (2, E).
     base_edge_index : torch.Tensor
         Edge index for the baseline graph, shape (2, E).
+    baseline_graph: Literal["complete", "empty", "random"]
+        Type of baseline graph used.
     num_nodes : int
         Number of nodes in both graphs.
     node_labels : list[int] | None, optional
         Optional node labels to render; length must match ``num_nodes`` when provided.
     output_path : str, optional
         Path to save the rendered figure.
-
-    Returns
-    -------
-    None
-        The figure is saved to ``output_path``.
     """
     if len(org_token_probs) != len(base_token_probs):
         raise ValueError("Token probability lists must be the same length.")
@@ -126,13 +131,13 @@ def plot_prob_comparison(
 
     # Plotting
     fig = plt.figure(figsize=(10, 6))
-    gs = fig.add_gridspec(nrows=2, ncols=2, height_ratios=[1.2, 2.2])
+    gs = fig.add_gridspec(nrows=2, ncols=2, height_ratios=[1.2, 2.2], hspace=0.35)
     ax_org = fig.add_subplot(gs[0, 0])
     ax_base = fig.add_subplot(gs[0, 1])
     ax_prob = fig.add_subplot(gs[1, :])
 
-    ax_org.set_title("Original graph")
-    ax_base.set_title("Baseline graph")
+    ax_org.set_title("Original graph", fontsize=15)
+    ax_base.set_title(f"{baseline_graph.capitalize()} graph", fontsize=15)
     for ax, graph in [(ax_org, org_graph), (ax_base, base_graph)]:
         ax.axis("off")
         if num_nodes == 0:
@@ -150,11 +155,12 @@ def plot_prob_comparison(
     ax_prob.plot(xs, org_probs, marker="o", linewidth=1.5, label="w/ graph")
     ax_prob.plot(xs, base_probs, marker="x", linewidth=1.5, label="w/o graph")
     ax_prob.set_xticks(xs)
-    ax_prob.set_xticklabels(tokens, rotation=40, ha="right")
-    ax_prob.set_ylabel("Probability")
-    ax_prob.set_title("Token Probability Comparison")
+    ax_prob.set_xticklabels(tokens, rotation=40, ha="right", fontsize=14)
+    ax_prob.tick_params(axis="y", labelsize=12)
+    ax_prob.set_ylabel("Probability", fontsize=14)
+    ax_prob.set_title("Token Probability Comparison", fontsize=15)
     ax_prob.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.6)
-    ax_prob.legend()
+    ax_prob.legend(fontsize=12)
     fig.tight_layout()
     plt.savefig(output_path, dpi=200)
     plt.close()
@@ -207,6 +213,48 @@ def comp_token_probs(model: GraphTokenLM, tok: AutoTokenizer, sample: dict) -> l
         token_rows.append((token_id, token_str, log_prob, math.exp(log_prob)))
 
     return token_rows
+
+
+def comp_log_likelihood_ratio(
+    org_token_probs: list[tuple[int, str, float, float]],
+    base_token_probs: list[tuple[int, str, float, float]],
+) -> tuple[list[tuple[str, int, float]], float]:
+    """Compute per-token log likelihood ratios between two runs.
+
+    Parameters
+    ----------
+    org_token_probs : list[tuple[int, str, float, float]]
+        Original run token probabilities as (token_id, token_str, log_prob, prob).
+    base_token_probs : list[tuple[int, str, float, float]]
+        Baseline run token probabilities as (token_id, token_str, log_prob, prob).
+
+    Returns
+    -------
+    list[tuple[str, int, float]]
+        Per-token rows as (token_str, token_id, llr).
+    float
+        Total log likelihood ratio across tokens.
+
+    Notes
+    -----
+    Log likelihood ratio (LLR) for each token is computed as:
+        LLR(token) = log_prob_org(token) - log_prob_base(token)
+    """
+    if len(org_token_probs) != len(base_token_probs):
+        raise ValueError("Token probability lists must be the same length for LLR.")
+
+    llr_rows = []
+    total_llr = 0.0
+    for org_row, base_row in zip(org_token_probs, base_token_probs):
+        org_id, org_token, org_log_prob, _ = org_row
+        base_id, base_token, base_log_prob, _ = base_row
+        if org_id != base_id or org_token != base_token:
+            raise ValueError("Token sequences do not match between runs for LLR.")
+        llr = org_log_prob - base_log_prob
+        llr_rows.append((org_token, org_id, llr))
+        total_llr += llr
+
+    return llr_rows, total_llr
 
 
 def main():
@@ -268,12 +316,12 @@ def main():
         num_samples=args.num_samples,
     )
 
-    for sample in tqdm(dataset, desc="Processing samples"):
+    for sample in tqdm(dataset, desc="Processing samples", disable=args.verbose):
         # Original input
         org_edge_index = sample["graph"]["edge_index"]
         org_token_probs = comp_token_probs(model, tok, sample)
 
-        # Alternated input (work on a copy to avoid mutating the original sample)
+        # Alternated input
         num_nodes = len(set(sample["nodes"]))
         base_sample = dict(sample)
         base_sample["graph"] = dict(sample["graph"])
@@ -298,11 +346,15 @@ def main():
             print(f"\n======== Sample ID: {sample['index']} ========")
             print("- Prompt:", repr(sample["prompt"]))
             print("- Completion:", repr(sample["completion"]))
-            print("Completion token probabilities:")
-            for label, token_rows in [("w/ graph", org_token_probs), ("w/o graph", base_token_probs)]:
-                print(f"\n-- {label} --")
-                for token_id, token_str, log_prob, prob in token_rows:
-                    print(f"{token_str}\t(id={token_id})\tprob={prob:.6g}\tlog_prob={log_prob:.6g}")
+            print("\nCompletion token probabilities:")
+            llr_rows, total_llr = comp_log_likelihood_ratio(org_token_probs, base_token_probs)
+            print(f"{'Token':<8} {'ID':>6} {'Org prob':>10} {'Base prob':>10} {'LLR':>10}")
+            print("-" * 50)
+            for (token_str, token_id, llr), org_row, base_row in zip(llr_rows, org_token_probs, base_token_probs):
+                org_prob = org_row[3]
+                base_prob = base_row[3]
+                print(f"{token_str:<8} {token_id:>6} {org_prob:>10.4g} {base_prob:>10.4g} {llr:>10.4g}")
+            print(f"\nTotal LLR: {total_llr:.4g}")
 
         # Plot probabilities
         plot_prob_comparison(
@@ -310,9 +362,10 @@ def main():
             base_token_probs,
             org_edge_index,
             base_edge_index,
+            args.baseline_graph,
             num_nodes,
             node_labels=sample["nodes"],
-            output_path=os.path.join(OUT_DIR, f"tok_probs_{sample['index']}.png"),
+            output_path=os.path.join(OUT_DIR, f"tok_probs_{sample['index']}.{args.output_format}"),
         )
 
 

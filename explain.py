@@ -4,7 +4,7 @@ import os
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import Iterable
+from typing import Iterable, Literal
 
 import torch
 import torch.distributed as dist
@@ -24,7 +24,7 @@ from transformers.trainer_utils import set_seed
 from eval import create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
-from src.explanation.args import check_non_negative_int
+from src.explanation.args import check_non_negative_int, validate_args
 from src.explanation.logging import (
     _record_sample_average_metrics,
     _write_metrics_header,
@@ -97,25 +97,6 @@ def _cleanup_distributed() -> None:
         dist.destroy_process_group()
 
 
-def validate_args(args: argparse.Namespace) -> None:
-    """Validates the parsed command-line arguments."""
-    # Dataset and subset
-    if args.dataset == "MotifQA" and args.subset not in MOTIFQA_SUBSETS:
-        raise ValueError(f"Available MotifQA subsets are {MOTIFQA_SUBSETS} ({args.subset} was given).")
-    if args.dataset == "GraphQA" and args.subset not in GRAPHQA_SUBSETS:
-        raise ValueError(f"Available GraphQA subsets are {GRAPHQA_SUBSETS} ({args.subset} was given).")
-
-    # Sample filtering
-    if args.target_value is not None and args.sample_idx is not None:
-        raise ValueError("Only one of `target_value` or `sample_idx` should be specified.")
-    if args.target_pos_samples and args.dataset != "MotifQA":
-        raise ValueError("`--target-pos-samples` is only supported for the MotifQA dataset.")
-    if args.num_samples is not None and args.sample_idx is not None:
-        raise ValueError("Only one of `num_samples` or `sample_idx` should be specified.")
-    if args.num_trials < 1:
-        raise ValueError("`num_trials` must be at least 1.")
-
-
 def build_args():
     p = argparse.ArgumentParser(description="Explain GraphTokenLM predictions using GNNExplainer")
 
@@ -168,6 +149,9 @@ def build_args():
     p.add_argument(
         "--num-trials", type=int, default=1, help="Number of trials for explaining each sample (default: 1)"
     )
+    p.add_argument(
+        "--num-gen-trials", type=int, default=10, help="Number of generation trials per explanation (default: 10)"
+    )
 
     # Hyper-parameters for GNNExplainer
     p.add_argument("--edge-size", type=float, default=0.005, help="GNNExplainer edge size parameter (default: 0.005)")
@@ -175,11 +159,45 @@ def build_args():
     p.add_argument("--epochs", type=int, default=200, help="GNNExplainer optimization epochs (default: 200)")
     p.add_argument("--lr", type=float, default=0.01, help="GNNExplainer learning rate (default: 0.01)")
 
+    # Relevant token selection
+    p.add_argument(
+        "--llr-threshold",
+        type=float,
+        default=None,
+        help=(
+            "Log-likelihood ratio threshold for selecting relevant tokens. "
+            "Only tokens with LLR above this value will be included in the explanation."
+        ),
+    )
+    p.add_argument(
+        "--baseline-graph",
+        type=str,
+        default="complete",
+        choices=["complete", "empty"],
+        help="Baseline graph type for LLR computation.",
+    )
+
     # Logging
+    p.add_argument(
+        "--outdir-base", type=str, default="explanations", help="Base path of output directory (default: explanations)"
+    )
+    p.add_argument(
+        "--output-file-type",
+        type=str,
+        default="svg",
+        choices=["svg", "pdf"],
+        help="File type for saved figures (default: svg)",
+    )
     p.add_argument(
         "--wandb",
         action="store_true",
         help="Log per-sample explanation metrics to Weights & Biases.",
+    )
+    p.add_argument(
+        "--tags",
+        nargs="*",
+        default=None,
+        help="Optional W&B tags (space-separated).",
     )
 
     # Parse and validate args
@@ -293,7 +311,9 @@ def _generate_explanation(
     subset: str,
     gen_cfg: GenerationConfig,
     explainer_args: dict[str, float | int],
-    num_trials: int = 10,
+    llr_threshold: float,
+    baseline_graph: str,
+    num_gen_trials: int = 10,
 ) -> tuple[Explanation | None, float]:
     """Generates output for the given sample and explains it using GNNExplainer.
 
@@ -311,7 +331,11 @@ def _generate_explanation(
         Configuration for text generation.
     explainer_args : dict[str, float | int]
         Keyword arguments forwarded to :class:`GNNExplainer` controlling its optimization.
-    num_trials : int, optional
+    llr_threshold : Optional[float]
+        LLR threshold for selecting relevant tokens before running the explainer.
+    baseline_graph : str
+        Baseline graph type used for LLR computation.
+    num_gen_trials : int, optional
         Maximum number of trials to generate the correct answer, by default 10.
 
     Returns
@@ -323,19 +347,25 @@ def _generate_explanation(
         Ratio of correct generations within ``num_trials``.
     """
     # Generate output and verify correctness
-    generated = [wrapper.set_input(sample["prompt"], pyg_batch, gen_cfg) for _ in range(num_trials)]
+    output_texts = wrapper.gen_output(
+        input_text=sample["prompt"], graph=pyg_batch, gen_cfg=gen_cfg, num_trials=num_gen_trials
+    )
 
     # Update output_text to the first correct generation
-    acc, _, correct_mask = comp_accuracy(generated, [sample["completion"]] * len(generated), subset)
+    acc, _, correct_mask = comp_accuracy(output_texts, [sample["completion"]] * len(output_texts), subset)
     try:
         first_correct_idx = correct_mask.index(True)
-        wrapper.set_output(generated[first_correct_idx])
+        wrapper.set_generated_ids(output_texts[first_correct_idx])
     except ValueError:
         print(
             f"[WARN] Failed to generate the correct answer for sample[index={sample['index']}] "
             f"(correct answer: `{sample['completion']}`)."
         )
         return None, acc
+
+    wrapper.relevant_idx = None
+    if llr_threshold is not None and llr_threshold > 0.0:
+        wrapper.set_relevant_ids(baseline_graph, llr_threshold=llr_threshold)
 
     # Generate explanation by GNNExplainer
     explainer = Explainer(
@@ -360,12 +390,15 @@ def explain_sample(
     subset: str,
     trial_idx: int,
     num_trials: int,
+    num_gen_trials: int,
     gen_cfg: GenerationConfig,
     log_path: str,
     fieldnames: list[str],
     dataset_name: str,
     explainer_args: dict[str, float | int],
-    num_gen_trials: int = 10,
+    llr_threshold: float,
+    baseline_graph: str,
+    file_type: Literal["svg", "pdf"],
 ) -> tuple[bool, dict[str, float], float, torch.Tensor | None]:
     """Explain a single dataset sample, collect metrics, and persist trial artifacts.
 
@@ -382,7 +415,10 @@ def explain_sample(
     trial_idx : int
         Index of the current trial for the given ``sample``.
     num_trials : int
-        Total number of trials that will be executed for the ``sample``.
+        Total number of explanation trials that will be executed for the ``sample``.
+    num_gen_trials : int
+        Maximum number of explanation generation trials passed to
+        :func:`_generate_explanation`.
     gen_cfg : GenerationConfig
         Configuration controlling the language-model generation step.
     log_path : str
@@ -393,9 +429,12 @@ def explain_sample(
         Name of the dataset being processed (e.g., ``"MotifQA"``).
     explainer_args : dict[str, float | int]
         Keyword arguments forwarded to the explainer factory.
-    num_gen_trials : int, default=10
-        Maximum number of explanation generation trials passed to
-        :func:`_generate_explanation`.
+    llr_threshold : Optional[float]
+        LLR threshold for selecting relevant tokens before running the explainer.
+    baseline_graph : str
+        Baseline graph type used for LLR computation.
+    file_type : Literal["svg", "pdf"]
+        File type for saved figures.
 
     Returns
     -------
@@ -413,7 +452,15 @@ def explain_sample(
     model_device = wrapper.model.device
     pyg_batch = create_pyg_batch(sample["graph"], device=model_device)
     explanation, ans_accuracy = _generate_explanation(
-        wrapper, sample, pyg_batch, subset, gen_cfg, explainer_args=explainer_args, num_trials=num_gen_trials
+        wrapper,
+        sample,
+        pyg_batch,
+        subset,
+        gen_cfg,
+        explainer_args=explainer_args,
+        llr_threshold=llr_threshold,
+        baseline_graph=baseline_graph,
+        num_gen_trials=num_gen_trials,
     )
 
     if explanation is None:
@@ -452,7 +499,7 @@ def explain_sample(
     os.makedirs(node_feat_dir, exist_ok=True)
 
     # Save visualizations
-    graph_path = os.path.join(graph_dir, f"{suffix}.pdf")
+    graph_path = os.path.join(graph_dir, f"{suffix}.{file_type}")
     if dataset_name == "MotifQA":
         visualize_motif_explanation(
             sample=sample,
@@ -463,7 +510,7 @@ def explain_sample(
         )
     else:
         explanation.visualize_graph(graph_path)
-    feature_path = os.path.join(node_feat_dir, f"node_feat_{suffix}.pdf")
+    feature_path = os.path.join(node_feat_dir, f"node_feat_{suffix}.{file_type}")
     explanation.visualize_feature_importance(feature_path)
 
     return metrics_logged, exp_accuracy, ans_accuracy_val, pred_edge_mask
@@ -590,11 +637,15 @@ def process_dataset(
                 subset=subset,
                 trial_idx=i,
                 num_trials=args.num_trials,
+                num_gen_trials=args.num_gen_trials,
                 gen_cfg=gen_cfg,
                 log_path=log_path,
                 fieldnames=fieldnames,
                 dataset_name=args.dataset,
                 explainer_args=explainer_args,
+                llr_threshold=args.llr_threshold,
+                baseline_graph=args.baseline_graph,
+                file_type=args.output_file_type,
             )
             if edge_mask is not None:
                 sample_edge_masks[sample_idx].append(edge_mask)
@@ -649,8 +700,9 @@ def main():
     """Compute edge importance explanations for GraphTokenLM predictions on specified dataset samples."""
     set_seed(42)
     args, explainer_args = build_args()
-    run_name = f"{args.subset}_{datetime.now().strftime('%m%d-%H%M')}"
-    OUT_DIR = os.path.join("explanations", args.subset, run_name)
+    date_str = datetime.now().strftime("%m%d-%H%M")
+    run_name = f"{args.subset}_{date_str}"
+    OUT_DIR = os.path.join(args.outdir_base, args.subset, date_str)
 
     # Setup DDP, random seed, and device
     rank, world_size, local_rank, is_distributed = _init_distributed_if_needed()
@@ -713,11 +765,14 @@ def main():
 
     # Setup wandb logging (rank 0 only)
     args.model_path = ckpt_path
+    wandb_tags = args.tags
+    delattr(args, "tags")
     if args.wandb and is_rank0:
         wandb.init(
             project="MotifQA-Explainer",
             name=run_name,
             config={**vars(args), **explainer_args},
+            tags=wandb_tags,
             dir=OUT_DIR,
         )
 
@@ -868,7 +923,7 @@ def main():
         append_run_history_row(
             history_path,
             {
-                "run_name": run_name,
+                "run_name": date_str,
                 "avg_answer_accuracy": avg_answer_accuracy,
                 "avg_auroc": avg_auroc,
                 "avg_auprc": avg_auprc,

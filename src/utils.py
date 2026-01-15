@@ -92,7 +92,9 @@ def visualize_motif_explanation(
         norm_weights = []
 
     fig, ax_graph = plt.subplots(figsize=(7, 4))
+    fig.subplots_adjust(right=0.78)
 
+    cbar = None
     if len(G) > 0:
         xs = [coord[0] for coord in pos.values()]
         ys = [coord[1] for coord in pos.values()]
@@ -142,19 +144,62 @@ def visualize_motif_explanation(
         f"AUROC: {auroc_score:.3f}",
         f"AUPRC: {auprc_score:.3f}",
     ]
-    ax_graph.text(
-        0.98,
-        0.98,
-        "\n".join(textbox_lines),
-        transform=ax_graph.transAxes,
-        ha="right",
-        va="top",
-        fontsize=10,
-        bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.85),
-    )
+    textbox_text = "\n".join(textbox_lines)
+    if cbar is not None:
+        cbar_pos = cbar.ax.get_position()
+        fig.text(
+            0.98,
+            cbar_pos.y0 + cbar_pos.height / 2,
+            textbox_text,
+            transform=fig.transFigure,
+            ha="right",
+            va="center",
+            fontsize=10,
+            bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.85),
+        )
+    else:
+        fig.text(
+            0.98,
+            0.98,
+            textbox_text,
+            transform=fig.transFigure,
+            ha="right",
+            va="top",
+            fontsize=10,
+            bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.85),
+        )
 
     ax_graph.set_axis_off()
     fig.tight_layout()
-    os.makedirs(os.path.dirname(graph_path), exist_ok=True)
+    dirpath = os.path.dirname(os.path.abspath(graph_path))
+    if dirpath:
+        os.makedirs(dirpath, exist_ok=True)
     fig.savefig(graph_path)
     plt.close(fig)
+
+
+if __name__ == "__main__":
+    output_path = "motif_explanation_example.svg"
+    sample = {
+        "index": 0,
+        "nodes": [0, 1, 2, 3],
+        "motif_nodes": [1, 2],
+        "graph": {
+            "edge_index": [
+                [0, 1, 1, 2, 2, 3, 3, 0],
+                [1, 0, 2, 1, 3, 2, 0, 3],
+            ],
+            "x": [[1.0], [1.0], [1.0], [1.0]],
+        },
+    }
+    explanation = Explanation(edge_mask=torch.tensor([0.2, 0.2, 0.9, 0.9, 0.6, 0.6, 0.1, 0.1]))
+    exp_accuracy = {"f1": 0.75, "auroc": 0.82, "auprc": 0.79}
+    ans_accuracy = 0.88
+    visualize_motif_explanation(
+        sample=sample,
+        explanation=explanation,
+        graph_path=output_path,
+        exp_accuracy=exp_accuracy,
+        ans_accuracy=ans_accuracy,
+    )
+    print("Visualization saved to", output_path)
