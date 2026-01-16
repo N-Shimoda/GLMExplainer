@@ -4,6 +4,7 @@ import os
 import sys
 from typing import Literal, Optional
 
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import networkx as nx
 import torch
@@ -55,7 +56,11 @@ def parse_args():
         "--output-dir", type=str, default="case_study", help="Directory to save output plots (default: case_study)."
     )
     p.add_argument(
-        "--output-format", type=str, default="svg", choices=["svg", "png"], help="Output plot format (default: svg)."
+        "--output-format",
+        type=str,
+        default="pdf",
+        choices=["pdf", "svg", "png"],
+        help="Output plot format (default: pdf).",
     )
     p.add_argument("--verbose", action="store_true", help="If set, print token probabilities.")
     p.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility (default: 42).")
@@ -162,6 +167,15 @@ def plot_prob_comparison(
     ax_prob.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.6)
     ax_prob.legend(fontsize=12)
     fig.tight_layout()
+
+    # Keep text as text in SVG
+    suffix = output_path.split(".")[-1].lower()
+    match suffix:
+        case "svg":
+            mpl.rcParams["svg.fonttype"] = "none"
+        case "pdf":
+            mpl.rcParams["pdf.fonttype"] = 42
+
     plt.savefig(output_path, dpi=200)
     plt.close()
 
