@@ -5,10 +5,10 @@ for epochs in 12 24; do
 			--lpe-dim 8 --use-degree-emb \
 			--pos-emb-dim 8 \
 			--gnn-type GCN \
-			--gnn-hidden-dim "${gnn_dim}" --gnn-out-dim "$((gnn_dim * 2))" \
+			--gnn-hidden-dim $gnn_dim --gnn-out-dim $((gnn_dim * 2)) \
 			--num-gnn-layers 3 \
 			--num-graph-tokens 4 \
-			--epochs 24 --no-save \
+			--epochs $epochs --no-save \
 			--optim adamw \
 			--lr 0.0075 --weight-decay 0.01 \
 			--lr-scheduler-type cosine --warmup-ratio 0.05 \
