@@ -4,6 +4,7 @@ from datetime import datetime
 from math import ceil
 from typing import Optional
 
+import datasets
 import torch
 import torch.distributed as dist
 import wandb
@@ -49,6 +50,10 @@ def validate_args(args: argparse.Namespace):
     # Custom dataset
     if args.use_custom_dataset and args.dataset != "GraphQA":
         raise ValueError("--use-custom-dataset is only supported with GraphQA dataset.")
+
+    # Checkpointing
+    if args.no_save and args.save_intermediate_models:
+        raise ValueError("--no-save and --save-intermediate-models cannot be used together.")
 
 
 def build_args(*, multitask: bool = False):
@@ -100,8 +105,11 @@ def build_args(*, multitask: bool = False):
     p.add_argument("--per-device-train-batch-size", type=int, default=2)
     p.add_argument("--per-device-eval-batch-size", type=int, default=4)
     p.add_argument("--gradient-accumulation-steps", type=int, default=4)
+
+    # Checkpointing
     p.add_argument("--save-intermediate-models", action="store_true", help="Save intermediate models")
     p.add_argument("--save-interval-epochs", type=int, default=1, help="Save every N epochs")
+    p.add_argument("--no-save", action="store_true", help="Do not save any model checkpoints")
 
     # Logging
     p.add_argument("--wandb", action="store_true", help="Use wandb logging")
@@ -439,7 +447,14 @@ def build_custom_dataset(
     return ds_dict["train"], ds_dict["validation"], ds_dict["test"] if do_eval else None, num_max_nodes
 
 
-def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
+def train_glm(
+    train_ds: datasets.Dataset,
+    eval_ds: datasets.Dataset,
+    output_dir: str,
+    glm_args: dict,
+    sft_args: dict,
+    args: argparse.Namespace,
+) -> GraphTokenLM:
     """
     Fine-tune a GraphToken language model on graph QA data using TRL's SFTTrainer.
 
@@ -472,8 +487,6 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
     -------
     model : GraphTokenLM
         The fine-tuned model instance (on the local process).
-    final_ckpt_dir : str
-        Path to the final checkpoint directory produced after training.
     """
     # Initialize model and tokenizer
     glm_cfg = GraphTokenLMConfig(**glm_args)
@@ -539,12 +552,13 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
     final_step = trainer.state.global_step
     final_ckpt_dir = os.path.join(output_dir, f"checkpoint-{final_step}")
     if is_main_process():
-        if not save_intermediate_models:
+        if not args.no_save and not save_intermediate_models:
             trainer.save_model(final_ckpt_dir)
+            print(f"[INFO] Final model saved at {final_ckpt_dir}.")
         trainer.save_state()
         print("***** Done *****")
 
-    return model, final_ckpt_dir
+    return model
 
 
 def eval_ddp(model, subset: str, test_ds: Dataset, max_new_tokens: int, date_str: str, use_wandb: bool):
@@ -633,7 +647,7 @@ def main():
     output_dir, date_str = setup_run_context(args.dataset, args.subset, args.wandb, glm_args)
 
     # Training
-    model, ckpt_path = train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args)
+    model = train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args)
 
     # Quick evaluation with 1 trial
     if args.do_eval and test_ds is not None:
@@ -648,4 +662,6 @@ def main():
 
 
 if __name__ == "__main__":
+    main()
+    main()
     main()
