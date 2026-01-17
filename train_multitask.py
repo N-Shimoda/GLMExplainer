@@ -13,7 +13,11 @@ from train import build_args, is_main_process, train_glm
 subsets = ["node_count", "edge_count", "cycle_check", "triangle_counting"]
 
 
-def build_dataset(node_feat_dim: int, do_eval: bool = False) -> tuple[Dataset, Dataset, list[Dataset] | None]:
+def build_dataset(
+    lpe_dim: int,
+    use_degree_emb: bool = False,
+    do_eval: bool = False,
+) -> tuple[Dataset, Dataset, list[Dataset] | None]:
     """
     Load train_raw / eval_raw (/ test_raw) from the subsets defined in `subsets`,
     concatenate them, and return unified train_ds / eval_ds (/ test_ds).
@@ -24,8 +28,10 @@ def build_dataset(node_feat_dim: int, do_eval: bool = False) -> tuple[Dataset, D
 
     Parameters
     ----------
-    node_feat_dim : int
-        Dimension of node features to be added.
+    lpe_dim : int
+        Dimension of Laplacian positional embeddings to be added.
+    use_degree_emb : bool, optional
+        Whether to append node degree as an additional feature dimension.
     do_eval : bool, optional
         Whether to load test datasets for evaluation, by default False.
 
@@ -40,7 +46,12 @@ def build_dataset(node_feat_dim: int, do_eval: bool = False) -> tuple[Dataset, D
     """
 
     def modify_dataset(example):
-        return add_graph_column(example, ds_name="GraphQA", lpe_dim=node_feat_dim)
+        return add_graph_column(
+            example,
+            ds_name="GraphQA",
+            lpe_dim=lpe_dim,
+            use_degree_emb=use_degree_emb,
+        )
 
     cols = ["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"]
 
@@ -92,7 +103,8 @@ if __name__ == "__main__":
 
     # Training
     train_ds, eval_ds, test_ds_list = build_dataset(
-        glm_args["node_feat_dim"],
+        args.lpe_dim,
+        use_degree_emb=args.use_degree_emb,
         do_eval=args.do_eval,
     )
     model = train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args)

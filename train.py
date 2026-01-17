@@ -76,8 +76,9 @@ def build_args(*, multitask: bool = False):
     )
     p.add_argument("--num-max-nodes", type=int, default=20)
     p.add_argument("--num-graph-tokens", type=int, default=4)
-    p.add_argument("--node-feat-dim", type=int, default=8)
     p.add_argument("--pos-emb-dim", type=int, default=8)
+    p.add_argument("--lpe-dim", type=int, default=8)
+    p.add_argument("--use-degree-emb", action="store_true")
     p.add_argument("--gnn-hidden-dim", type=int, default=256)
     p.add_argument("--gnn-out-dim", type=int, default=512)
     p.add_argument("--num-gnn-layers", type=int, default=4)
@@ -113,7 +114,7 @@ def build_args(*, multitask: bool = False):
     glm_args = {
         "base_model": args.base_model,
         "gnn_type": args.gnn_type,
-        "node_feat_dim": args.node_feat_dim,
+        "node_feat_dim": args.lpe_dim + (1 if args.use_degree_emb else 0),
         "pos_emb_dim": args.pos_emb_dim,
         "gnn_hidden_dim": args.gnn_hidden_dim,
         "gnn_out_dim": args.gnn_out_dim,
@@ -121,6 +122,8 @@ def build_args(*, multitask: bool = False):
         "num_graph_tokens": args.num_graph_tokens,
         "num_proj_layers": args.num_proj_layers,
         "num_max_nodes": args.num_max_nodes,
+        "lpe_dim": args.lpe_dim,
+        "use_degree_emb": args.use_degree_emb,
     }
     sft_args = {
         "per_device_train_batch_size": args.per_device_train_batch_size,
@@ -183,7 +186,11 @@ def setup_run_context(dataset: str, subset: str, use_wandb: bool, glm_args: dict
 
 
 def build_graphqa_dataset(
-    subset: str, node_feat_dim: int, do_eval: bool = False, load_from_cache_file: bool = True
+    subset: str,
+    lpe_dim: int,
+    use_degree_emb: bool = False,
+    do_eval: bool = False,
+    load_from_cache_file: bool = True,
 ) -> tuple[Dataset, Dataset, Dataset | None, int]:
     """Build dataset for training and evaluation.
 
@@ -191,8 +198,10 @@ def build_graphqa_dataset(
     ----------
     subset : str
         Subset of the GraphQA dataset to use.
-    node_feat_dim : int
-        Dimensionality of node features (k in Laplacian PE).
+    lpe_dim : int
+        Dimensionality of Laplacian positional embeddings.
+    use_degree_emb : bool, default=False
+        Whether to append node degree as an additional feature dimension.
     do_eval : bool, default=False
         Whether to prepare the test dataset for evaluation.
     load_from_cache_file : bool, default=True
@@ -211,7 +220,12 @@ def build_graphqa_dataset(
     """
 
     def modify_dataset(example):
-        return add_graph_column(example, ds_name="GraphQA", lpe_dim=node_feat_dim)
+        return add_graph_column(
+            example,
+            ds_name="GraphQA",
+            lpe_dim=lpe_dim,
+            use_degree_emb=use_degree_emb,
+        )
 
     splits = {"train": "zero_shot_train", "validation": "zero_shot_validation"}
     if do_eval:
@@ -237,7 +251,11 @@ def build_graphqa_dataset(
 
 
 def build_motifqa_dataset(
-    subset: str, node_feat_dim: int, do_eval: bool = False, load_from_cache_file: bool = True
+    subset: str,
+    lpe_dim: int,
+    use_degree_emb: bool = False,
+    do_eval: bool = False,
+    load_from_cache_file: bool = True,
 ) -> tuple[Dataset, Dataset, Optional[Dataset], int]:
     """Build MotifQA dataset for training and evaluation.
 
@@ -245,8 +263,10 @@ def build_motifqa_dataset(
     ----------
     subset : str
         MotifQA subset name.
-    node_feat_dim : int
-        Dimensionality of node features (k in Laplacian PE).
+    lpe_dim : int
+        Dimensionality of Laplacian positional embeddings.
+    use_degree_emb : bool, default=False
+        Whether to append node degree as an additional feature dimension.
     do_eval : bool, default=False
         Whether to prepare the test dataset for evaluation.
     load_from_cache_file : bool, default=True
@@ -265,7 +285,12 @@ def build_motifqa_dataset(
     """
 
     def modify_dataset(example):
-        return add_graph_column(example, ds_name="MotifQA", lpe_dim=node_feat_dim)
+        return add_graph_column(
+            example,
+            ds_name="MotifQA",
+            lpe_dim=lpe_dim,
+            use_degree_emb=use_degree_emb,
+        )
 
     # Load and preprocess the dataset
     splits = {"train": "train", "validation": "validation"}
@@ -292,7 +317,10 @@ def build_motifqa_dataset(
 
 
 def build_custom_dataset(
-    subset: str, node_feat_dim: int, do_eval: bool = False
+    subset: str,
+    lpe_dim: int,
+    use_degree_emb: bool = False,
+    do_eval: bool = False,
 ) -> tuple[Dataset, Dataset, Dataset | None, int]:
     """Build custom dataset for training and evaluation.
 
@@ -300,8 +328,10 @@ def build_custom_dataset(
     ----------
     subset : str
         Subset of the GraphQA dataset to use.
-    node_feat_dim : int
-        Dimensionality of node features (k in Laplacian PE).
+    lpe_dim : int
+        Dimensionality of Laplacian positional embeddings.
+    use_degree_emb : bool, default=False
+        Whether to append node degree as an additional feature dimension.
     do_eval : bool, default=False
         Whether to prepare the test dataset for evaluation.
 
@@ -343,7 +373,12 @@ def build_custom_dataset(
                     node_str = "There are no nodes in the graph."
                 ans_digit = example["answer"].strip().split(".")[0]
                 example["answer"] = ans_label.format(node_str, ans_digit)
-                return add_graph_column(example, ds_name="GraphQA", lpe_dim=node_feat_dim)
+                return add_graph_column(
+                    example,
+                    ds_name="GraphQA",
+                    lpe_dim=lpe_dim,
+                    use_degree_emb=use_degree_emb,
+                )
 
         case "edge_count":
             ans_label = "{} Thus, the answer is {}."
@@ -361,7 +396,12 @@ def build_custom_dataset(
                     edge_str = "There are no edges in the graph."
                 ans_digit = example["answer"].strip().split(".")[0]
                 example["answer"] = ans_label.format(edge_str, ans_digit)
-                return add_graph_column(example, ds_name="GraphQA", lpe_dim=node_feat_dim)
+                return add_graph_column(
+                    example,
+                    ds_name="GraphQA",
+                    lpe_dim=lpe_dim,
+                    use_degree_emb=use_degree_emb,
+                )
 
         case "triangle_counting":
             ans_label = "{} Thus, the answer is {}."
@@ -379,7 +419,12 @@ def build_custom_dataset(
                     tri_str = "There are no triangles in the graph."
                 ans_digit = example["answer"].strip().split(".")[0]
                 example["answer"] = ans_label.format(tri_str, ans_digit)
-                return add_graph_column(example, ds_name="GraphQA", lpe_dim=node_feat_dim)
+                return add_graph_column(
+                    example,
+                    ds_name="GraphQA",
+                    lpe_dim=lpe_dim,
+                    use_degree_emb=use_degree_emb,
+                )
 
         case _:
             raise NotImplementedError(f"Custom dataset for {subset} is not implemented.")
@@ -548,20 +593,23 @@ def main():
                     print("[INFO] Building dataset with custom prompt.")
                 train_ds, eval_ds, test_ds, num_max_nodes = build_custom_dataset(
                     args.subset,
-                    glm_args["node_feat_dim"],
+                    args.lpe_dim,
+                    use_degree_emb=args.use_degree_emb,
                     do_eval=args.do_eval,
                 )
             else:
                 train_ds, eval_ds, test_ds, num_max_nodes = build_graphqa_dataset(
                     args.subset,
-                    glm_args["node_feat_dim"],
+                    args.lpe_dim,
+                    use_degree_emb=args.use_degree_emb,
                     do_eval=args.do_eval,
                     load_from_cache_file=False,
                 )
         case "MotifQA":
             train_ds, eval_ds, test_ds, num_max_nodes = build_motifqa_dataset(
                 args.subset,
-                glm_args["node_feat_dim"],
+                args.lpe_dim,
+                use_degree_emb=args.use_degree_emb,
                 do_eval=args.do_eval,
                 load_from_cache_file=False,
             )

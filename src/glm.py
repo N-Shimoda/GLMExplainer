@@ -22,6 +22,8 @@ class GraphTokenLMConfig(PretrainedConfig):
         base_model="Qwen/Qwen3-4B-Base",
         gnn_type: Literal["GCN", "GAT", "GIN", "GraphSAGE", "GraphTransformer"] = "GCN",
         node_feat_dim=8,
+        lpe_dim: int | None = None,
+        use_degree_emb: bool = False,
         pos_emb_dim=8,
         gnn_hidden_dim=256,
         gnn_out_dim=512,
@@ -38,6 +40,8 @@ class GraphTokenLMConfig(PretrainedConfig):
         self.gnn_type = gnn_type
 
         self.node_feat_dim = node_feat_dim
+        self.lpe_dim = lpe_dim if lpe_dim is not None else node_feat_dim
+        self.use_degree_emb = bool(use_degree_emb)
         self.pos_emb_dim = pos_emb_dim
         self.node_pos_emb_dim = pos_emb_dim  # backward compatibility
         self.gnn_hidden_dim = gnn_hidden_dim

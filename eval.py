@@ -132,12 +132,23 @@ def create_pyg_batch(
     return batch
 
 
-def build_dataset(dataset: str, subset: str, split: str, node_feat_dim: int):
+def build_dataset(
+    dataset: str,
+    subset: str,
+    split: str,
+    lpe_dim: int,
+    use_degree_emb: bool = False,
+):
     match dataset:
         case "GraphQA":
             test_raw = load_dataset("baharef/GraphQA", subset, split=f"zero_shot_{split}")
             test_ds = test_raw.map(
-                lambda x: add_graph_column(x, ds_name="GraphQA", lpe_dim=node_feat_dim),
+                lambda x: add_graph_column(
+                    x,
+                    ds_name="GraphQA",
+                    lpe_dim=lpe_dim,
+                    use_degree_emb=use_degree_emb,
+                ),
                 desc="add_graph_column(test)",
                 remove_columns=[
                     "algorithm",
@@ -152,7 +163,12 @@ def build_dataset(dataset: str, subset: str, split: str, node_feat_dim: int):
         case "MotifQA":
             test_raw = load_dataset("naos-ku/motif-qa", subset, split=split)
             test_ds = test_raw.map(
-                lambda x: add_graph_column(x, ds_name="MotifQA", lpe_dim=node_feat_dim),
+                lambda x: add_graph_column(
+                    x,
+                    ds_name="MotifQA",
+                    lpe_dim=lpe_dim,
+                    use_degree_emb=use_degree_emb,
+                ),
                 remove_columns=["response", "nodes", "edges", "nnodes", "nedges"],
                 desc="add_graph_column(test)",
             )
@@ -261,7 +277,15 @@ def main():
     base_model = _unwrap_model(model)
 
     # Load dataset
-    test_ds = build_dataset(args.dataset, args.subset, args.split, base_model.config.node_feat_dim)
+    lpe_dim = getattr(base_model.config, "lpe_dim", base_model.config.node_feat_dim)
+    use_degree_emb = getattr(base_model.config, "use_degree_emb", False)
+    test_ds = build_dataset(
+        args.dataset,
+        args.subset,
+        args.split,
+        lpe_dim,
+        use_degree_emb=use_degree_emb,
+    )
     repeated_ds = concatenate_datasets([test_ds] * args.num_trials)
     if use_dist and world_size > 1:
         start, end = _shard_dataset(len(repeated_ds), rank, world_size)
