@@ -57,7 +57,7 @@ run_train_loop() {
 		--num-graph-tokens 4 --node-feat-dim 8 --pos-emb-dim 8
 		--gnn-type "${gnn}"
 		--gnn-hidden-dim "${gnn_dim}" --gnn-out-dim "${gnn_dim}" --num-gnn-layers 3
-		--epochs 8
+		--epochs 12
 		# --save-intermediate-models --save-interval-epochs 6
 		# --optim "lion" --lr 0.01
 		# --lr-scheduler-type "linear" --warmup-ratio 0.05
