@@ -159,7 +159,7 @@ def build_args(*, multitask: bool = False):
     return glm_args, sft_args, args
 
 
-def setup_run_context(dataset: str, subset: str, use_wandb: bool, glm_args: dict) -> tuple[str, str]:
+def setup_run_context(dataset: str, subset: str, use_wandb: bool, tags: list[str], glm_args: dict) -> tuple[str, str]:
     """Setup output directory and initialize wandb if needed.
 
     Parameters
@@ -170,6 +170,8 @@ def setup_run_context(dataset: str, subset: str, use_wandb: bool, glm_args: dict
         Subset name for the current run.
     use_wandb : bool
         Whether to use wandb logging.
+    tags : list[str]
+        Tags for wandb run.
     glm_args : dict
         Arguments for GraphTokenLMConfig.
 
@@ -187,9 +189,9 @@ def setup_run_context(dataset: str, subset: str, use_wandb: bool, glm_args: dict
         config = {"dataset": dataset, "subset": subset, "glm_args": glm_args}
         match dataset:
             case "MotifQA":
-                wandb.init(project="MotifQA-GLM", name=run_name, config=config, dir=output_dir)
+                wandb.init(project="MotifQA-GLM", name=run_name, config=config, tags=tags, dir=output_dir)
             case "GraphQA":
-                wandb.init(project="GraphQA-GLM", name=run_name, config=config, dir=output_dir)
+                wandb.init(project="GraphQA-GLM", name=run_name, config=config, tags=tags, dir=output_dir)
 
     return output_dir, date_str
 
@@ -645,7 +647,7 @@ def main():
             print(f"[INFO] Updated glm_args['num_max_nodes'] as {num_max_nodes}.")
 
     # Initialize wandb, setup output directory and date
-    output_dir, date_str = setup_run_context(args.dataset, args.subset, args.wandb, glm_args)
+    output_dir, date_str = setup_run_context(args.dataset, args.subset, args.wandb, args.tags, glm_args)
 
     # Training
     model = train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args)
