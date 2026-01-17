@@ -48,7 +48,6 @@ run_train_loop() {
 	local dataset="$1"
 	local subset="$2"
 	local gnn="$3"
-	local gnn_dim="$4"
 
 	log "[INFO] Starting training for subset='${subset}' (dataset='${dataset}') with GNN='${gnn}'"
 	cmd=(
@@ -57,7 +56,7 @@ run_train_loop() {
 		--num-graph-tokens 4
 		--lpe-dim 8 --use-degree-emb --pos-emb-dim 8
 		--gnn-type "${gnn}"
-		--gnn-hidden-dim "${gnn_dim}" --gnn-out-dim "${gnn_dim}" --num-gnn-layers 3
+		--gnn-hidden-dim 256 --gnn-out-dim 512 --num-gnn-layers 4
 		--epochs 12
 		# --save-intermediate-models --save-interval-epochs 6
 		# --optim "lion" --lr 0.01
@@ -88,13 +87,11 @@ run_train_loop() {
 }
 
 for gnn in "${gnns[@]}"; do
-	for gnn_dim in 16 32 64 128; do
-		for subset in "${graphqa_subsets[@]}"; do
-			run_train_loop "GraphQA" "$subset" "$gnn" "$gnn_dim"
-		done
-		for subset in "${motifqa_subsets[@]}"; do
-			run_train_loop "MotifQA" "$subset" "$gnn" "$gnn_dim"
-		done
+	for subset in "${graphqa_subsets[@]}"; do
+		run_train_loop "GraphQA" "$subset" "$gnn"
+	done
+	for subset in "${motifqa_subsets[@]}"; do
+		run_train_loop "MotifQA" "$subset" "$gnn"
 	done
 done
 
