@@ -54,7 +54,8 @@ run_train_loop() {
 	cmd=(
 		torchrun --nproc_per_node=2 train.py
 		--dataset "${dataset}" --subset "${subset}"
-		--num-graph-tokens 4 --node-feat-dim 8 --pos-emb-dim 8
+		--num-graph-tokens 4
+		--lpe-dim 8 --use-degree-emb --pos-emb-dim 8
 		--gnn-type "${gnn}"
 		--gnn-hidden-dim "${gnn_dim}" --gnn-out-dim "${gnn_dim}" --num-gnn-layers 3
 		--epochs 12
