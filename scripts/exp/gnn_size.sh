@@ -12,7 +12,7 @@ for epochs in 12 24; do
 			--optim adamw \
 			--lr 0.0075 --weight-decay 0.01 \
 			--lr-scheduler-type cosine --warmup-ratio 0.05 \
-			--do-eval \
+			--do-eval --no-save \
 			--wandb --tags hidden_dim
 	done
 done
