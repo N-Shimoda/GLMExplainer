@@ -7,7 +7,7 @@ for gnn_dim in 16 32 64 128; do
 		--gnn-hidden-dim "${gnn_dim}" --gnn-out-dim "$((gnn_dim * 2))" \
 		--num-gnn-layers 3 \
 		--num-graph-tokens 4 \
-		--epochs 3 \
+		--epochs 12 \
 		--optim adamw \
 		--lr 0.0075 --weight-decay 0.01 \
 		--lr-scheduler-type cosine --warmup-ratio 0.05 \
