@@ -51,7 +51,7 @@ def extract_edges_from_text(text: str) -> List[Tuple[int, int]]:
     return []
 
 
-def create_pyg_dict(nodes: List[int], edges: List[Tuple[int, int]], k: int) -> Dict[str, Any]:
+def create_pyg_dict(nodes: List[int], edges: List[Tuple[int, int]], lpe_dim: int) -> Dict[str, Any]:
     """
     Create a PyG-format graph dictionary from lists of nodes and edges.
 
@@ -67,7 +67,7 @@ def create_pyg_dict(nodes: List[int], edges: List[Tuple[int, int]], k: int) -> D
         List of node IDs extracted from text.
     edges : list of tuple of int
         List of undirected edges (u, v) extracted from text.
-    k : int
+    lpe_dim : int
         Number of Laplacian eigenvectors to use for node features.
 
     Returns
@@ -95,7 +95,7 @@ def create_pyg_dict(nodes: List[int], edges: List[Tuple[int, int]], k: int) -> D
 
     # Normalized Laplacian L = I - D^{-1/2} A D^{-1/2}.
     if num_nodes == 0:
-        x = torch.zeros((0, max(k, 0)), dtype=torch.float)
+        x = torch.zeros((0, max(lpe_dim, 0)), dtype=torch.float)
     else:
         deg = A.sum(dim=1)
         inv_sqrt_deg = torch.zeros_like(deg)
@@ -108,12 +108,12 @@ def create_pyg_dict(nodes: List[int], edges: List[Tuple[int, int]], k: int) -> D
         L = (L + L.T) / 2  # Symmetrize numerically.
 
         # Eigen decomposition (ascending); discard the trivial eigenvector.
-        if k <= 0:
+        if lpe_dim <= 0:
             x = torch.zeros((num_nodes, 0), dtype=torch.float)
         else:
             _, evecs = torch.linalg.eigh(L)
-            nontrivial = min(k, max(num_nodes - 1, 0))
-            x = torch.zeros((num_nodes, k), dtype=torch.float)
+            nontrivial = min(lpe_dim, max(num_nodes - 1, 0))
+            x = torch.zeros((num_nodes, lpe_dim), dtype=torch.float)
             if nontrivial > 0:
                 x[:, :nontrivial] = evecs[:, 1 : 1 + nontrivial]
 
@@ -137,9 +137,7 @@ def create_pyg_dict(nodes: List[int], edges: List[Tuple[int, int]], k: int) -> D
     }
 
 
-def add_graph_column(
-    example, ds_name: Literal["GraphQA", "MotifQA"], lpe_dim: int = 4
-) -> Dict[str, Any]:
+def add_graph_column(example, ds_name: Literal["GraphQA", "MotifQA"], lpe_dim: int = 4) -> Dict[str, Any]:
     """Enrich an example with graph metadata parsed from the question.
 
     Parameters
@@ -165,11 +163,11 @@ def add_graph_column(
             edges = extract_edges_from_text(text)
             example["prompt"] = example["task_description"]
             example["completion"] = example["answer"].strip()
-            example["graph"] = create_pyg_dict(nodes, edges, k=lpe_dim)
+            example["graph"] = create_pyg_dict(nodes, edges, lpe_dim=lpe_dim)
         case "MotifQA":
             example["prompt"] = f"Q: {example['prompt']}\nA:"
             example["completion"] = example["response"]
-            example["graph"] = create_pyg_dict(example["nodes"], example["edges"], k=lpe_dim)
+            example["graph"] = create_pyg_dict(example["nodes"], example["edges"], lpe_dim=lpe_dim)
 
     return example
 
@@ -211,7 +209,7 @@ if __name__ == "__main__":
     edges = extract_edges_from_text(text1)
 
     if nodes:
-        pyg_graph = create_pyg_dict(nodes, edges, k=4)
+        pyg_graph = create_pyg_dict(nodes, edges, lpe_dim=4)
         print(f"✅ Extracted nodes: {nodes}")
         print(f"✅ Extracted edges: {edges}")
         print("\n✅ Generated PyG dictionary:")
