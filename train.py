@@ -178,14 +178,14 @@ def setup_run_context(dataset: str, subset: str, use_wandb: bool, tags: list[str
 
     Returns
     -------
-    output_dir : str
+    out_dir : str
         Path to the output directory for the current run.
     date_str : str
         Timestamp string for the current run.
     """
     date_str = datetime.now().strftime("%m%d-%H%M")
     run_name = f"{subset}_{date_str}"
-    output_dir = os.path.join("outputs", subset, date_str)
+    out_dir = os.path.join("outputs", subset, date_str)
     if use_wandb and is_main_process():
         config = {"dataset": dataset, "subset": subset, "glm_args": glm_args}
         match dataset:
@@ -194,7 +194,7 @@ def setup_run_context(dataset: str, subset: str, use_wandb: bool, tags: list[str
             case "GraphQA":
                 wandb.init(project="GraphQA-GLM", name=run_name, config=config, tags=tags)
 
-    return output_dir, date_str
+    return out_dir, date_str
 
 
 def build_graphqa_dataset(
@@ -454,7 +454,7 @@ def build_custom_dataset(
 def train_glm(
     train_ds: datasets.Dataset,
     eval_ds: datasets.Dataset,
-    output_dir: str,
+    out_dir: str,
     glm_args: dict,
     sft_args: dict,
     args: argparse.Namespace,
@@ -477,7 +477,7 @@ def train_glm(
     eval_ds : datasets.Dataset
         Validation split with the same schema as ``train_ds``. Can be ``None`` to
         skip evaluation steps.
-    output_dir : str
+    out_dir : str
         Directory where checkpoints and trainer state will be written.
     glm_args : dict
         Keyword arguments forwarded to :class:`src.glm.GraphTokenLMConfig`.
@@ -521,7 +521,7 @@ def train_glm(
         optim=hf_optim_map[optim_choice],
         completion_only_loss=True,
         bf16=True,
-        output_dir=output_dir,
+        output_dir=out_dir,
         eval_strategy="steps",
         eval_steps=100,
         logging_steps=10,
@@ -557,7 +557,7 @@ def train_glm(
     if is_main_process() and not args.no_save:
         if not save_intermediate_models:
             final_step = trainer.state.global_step
-            final_ckpt_dir = os.path.join(output_dir, f"checkpoint-{final_step}")
+            final_ckpt_dir = os.path.join(out_dir, f"checkpoint-{final_step}")
             trainer.save_model(final_ckpt_dir)
             print(f"[INFO] Final model saved at {final_ckpt_dir}.")
         trainer.save_state()
@@ -642,10 +642,10 @@ def main():
             print(f"[INFO] Updated glm_args['num_max_nodes'] as {num_max_nodes}.")
 
     # Initialize wandb, setup output directory and date
-    output_dir, date_str = setup_run_context(args.dataset, args.subset, args.wandb, args.tags, glm_args)
+    out_dir, date_str = setup_run_context(args.dataset, args.subset, args.wandb, args.tags, glm_args)
 
     # Training
-    model = train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args)
+    model = train_glm(train_ds, eval_ds, out_dir, glm_args, sft_args, args)
 
     # Quick evaluation with 1 trial
     if args.do_eval and test_ds is not None:
@@ -657,8 +657,8 @@ def main():
 
     # Remove output dir if needed
     if args.no_save and is_main_process():
-        shutil.rmtree(output_dir)
-        print(f"[INFO] Removed output directory at {output_dir} since --no-save is set.")
+        shutil.rmtree(out_dir)
+        print(f"[INFO] Removed output directory `{out_dir}` since --no-save is set.")
 
     if dist.is_initialized():
         dist.destroy_process_group()
