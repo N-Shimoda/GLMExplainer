@@ -1,3 +1,5 @@
+#!/bin/bash
+
 for subset in ba_shapes tree_grid tree_cycle ba_two_motifs; do
 	for epochs in 12 24; do
 		for gnn_dim in 16 32 64 128 256; do

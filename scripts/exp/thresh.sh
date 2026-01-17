@@ -1,3 +1,5 @@
+#!/bin/bash
+
 for subset in tree_grid; do
 	for lr in 0.1 1.0 3.0; do
 		for edge_size in 1e-3 1e-2 1e-1 1 10 100; do

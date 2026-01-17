@@ -1,3 +1,5 @@
+#!/bin/bash
+
 LOG_FILE="logs/explain.log"
 rm -f "$LOG_FILE"
 mkdir -p logs

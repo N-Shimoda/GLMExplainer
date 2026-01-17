@@ -1,3 +1,5 @@
+#!/bin/bash
+
 torchrun --nproc_per_node=2 explain.py \
 	--dataset MotifQA --subset ba_shapes \
 	--model-path masters/ba_shapes \

@@ -1,3 +1,5 @@
+#!/bin/bash
+
 torchrun --nproc_per_node=2 train.py \
 	--dataset MotifQA --subset ba_shapes \
 	--lpe-dim 8 --use-degree-emb \
