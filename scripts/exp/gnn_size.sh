@@ -2,7 +2,7 @@ for subset in ba_shapes tree_grid tree_cycle ba_two_motifs; do
 	for epochs in 12 24; do
 		for gnn_dim in 16 32 64 128 256; do
 			torchrun --nproc_per_node=2 train.py \
-				--dataset MotifQA --subset ba_shapes \
+				--dataset MotifQA --subset $subset \
 				--lpe-dim 8 --use-degree-emb \
 				--pos-emb-dim 8 \
 				--gnn-type GCN \
