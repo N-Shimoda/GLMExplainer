@@ -193,7 +193,7 @@ def add_graph_column(
                 use_degree_emb=use_degree_emb,
             )
         case "MotifQA":
-            example["prompt"] = f"Q: {example['prompt']}\nA: "
+            example["prompt"] = f"Q: {example['prompt']}\nA:"
             example["completion"] = example["response"]
             example["graph"] = create_pyg_dict(
                 example["nodes"],
