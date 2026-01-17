@@ -593,23 +593,23 @@ def main():
                     print("[INFO] Building dataset with custom prompt.")
                 train_ds, eval_ds, test_ds, num_max_nodes = build_custom_dataset(
                     args.subset,
-                    args.lpe_dim,
-                    use_degree_emb=args.use_degree_emb,
+                    glm_args["lpe_dim"],
+                    use_degree_emb=glm_args["use_degree_emb"],
                     do_eval=args.do_eval,
                 )
             else:
                 train_ds, eval_ds, test_ds, num_max_nodes = build_graphqa_dataset(
                     args.subset,
-                    args.lpe_dim,
-                    use_degree_emb=args.use_degree_emb,
+                    glm_args["lpe_dim"],
+                    use_degree_emb=glm_args["use_degree_emb"],
                     do_eval=args.do_eval,
                     load_from_cache_file=False,
                 )
         case "MotifQA":
             train_ds, eval_ds, test_ds, num_max_nodes = build_motifqa_dataset(
                 args.subset,
-                args.lpe_dim,
-                use_degree_emb=args.use_degree_emb,
+                glm_args["lpe_dim"],
+                use_degree_emb=glm_args["use_degree_emb"],
                 do_eval=args.do_eval,
                 load_from_cache_file=False,
             )
