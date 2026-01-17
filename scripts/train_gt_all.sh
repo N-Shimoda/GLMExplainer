@@ -31,9 +31,9 @@ graphqa_subsets=(
 
 motifqa_subsets=(
 	ba_shapes
-	tree_cycle
+	# tree_cycle
 	tree_grid
-	ba_two_motifs
+	# ba_two_motifs
 )
 
 gnns=(
@@ -54,9 +54,9 @@ run_train_loop() {
 		torchrun --nproc_per_node=2 train.py
 		--dataset "${dataset}" --subset "${subset}"
 		--num-graph-tokens 4 --node-feat-dim 8 --pos-emb-dim 8
-		--gnn-hidden-dim 512 --gnn-out-dim 512 --num-gnn-layers 3
-		--epochs 24
-		--save-intermediate-models --save-interval-epochs 12
+		--gnn-hidden-dim 16 --gnn-out-dim 16 --num-gnn-layers 3
+		--epochs 12
+		--save-intermediate-models --save-interval-epochs 6
 		--gnn-type "${gnn}"
 		# --optim "lion" --lr 0.01
 		# --lr-scheduler-type "linear" --warmup-ratio 0.05
