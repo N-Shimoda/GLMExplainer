@@ -211,7 +211,7 @@ def build_graphqa_dataset(
     """
 
     def modify_dataset(example):
-        return add_graph_column(example, ds_name="GraphQA", k=node_feat_dim)
+        return add_graph_column(example, ds_name="GraphQA", lpe_dim=node_feat_dim)
 
     splits = {"train": "zero_shot_train", "validation": "zero_shot_validation"}
     if do_eval:
@@ -265,7 +265,7 @@ def build_motifqa_dataset(
     """
 
     def modify_dataset(example):
-        return add_graph_column(example, ds_name="MotifQA", k=node_feat_dim)
+        return add_graph_column(example, ds_name="MotifQA", lpe_dim=node_feat_dim)
 
     # Load and preprocess the dataset
     splits = {"train": "train", "validation": "validation"}
@@ -343,7 +343,7 @@ def build_custom_dataset(
                     node_str = "There are no nodes in the graph."
                 ans_digit = example["answer"].strip().split(".")[0]
                 example["answer"] = ans_label.format(node_str, ans_digit)
-                return add_graph_column(example, ds_name="GraphQA", k=node_feat_dim)
+                return add_graph_column(example, ds_name="GraphQA", lpe_dim=node_feat_dim)
 
         case "edge_count":
             ans_label = "{} Thus, the answer is {}."
@@ -361,7 +361,7 @@ def build_custom_dataset(
                     edge_str = "There are no edges in the graph."
                 ans_digit = example["answer"].strip().split(".")[0]
                 example["answer"] = ans_label.format(edge_str, ans_digit)
-                return add_graph_column(example, ds_name="GraphQA", k=node_feat_dim)
+                return add_graph_column(example, ds_name="GraphQA", lpe_dim=node_feat_dim)
 
         case "triangle_counting":
             ans_label = "{} Thus, the answer is {}."
@@ -379,7 +379,7 @@ def build_custom_dataset(
                     tri_str = "There are no triangles in the graph."
                 ans_digit = example["answer"].strip().split(".")[0]
                 example["answer"] = ans_label.format(tri_str, ans_digit)
-                return add_graph_column(example, ds_name="GraphQA", k=node_feat_dim)
+                return add_graph_column(example, ds_name="GraphQA", lpe_dim=node_feat_dim)
 
         case _:
             raise NotImplementedError(f"Custom dataset for {subset} is not implemented.")

@@ -40,7 +40,7 @@ def build_dataset(node_feat_dim: int, do_eval: bool = False) -> tuple[Dataset, D
     """
 
     def modify_dataset(example):
-        return add_graph_column(example, ds_name="GraphQA", k=node_feat_dim)
+        return add_graph_column(example, ds_name="GraphQA", lpe_dim=node_feat_dim)
 
     cols = ["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"]
 
