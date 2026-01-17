@@ -246,9 +246,12 @@ def collect_result(results: list[dict], res_file: str, subset: str):
     subset : str
         The subset name used for accuracy computation.
     """
+    # Compute accuracy
     refs = [r["answer"] for r in results]
-    acc, unknowns, _ = comp_accuracy([r["preds"] for r in results], refs, subset)
-    print(f"Accuracy: {acc * 100:.4f}%")
+    preds = [r["preds"] for r in results]
+    acc, unknowns, correct_mask = comp_accuracy(preds, refs, subset)
+    [result.update({"correct": is_correct}) for result, is_correct in zip(results, correct_mask)]
+    print(f"[INFO] Accuracy: {acc * 100:.4f}%")
     if unknowns:
         print(f"[WARNING] {unknowns} unknown predictions found.")
 
