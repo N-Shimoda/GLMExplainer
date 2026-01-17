@@ -113,6 +113,7 @@ def build_args(*, multitask: bool = False):
 
     # Logging
     p.add_argument("--wandb", action="store_true", help="Use wandb logging")
+    p.add_argument("--tags", type=str, nargs="*", default=[], help="Tags for wandb run.")
 
     # Parse and validate args
     args = p.parse_args()
