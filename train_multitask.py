@@ -2,9 +2,9 @@ import os
 from datetime import datetime
 
 import torch.distributed as dist
+import wandb
 from datasets import Dataset, concatenate_datasets, load_dataset
 
-import wandb
 from eval import collect_result, eval_model
 from src.preprocess import add_graph_column
 from train import build_args, is_main_process, train_glm
@@ -40,7 +40,7 @@ def build_dataset(node_feat_dim: int, do_eval: bool = False) -> tuple[Dataset, D
     """
 
     def modify_dataset(example):
-        return add_graph_column(example, k=node_feat_dim)
+        return add_graph_column(example, ds_name="GraphQA", k=node_feat_dim)
 
     cols = ["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"]
 

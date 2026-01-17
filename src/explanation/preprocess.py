@@ -11,14 +11,14 @@ def build_dataset(dataset: str, subset: str, split: str, node_feat_dim: int) -> 
         case "GraphQA":
             ds_raw = load_dataset("baharef/GraphQA", subset, split=f"zero_shot_{split}")
             ds = ds_raw.map(
-                lambda x: add_graph_column(x, k=node_feat_dim, ds_name="GraphQA"),
+                lambda x: add_graph_column(x, ds_name="GraphQA", k=node_feat_dim),
                 remove_columns=["algorithm", "answer", "nnodes", "nedges", "task_description", "text_encoding"],
                 load_from_cache_file=False,
             )
         case "MotifQA":
             ds_raw = load_dataset("naos-ku/motif-qa", subset, split=split)
             ds = ds_raw.map(
-                lambda x: add_graph_column(x, k=node_feat_dim, ds_name="MotifQA"),
+                lambda x: add_graph_column(x, ds_name="MotifQA", k=node_feat_dim),
                 remove_columns=["response", "nnodes", "nedges"],
                 load_from_cache_file=False,
             )
