@@ -11,5 +11,5 @@ for gnn_dim in 16 32 64 128; do
 		--optim adamw \
 		--lr 0.0075 --weight-decay 0.01 \
 		--lr-scheduler-type cosine --warmup-ratio 0.05 \
-		--do-eval
+		--do-eval --wandb
 done
