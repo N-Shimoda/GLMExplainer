@@ -1,5 +1,6 @@
 import argparse
 import os
+import shutil
 from datetime import datetime
 from math import ceil
 from typing import Optional
@@ -7,13 +8,13 @@ from typing import Optional
 import datasets
 import torch
 import torch.distributed as dist
-import wandb
 from datasets import load_dataset
 from datasets.arrow_dataset import Dataset
 from transformers import AutoTokenizer
 from transformers.trainer_utils import set_seed
 from trl import SFTConfig, SFTTrainer
 
+import wandb
 from eval import EXT_MAX_NEW_TOKENS, MAX_NEW_TOKENS, collect_result, eval_model
 from src.collator import GraphQACollator
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
@@ -189,9 +190,9 @@ def setup_run_context(dataset: str, subset: str, use_wandb: bool, tags: list[str
         config = {"dataset": dataset, "subset": subset, "glm_args": glm_args}
         match dataset:
             case "MotifQA":
-                wandb.init(project="MotifQA-GLM", name=run_name, config=config, tags=tags, dir=output_dir)
+                wandb.init(project="MotifQA-GLM", name=run_name, config=config, tags=tags)
             case "GraphQA":
-                wandb.init(project="GraphQA-GLM", name=run_name, config=config, tags=tags, dir=output_dir)
+                wandb.init(project="GraphQA-GLM", name=run_name, config=config, tags=tags)
 
     return output_dir, date_str
 
@@ -515,6 +516,7 @@ def train_glm(
     }
 
     # Setup SFTTrainer
+    save_strategy = "no" if args.no_save else ("steps" if save_intermediate_models else "no")
     sft_config = SFTConfig(
         optim=hf_optim_map[optim_choice],
         completion_only_loss=True,
@@ -523,7 +525,7 @@ def train_glm(
         eval_strategy="steps",
         eval_steps=100,
         logging_steps=10,
-        save_strategy="steps" if save_intermediate_models else "no",
+        save_strategy=save_strategy,
         save_steps=steps_per_epoch * save_interval_epochs,
         report_to="wandb" if args.wandb else "none",
         remove_unused_columns=False,
@@ -551,14 +553,16 @@ def train_glm(
         print("***** Training *****")
     trainer.train()
 
-    # Save the final model
-    final_step = trainer.state.global_step
-    final_ckpt_dir = os.path.join(output_dir, f"checkpoint-{final_step}")
-    if is_main_process():
-        if not args.no_save and not save_intermediate_models:
+    # Save final model and trainer state
+    if is_main_process() and not args.no_save:
+        if not save_intermediate_models:
+            final_step = trainer.state.global_step
+            final_ckpt_dir = os.path.join(output_dir, f"checkpoint-{final_step}")
             trainer.save_model(final_ckpt_dir)
             print(f"[INFO] Final model saved at {final_ckpt_dir}.")
         trainer.save_state()
+
+    if is_main_process():
         print("***** Done *****")
 
     return model
@@ -631,15 +635,6 @@ def main():
                 load_from_cache_file=False,
             )
 
-    # Save datasets locally for debugging
-    out_dir = os.path.join("ds_debug", args.subset)
-    if is_main_process():
-        os.makedirs(out_dir, exist_ok=True)
-        train_ds.to_json(os.path.join(out_dir, "train.jsonl"), orient="records", lines=True)
-        eval_ds.to_json(os.path.join(out_dir, "eval.jsonl"), orient="records", lines=True)
-        if args.do_eval:
-            test_ds.to_json(os.path.join(out_dir, "test.jsonl"), orient="records", lines=True)
-
     # Update node capacity of GLM if needed
     if num_max_nodes > glm_args["num_max_nodes"]:
         glm_args["num_max_nodes"] = num_max_nodes
@@ -660,11 +655,14 @@ def main():
         max_new_tokens = max_new_tokens_dict.get(args.subset, 32)
         eval_ddp(model, args.subset, test_ds, max_new_tokens, date_str, args.wandb)
 
+    # Remove output dir if needed
+    if args.no_save and is_main_process():
+        shutil.rmtree(output_dir)
+        print(f"[INFO] Removed output directory at {output_dir} since --no-save is set.")
+
     if dist.is_initialized():
         dist.destroy_process_group()
 
 
 if __name__ == "__main__":
-    main()
-    main()
     main()
