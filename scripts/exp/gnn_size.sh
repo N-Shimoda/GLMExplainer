@@ -1,8 +1,8 @@
 #!/bin/bash
 
-for subset in ba_shapes tree_grid tree_cycle ba_two_motifs shortest_path; do
+for subset in ba_shapes tree_cycle tree_grid ba_two_motifs shortest_path; do
 	for epochs in 12 24; do
-		for gnn_dim in 512; do
+		for gnn_dim in 8 16 32 64 128 256 512; do
 			torchrun --nproc_per_node=2 train.py \
 				--dataset MotifQA --subset $subset \
 				--lpe-dim 8 --use-degree-emb \
