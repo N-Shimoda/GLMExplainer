@@ -50,6 +50,14 @@ AVERAGE_METRIC_FIELDNAMES = [
     *EDGE_MASK_STABILITY_KEYS,
 ]
 
+MAX_NEW_TOKENS = {
+    "ba_shapes": 8,
+    "tree_cycle": 8,
+    "tree_grid": 8,
+    "ba_two_motifs": 12,
+    "shortest_path": 10,
+}
+
 
 def _init_distributed_if_needed() -> tuple[int, int, int, bool]:
     """Initialize torch.distributed and return rank metadata if WORLD_SIZE > 1.
@@ -584,7 +592,7 @@ def process_dataset(
     # Initialize model wrapper
     wrapper = GLMWrapper(model, tokenizer)
     gen_cfg = GenerationConfig(
-        max_new_tokens=10,
+        max_new_tokens=MAX_NEW_TOKENS[subset],
         do_sample=True,
         eos_token_id=tokenizer.eos_token_id,
         pad_token_id=tokenizer.eos_token_id,
@@ -738,6 +746,12 @@ def main():
         target_value=args.target_value,
         num_samples=args.num_samples,
     )
+
+    if is_rank0:
+        os.makedirs(OUT_DIR, exist_ok=True)
+        debug_dataset_path = os.path.join(OUT_DIR, "filtered_dataset.jsonl")
+        dataset.to_json(debug_dataset_path, lines=True)
+
     if len(dataset) == 0:
         if is_rank0:
             print("[INFO] No samples to explain after filtering. Exiting.")
@@ -774,7 +788,7 @@ def main():
         wandb.init(
             project="MotifQA-Explainer",
             name=run_name,
-            config={**vars(args), **explainer_args},
+            config={**vars(args), **explainer_args, "lpe_dim": lpe_dim, "use_degree_emb": use_degree_emb},
             tags=wandb_tags,
             dir=OUT_DIR,
         )
