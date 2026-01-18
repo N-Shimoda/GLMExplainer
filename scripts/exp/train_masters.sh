@@ -2,8 +2,10 @@
 
 set -euo pipefail
 
-subsets=(ba_shapes tree_cycle tree_grid ba_two_motifs shortest_path)
-hidden_dims=(16 128 16 64 32)
+# subsets=(ba_shapes tree_cycle tree_grid ba_two_motifs shortest_path)
+# hidden_dims=(16 32 8 256 32)
+subsets=(tree_cycle tree_grid ba_two_motifs)
+hidden_dims=(32 8 256)
 
 for i in "${!subsets[@]}"; do
 	subset="${subsets[$i]}"
