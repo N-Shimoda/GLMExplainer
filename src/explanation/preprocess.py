@@ -5,20 +5,20 @@ from datasets import arrow_dataset, load_dataset
 from src.preprocess import add_graph_column
 
 
-def build_dataset(dataset: str, subset: str, split: str, node_feat_dim: int) -> arrow_dataset.Dataset:
+def build_dataset(dataset: str, subset: str, split: str, lpe_dim: int, use_degree_emb: bool) -> arrow_dataset.Dataset:
     """Build and return the specified dataset subset and split."""
     match dataset:
         case "GraphQA":
             ds_raw = load_dataset("baharef/GraphQA", subset, split=f"zero_shot_{split}")
             ds = ds_raw.map(
-                lambda x: add_graph_column(x, ds_name="GraphQA", lpe_dim=node_feat_dim),
+                lambda x: add_graph_column(x, ds_name="GraphQA", lpe_dim=lpe_dim, use_degree_emb=use_degree_emb),
                 remove_columns=["algorithm", "answer", "nnodes", "nedges", "task_description", "text_encoding"],
                 load_from_cache_file=False,
             )
         case "MotifQA":
             ds_raw = load_dataset("naos-ku/motif-qa", subset, split=split)
             ds = ds_raw.map(
-                lambda x: add_graph_column(x, ds_name="MotifQA", lpe_dim=node_feat_dim),
+                lambda x: add_graph_column(x, ds_name="MotifQA", lpe_dim=lpe_dim, use_degree_emb=use_degree_emb),
                 remove_columns=["response", "nnodes", "nedges"],
                 load_from_cache_file=False,
             )

@@ -8,7 +8,6 @@ from typing import Iterable, Literal
 
 import torch
 import torch.distributed as dist
-import wandb
 from torch_geometric.data import Batch as PygBatch
 from torch_geometric.explain import (
     Explainer,
@@ -21,6 +20,7 @@ from tqdm import tqdm
 from transformers import AutoTokenizer, GenerationConfig
 from transformers.trainer_utils import set_seed
 
+import wandb
 from eval import create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
@@ -721,11 +721,14 @@ def main():
     model.eval()
 
     # Load dataset and apply filtering
+    lpe_dim = model.config.lpe_dim if "lpe_dim" in model.config else model.config.node_feat_dim
+    use_degree_emb = model.config.use_degree_emb if "use_degree_emb" in model.config else False
     dataset = build_dataset(
         args.dataset,
         args.subset,
         args.split,
-        node_feat_dim=model.config.node_feat_dim,
+        lpe_dim=lpe_dim,
+        use_degree_emb=use_degree_emb,
     )
     dataset = filter_dataset(
         dataset,
