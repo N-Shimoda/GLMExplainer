@@ -14,7 +14,7 @@ for subset in ba_shapes tree_cycle tree_grid ba_two_motifs shortest_path; do
 			--epochs 200 --lr 3.0
 			--edge-size "$edge_size" --edge-ent 1.0
 			--wandb
-			--tags thresh_search master small
+			--tags thresh_search small master
 		)
 		"${cmd_v1[@]}"
 
