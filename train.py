@@ -649,7 +649,14 @@ def main():
             print(f"[INFO] Updated glm_args['num_max_nodes'] as {num_max_nodes}.")
 
     # Initialize wandb, setup output directory and date
-    out_dir, date_str = setup_run_context(args.dataset, args.subset, args.wandb, args.tags, glm_args)
+    out_dir, date_str = setup_run_context(
+        args.dataset,
+        args.subset,
+        use_wandb=args.wandb,
+        tags=args.tags,
+        output_dir=args.output_dir,
+        glm_args=glm_args,
+    )
 
     # Training
     model = train_glm(train_ds, eval_ds, out_dir, glm_args, sft_args, args)
