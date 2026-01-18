@@ -23,5 +23,6 @@ for i in "${!subsets[@]}"; do
 		--lr 0.0075 --weight-decay 0.01 \
 		--lr-scheduler-type cosine --warmup-ratio 0.05 \
 		--do-eval \
+		--output-dir masters \
 		--wandb --tags masters
 done

@@ -8,13 +8,13 @@ from typing import Optional
 import datasets
 import torch
 import torch.distributed as dist
-import wandb
 from datasets import load_dataset
 from datasets.arrow_dataset import Dataset
 from transformers import AutoTokenizer
 from transformers.trainer_utils import set_seed
 from trl import SFTConfig, SFTTrainer
 
+import wandb
 from eval import EXT_MAX_NEW_TOKENS, MAX_NEW_TOKENS, collect_result, eval_model
 from src.collator import GraphQACollator
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
@@ -113,6 +113,7 @@ def build_args(*, multitask: bool = False):
     p.add_argument("--save-intermediate-models", action="store_true", help="Save intermediate models")
     p.add_argument("--save-interval-epochs", type=int, default=1, help="Save every N epochs")
     p.add_argument("--no-save", action="store_true", help="Do not save any model checkpoints")
+    p.add_argument("--output-dir", type=str, default="outputs", help="Base output directory")
 
     # Logging
     p.add_argument("--wandb", action="store_true", help="Use wandb logging")
@@ -162,7 +163,9 @@ def build_args(*, multitask: bool = False):
     return glm_args, sft_args, args
 
 
-def setup_run_context(dataset: str, subset: str, use_wandb: bool, tags: list[str], glm_args: dict) -> tuple[str, str]:
+def setup_run_context(
+    dataset: str, subset: str, use_wandb: bool, tags: list[str], output_dir: str, glm_args: dict
+) -> tuple[str, str]:
     """Setup output directory and initialize wandb if needed.
 
     Parameters
@@ -175,6 +178,8 @@ def setup_run_context(dataset: str, subset: str, use_wandb: bool, tags: list[str
         Whether to use wandb logging.
     tags : list[str]
         Tags for wandb run.
+    output_dir : str
+        Base output directory.
     glm_args : dict
         Arguments for GraphTokenLMConfig.
 
@@ -187,7 +192,7 @@ def setup_run_context(dataset: str, subset: str, use_wandb: bool, tags: list[str
     """
     date_str = datetime.now().strftime("%m%d-%H%M")
     run_name = f"{subset}_{date_str}"
-    out_dir = os.path.join("outputs", subset, date_str)
+    out_dir = os.path.join(output_dir, subset, date_str)
     if use_wandb and is_main_process():
         config = {"dataset": dataset, "subset": subset, "glm_args": glm_args}
         match dataset:
