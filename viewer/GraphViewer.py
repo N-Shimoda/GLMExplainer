@@ -19,7 +19,9 @@ class GraphViewerPage(AppPage):
         self.trial: int | None = None
         self.left_has_graph = False
         self.right_has_graph = False
+        self.pick_random = False
         self.graph_index = st.session_state.get("graph_index", 0)
+        self.show_common_graphs = st.session_state.get("show_common_graphs", False)
 
     @staticmethod
     def list_graph_files(path: Path) -> list[Path]:
@@ -72,6 +74,7 @@ class GraphViewerPage(AppPage):
         subset_dirs = self.list_dirs(self.base_dir)
         subset_names = [p.name for p in subset_dirs]
         with st.sidebar:
+            st.markdown("### Selections")
             default_index = subset_names.index(self.subset) if self.subset in subset_names else 0
             subset = st.selectbox("Subset", subset_names, index=default_index, key="subset_name")
             st.session_state["subset"] = subset
@@ -96,18 +99,25 @@ class GraphViewerPage(AppPage):
 
         left_indices = [self.parse_graph_index(p.name) for p in left_graphs]
         right_indices = [self.parse_graph_index(p.name) for p in right_graphs]
-        all_graph_indices = sorted(
-            {idx for idx in left_indices + right_indices if idx is not None}
-        )
-        if not all_graph_indices:
+
+        # Define available graph indices
+        if self.show_common_graphs:
+            graph_indices = sorted({idx for idx in set(left_indices) & set(right_indices) if idx is not None})
+        else:
+            graph_indices = sorted({idx for idx in left_indices + right_indices if idx is not None})
+
+        if not graph_indices:
             st.warning("No graphs found for the selected runs.")
             st.stop()
 
         # Random pick button
-        pick_random = st.sidebar.button("Pick a graph", icon="🎲")
-        if pick_random:
-            st.session_state["graph_index"] = random.choice(all_graph_indices)
-        self.graph_index = st.sidebar.selectbox("Graph", all_graph_indices, key="graph_index")
+        self.pick_random = st.sidebar.button("Pick a graph", icon="🎲")
+        if self.pick_random:
+            st.session_state["graph_index"] = random.choice(graph_indices)
+
+        # Graph index selection
+        with st.sidebar:
+            self.graph_index = st.selectbox("Graph", graph_indices, index=graph_indices.index(self.graph_index))
 
         left_graph_path = self.subset_path / self.left_run_name / "graphs" / Path(f"graph_{self.graph_index}")
         right_graph_path = self.subset_path / self.right_run_name / "graphs" / Path(f"graph_{self.graph_index}")
@@ -145,7 +155,7 @@ class GraphViewerPage(AppPage):
                 st.warning("No PDF files found in the selected right graph.")
                 st.stop()
 
-        if pick_random:
+        if self.pick_random:
             st.session_state["trial_index"] = random.choice(available_counters)
         if "trial_index" not in st.session_state or st.session_state["trial_index"] not in available_counters:
             st.session_state["trial_index"] = available_counters[0]
@@ -163,6 +173,13 @@ class GraphViewerPage(AppPage):
         self.right_pdf_name = right_pdf_by_counter.get(pdf_counter_value)
         self.trial = int(pdf_counter_value)
 
+        # Display settings
+        with st.sidebar:
+            st.divider()
+            st.markdown("### Display settings")
+            self.show_common_graphs = st.toggle("Show common graphs only", value=self.show_common_graphs)
+            st.session_state["show_common_graphs"] = self.show_common_graphs
+
     def create_graphs(self) -> None:
         left_graph_path = self.subset_path / self.left_run_name / "graphs" / Path(f"graph_{self.graph_index}")
         right_graph_path = self.subset_path / self.right_run_name / "graphs" / Path(f"graph_{self.graph_index}")
@@ -173,9 +190,7 @@ class GraphViewerPage(AppPage):
         left_metrics_path = self.subset_path / self.left_run_name / "sample_metrics.csv"
         right_metrics_path = self.subset_path / self.right_run_name / "sample_metrics.csv"
         left_metrics = (
-            self._load_graph_metrics(left_metrics_path, self.graph_index, self.trial)
-            if self.left_has_graph
-            else None
+            self._load_graph_metrics(left_metrics_path, self.graph_index, self.trial) if self.left_has_graph else None
         )
         right_metrics = (
             self._load_graph_metrics(right_metrics_path, self.graph_index, self.trial)
