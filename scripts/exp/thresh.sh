@@ -14,6 +14,6 @@ for edge_size in 1 10 100; do
 			--llr-threshold "$thresh" \
 			--epochs 200 --lr 0.3 \
 			--edge-size "$edge_size" --edge-ent 1.0 \
-			--wandb --tags master
+			--wandb --tags master small
 	done
 done
