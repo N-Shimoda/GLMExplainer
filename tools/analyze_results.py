@@ -115,6 +115,10 @@ def main():
         labels = labels + [UNKNOWN_LABEL]
 
     matrix = build_confusion(labels, pred_labels, ref_labels)
+    true_label_totals = matrix.sum(axis=1)
+    true_label_acc = np.zeros_like(true_label_totals, dtype=float)
+    for idx, total in enumerate(true_label_totals):
+        true_label_acc[idx] = (matrix[idx, idx] / total) if total > 0 else 0.0
     display_matrix = matrix.astype(float)
     if args.normalize:
         row_sums = display_matrix.sum(axis=1, keepdims=True)
@@ -140,7 +144,11 @@ def main():
             if args.normalize:
                 label = format(val, ".2f")
             else:
-                label = str(int(matrix[i, j]))
+                count_label = str(int(matrix[i, j]))
+                if i == j:
+                    label = f"{count_label}\n({true_label_acc[i]:.2f})"
+                else:
+                    label = count_label
             ax.text(j, i, label, ha="center", va="center", color=text_color, fontsize=9)
 
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
