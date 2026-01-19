@@ -269,6 +269,14 @@ class GLMWrapper(torch.nn.Module):
             print("-" * 85)
             print("\n".join(print_rows))
 
+        # Prevent empty relevant_idx
+        if not self.relevant_idx:
+            print(
+                "\n[WARNING] No relevant tokens found based on the given LLR threshold. "
+                "All tokens will be considered relevant."
+            )
+            self.relevant_idx = list(range(len(org_token_probs)))
+
         return self.relevant_idx
 
     def comp_token_probs(self, prompt: str, completion: str, graph: PygBatch):
