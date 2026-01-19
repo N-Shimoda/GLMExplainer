@@ -251,12 +251,13 @@ class GLMWrapper(torch.nn.Module):
             if org_id != base_id or org_token != base_token:
                 raise ValueError("Token sequences do not match between original and baseline runs.")
             llr = math.log(org_prob + eps) - math.log(base_prob + eps)
-            if llr > llr_threshold:
+            is_relevant = math.fabs(llr) > llr_threshold
+            if is_relevant:
                 self.relevant_idx.append(idx)
             if verbose:
                 print_rows.append(
                     f"{org_id:8d} | {org_token:12s} | {org_prob:15.8f} | "
-                    f"{base_prob:15.8f} | {llr:10.6f} | {'*' if llr > llr_threshold else '':>8}"
+                    f"{base_prob:15.8f} | {llr:10.6f} | {'*' if is_relevant else '':>8}"
                 )
 
         # Print token probability comparison table
