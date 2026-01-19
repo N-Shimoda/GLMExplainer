@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-edge_sizes=(0.1 1.0 10 100)
+edge_sizes=(1.0 10 100)
 
 # Explore thresh = 0.0 vs 1.0
 for subset in tree_cycle tree_grid ba_two_motifs; do
