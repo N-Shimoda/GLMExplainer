@@ -10,7 +10,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch_geometric.data import Batch as PygBatch
 from torch_geometric.data import Data as PygData
 from tqdm import tqdm
-from transformers import AutoTokenizer, GenerationConfig
+from transformers import AutoTokenizer, GenerationConfig, set_seed
 
 from src.ckpt import _resolve_ckpt_path
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
@@ -267,6 +267,7 @@ def collect_result(results: list[dict], res_file: str, subset: str):
 def main():
     use_dist, rank, world_size, local_rank = _init_distributed()
     is_main = rank == 0
+    set_seed(42 + rank)
     args = build_args()
 
     # Load pre-trained model
