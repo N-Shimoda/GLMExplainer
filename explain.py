@@ -21,7 +21,7 @@ from transformers import AutoTokenizer, GenerationConfig
 from transformers.trainer_utils import set_seed
 
 import wandb
-from eval import create_pyg_batch
+from eval import MAX_NEW_TOKENS, create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 from src.explanation.args import check_non_negative_int, validate_args
@@ -49,14 +49,6 @@ AVERAGE_METRIC_FIELDNAMES = [
     "f1",
     *EDGE_MASK_STABILITY_KEYS,
 ]
-
-MAX_NEW_TOKENS = {
-    "ba_shapes": 8,
-    "tree_cycle": 8,
-    "tree_grid": 8,
-    "ba_two_motifs": 12,
-    "shortest_path": 10,
-}
 
 
 def _init_distributed_if_needed() -> tuple[int, int, int, bool]:
@@ -358,6 +350,7 @@ def _generate_explanation(
     output_texts = wrapper.gen_output(
         input_text=sample["prompt"], graph=pyg_batch, gen_cfg=gen_cfg, num_trials=num_gen_trials
     )
+    print(output_texts)
 
     # Update output_text to the first correct generation
     acc, _, correct_mask = comp_accuracy(output_texts, [sample["completion"]] * len(output_texts), subset)
@@ -472,6 +465,7 @@ def explain_sample(
     )
 
     if explanation is None:
+        print("[INFO] No explanation generated; skipping metric computation and logging.")
         exp_accuracy = {"auroc": 0.0, "auprc": 0.0, "f1": 0.0}
         ans_accuracy_val = 0.0
         return False, exp_accuracy, ans_accuracy_val, None
@@ -706,7 +700,6 @@ def process_dataset(
 
 def main():
     """Compute edge importance explanations for GraphTokenLM predictions on specified dataset samples."""
-    set_seed(42)
     args, explainer_args = build_args()
     date_str = datetime.now().strftime("%m%d-%H%M")
     run_name = f"{args.subset}_{date_str}"
