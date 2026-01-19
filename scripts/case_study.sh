@@ -1,12 +1,15 @@
 #!/bin/bash
 
-for subset in ba_shapes ba_two_motifs tree_cycle tree_grid; do
+set -euo pipefail
+
+for subset in ba_shapes tree_cycle tree_grid ba_two_motifs shortest_path; do
 	for baseline_type in complete empty random; do
 		echo -e "\nsubset: $subset, baseline: $baseline_type"
 		python tools/case_study.py \
 			--subset $subset \
-			--model-path outputs/$subset/ --ckpt-index -2 \
-			--num-samples 12 \
-			--baseline-graph $baseline_type
+			--model-path masters/$subset/ \
+			--num-samples 20 \
+			--baseline-graph $baseline_type \
+			--verbose --output-format svg
 	done
 done
