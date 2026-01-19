@@ -39,7 +39,6 @@ from src.metrics import comp_accuracy
 from src.utils import visualize_motif_explanation
 
 GRAPH_PDF_SUBDIR = "graphs"
-NODE_FEAT_PDF_SUBDIR = "node_feat"
 TRIAL_OVERRIDE_COLUMN = "_trial_override"
 AVERAGE_METRIC_FIELDNAMES = [
     "sample_index",
@@ -373,7 +372,7 @@ def _generate_explanation(
         model=wrapper,
         algorithm=GNNExplainer(num_hops=wrapper.model.config.num_gnn_layers, **explainer_args),
         explanation_type="model",
-        node_mask_type="attributes",
+        node_mask_type=None,
         edge_mask_type="object",
         model_config=dict(
             mode="regression",
@@ -496,9 +495,7 @@ def explain_sample(
     suffix = f"{sample['index']}_{trial_idx}" if num_trials > 1 else f"{sample['index']}"
     out_dir = os.path.dirname(log_path)
     graph_dir = os.path.join(out_dir, GRAPH_PDF_SUBDIR, f"graph_{sample['index']}")
-    node_feat_dir = os.path.join(out_dir, NODE_FEAT_PDF_SUBDIR, f"node_feat_{sample['index']}")
     os.makedirs(graph_dir, exist_ok=True)
-    os.makedirs(node_feat_dir, exist_ok=True)
 
     # Save visualizations
     graph_path = os.path.join(graph_dir, f"{suffix}.{file_type}")
@@ -512,8 +509,6 @@ def explain_sample(
         )
     else:
         explanation.visualize_graph(graph_path)
-    feature_path = os.path.join(node_feat_dir, f"node_feat_{suffix}.{file_type}")
-    explanation.visualize_feature_importance(feature_path)
 
     return metrics_logged, exp_accuracy, ans_accuracy_val, pred_edge_mask
 
