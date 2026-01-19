@@ -1,7 +1,7 @@
 #!/bin/bash
 
 torchrun --nproc_per_node=2 train.py \
-	--dataset MotifQA --subset ba_shapes \
+	--dataset MotifQA --subset tree_grid \
 	--lpe-dim 8 \
 	--pos-emb-dim 8 \
 	--gnn-type GCN \
@@ -13,4 +13,4 @@ torchrun --nproc_per_node=2 train.py \
 	--lr 0.0075 --weight-decay 0.01 \
 	--lr-scheduler-type cosine --warmup-ratio 0.05 \
 	--do-eval \
-	--wandb --tags dev
+	--wandb --tags masters
