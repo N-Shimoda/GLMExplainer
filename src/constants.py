@@ -26,24 +26,3 @@ CLASSIFICATION_SUBSETS = {
     "tree_grid": {"yes", "no"},
     "ba_two_motifs": {"house", "cycle"},
 }
-
-# Max new tokens for each subset
-MAX_NEW_TOKENS = {
-    "node_count": 4,
-    "edge_count": 4,
-    "cycle_check": 8,
-    "triangle_counting": 4,
-    "reachability": 4,
-    "node_degree": 4,
-    "edge_existence": 4,
-    "ba_shapes": 8,
-    "tree_cycle": 8,
-    "tree_grid": 8,
-    "ba_two_motifs": 12,
-}
-EXT_MAX_NEW_TOKENS = {
-    "node_count": 96,
-    "edge_count": 256,
-    "cycle_check": 512,
-    "triangle_counting": 256,
-}

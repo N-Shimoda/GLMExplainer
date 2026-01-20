@@ -166,7 +166,7 @@ def plot_prob_comparison(
     ax_prob.set_title("Token Probability Comparison", fontsize=15)
     ax_prob.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.6)
     ax_prob.legend(fontsize=12)
-    fig.tight_layout()
+    # fig.tight_layout()
 
     # Keep text as text in SVG
     suffix = output_path.split(".")[-1].lower()

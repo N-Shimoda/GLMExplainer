@@ -15,14 +15,9 @@ from transformers.trainer_utils import set_seed
 from trl import SFTConfig, SFTTrainer
 
 import wandb
-from eval import collect_result, eval_model
+from eval import EXT_MAX_NEW_TOKENS, MAX_NEW_TOKENS, collect_result, eval_model
 from src.collator import GraphQACollator
-from src.constants import (
-    EXT_MAX_NEW_TOKENS,
-    GRAPHQA_SUBSETS,
-    MAX_NEW_TOKENS,
-    MOTIFQA_SUBSETS,
-)
+from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 from src.ds_stats import completion_length_report
 from src.glm import GraphTokenLM, GraphTokenLMConfig
 from src.preprocess import add_graph_column
