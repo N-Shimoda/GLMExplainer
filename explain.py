@@ -21,9 +21,13 @@ from transformers import AutoTokenizer, GenerationConfig
 from transformers.trainer_utils import set_seed
 
 import wandb
-from eval import MAX_NEW_TOKENS, create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
-from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
+from src.constants import (
+    GRAPHQA_SUBSETS,
+    MAX_NEW_TOKENS,
+    MOTIFQA_SUBSETS,
+    create_pyg_batch,
+)
 from src.explanation.args import check_non_negative_int, validate_args
 from src.explanation.logging import (
     _record_sample_average_metrics,

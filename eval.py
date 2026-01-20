@@ -13,30 +13,15 @@ from tqdm import tqdm
 from transformers import AutoTokenizer, GenerationConfig, set_seed
 
 from src.ckpt import _resolve_ckpt_path
-from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
+from src.constants import (
+    EXT_MAX_NEW_TOKENS,
+    GRAPHQA_SUBSETS,
+    MAX_NEW_TOKENS,
+    MOTIFQA_SUBSETS,
+)
 from src.glm import GraphTokenLM
 from src.metrics import comp_accuracy
 from src.preprocess import add_graph_column
-
-MAX_NEW_TOKENS = {
-    "node_count": 4,
-    "edge_count": 4,
-    "cycle_check": 8,
-    "triangle_counting": 4,
-    "reachability": 4,
-    "node_degree": 4,
-    "edge_existence": 4,
-    "ba_shapes": 8,
-    "tree_cycle": 8,
-    "tree_grid": 8,
-    "ba_two_motifs": 12,
-}
-EXT_MAX_NEW_TOKENS = {
-    "node_count": 96,
-    "edge_count": 256,
-    "cycle_check": 512,
-    "triangle_counting": 256,
-}
 
 
 def build_args(*, multitask: bool = False):

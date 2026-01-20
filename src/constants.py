@@ -1,3 +1,4 @@
+# GraphQA and MotifQA subsets
 GRAPHQA_SUBSETS = [
     "node_count",
     "edge_count",
@@ -9,6 +10,7 @@ GRAPHQA_SUBSETS = [
 ]
 MOTIFQA_SUBSETS = ["ba_shapes", "tree_cycle", "tree_grid", "ba_two_motifs", "shortest_path"]
 
+# Mapping of subsets to their output types
 NUMERIC_SUBSETS = {
     "node_count": int,
     "edge_count": int,
@@ -23,4 +25,25 @@ CLASSIFICATION_SUBSETS = {
     "tree_cycle": {"yes", "no"},
     "tree_grid": {"yes", "no"},
     "ba_two_motifs": {"house", "cycle"},
+}
+
+# Max new tokens for each subset
+MAX_NEW_TOKENS = {
+    "node_count": 4,
+    "edge_count": 4,
+    "cycle_check": 8,
+    "triangle_counting": 4,
+    "reachability": 4,
+    "node_degree": 4,
+    "edge_existence": 4,
+    "ba_shapes": 8,
+    "tree_cycle": 8,
+    "tree_grid": 8,
+    "ba_two_motifs": 12,
+}
+EXT_MAX_NEW_TOKENS = {
+    "node_count": 96,
+    "edge_count": 256,
+    "cycle_check": 512,
+    "triangle_counting": 256,
 }
