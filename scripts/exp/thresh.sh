@@ -2,10 +2,10 @@
 
 set -euo pipefail
 
-edge_sizes=(1.0 10 100)
+edge_sizes=(0.1 0.3 3 30)
 
 # Explore thresh = 0.0 vs 1.0
-for subset in tree_cycle tree_grid ba_two_motifs; do
+for subset in ba_shapes tree_cycle tree_grid ba_two_motifs; do
 	for edge_size in "${edge_sizes[@]}"; do
 		for thresh in 0.0 1.0; do
 			torchrun --nproc_per_node=2 explain.py \
