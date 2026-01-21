@@ -1,18 +1,20 @@
 import argparse
 import os
+import shutil
 from datetime import datetime
 from math import ceil
 from typing import Optional
 
+import datasets
 import torch
 import torch.distributed as dist
-import wandb
 from datasets import load_dataset
 from datasets.arrow_dataset import Dataset
 from transformers import AutoTokenizer
 from transformers.trainer_utils import set_seed
 from trl import SFTConfig, SFTTrainer
 
+import wandb
 from eval import EXT_MAX_NEW_TOKENS, MAX_NEW_TOKENS, collect_result, eval_model
 from src.collator import GraphQACollator
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
@@ -50,6 +52,12 @@ def validate_args(args: argparse.Namespace):
     if args.use_custom_dataset and args.dataset != "GraphQA":
         raise ValueError("--use-custom-dataset is only supported with GraphQA dataset.")
 
+    # Checkpointing
+    if args.no_save and args.save_intermediate_models:
+        raise ValueError("--no-save and --save-intermediate-models cannot be used together.")
+    if args.no_save and not args.wandb:
+        raise ValueError("--no-save without --wandb is prohibited since no checkpoints are saved locally.")
+
 
 def build_args(*, multitask: bool = False):
     p = argparse.ArgumentParser(description="Train GraphTokenLM on GraphQA or MotifQA dataset.")
@@ -76,8 +84,9 @@ def build_args(*, multitask: bool = False):
     )
     p.add_argument("--num-max-nodes", type=int, default=20)
     p.add_argument("--num-graph-tokens", type=int, default=4)
-    p.add_argument("--node-feat-dim", type=int, default=8)
     p.add_argument("--pos-emb-dim", type=int, default=8)
+    p.add_argument("--lpe-dim", type=int, default=8)
+    p.add_argument("--use-degree-emb", action="store_true")
     p.add_argument("--gnn-hidden-dim", type=int, default=256)
     p.add_argument("--gnn-out-dim", type=int, default=512)
     p.add_argument("--num-gnn-layers", type=int, default=4)
@@ -99,11 +108,16 @@ def build_args(*, multitask: bool = False):
     p.add_argument("--per-device-train-batch-size", type=int, default=2)
     p.add_argument("--per-device-eval-batch-size", type=int, default=4)
     p.add_argument("--gradient-accumulation-steps", type=int, default=4)
+
+    # Checkpointing
     p.add_argument("--save-intermediate-models", action="store_true", help="Save intermediate models")
     p.add_argument("--save-interval-epochs", type=int, default=1, help="Save every N epochs")
+    p.add_argument("--no-save", action="store_true", help="Do not save any model checkpoints")
+    p.add_argument("--output-dir", type=str, default="outputs", help="Base output directory")
 
     # Logging
     p.add_argument("--wandb", action="store_true", help="Use wandb logging")
+    p.add_argument("--tags", type=str, nargs="*", default=[], help="Tags for wandb run.")
 
     # Parse and validate args
     args = p.parse_args()
@@ -113,7 +127,7 @@ def build_args(*, multitask: bool = False):
     glm_args = {
         "base_model": args.base_model,
         "gnn_type": args.gnn_type,
-        "node_feat_dim": args.node_feat_dim,
+        "node_feat_dim": args.lpe_dim + (1 if args.use_degree_emb else 0),
         "pos_emb_dim": args.pos_emb_dim,
         "gnn_hidden_dim": args.gnn_hidden_dim,
         "gnn_out_dim": args.gnn_out_dim,
@@ -121,6 +135,8 @@ def build_args(*, multitask: bool = False):
         "num_graph_tokens": args.num_graph_tokens,
         "num_proj_layers": args.num_proj_layers,
         "num_max_nodes": args.num_max_nodes,
+        "lpe_dim": args.lpe_dim,
+        "use_degree_emb": args.use_degree_emb,
     }
     sft_args = {
         "per_device_train_batch_size": args.per_device_train_batch_size,
@@ -147,7 +163,9 @@ def build_args(*, multitask: bool = False):
     return glm_args, sft_args, args
 
 
-def setup_run_context(dataset: str, subset: str, use_wandb: bool, glm_args: dict) -> tuple[str, str]:
+def setup_run_context(
+    dataset: str, subset: str, use_wandb: bool, tags: list[str], output_dir: str, glm_args: dict
+) -> tuple[str, str]:
     """Setup output directory and initialize wandb if needed.
 
     Parameters
@@ -158,32 +176,40 @@ def setup_run_context(dataset: str, subset: str, use_wandb: bool, glm_args: dict
         Subset name for the current run.
     use_wandb : bool
         Whether to use wandb logging.
+    tags : list[str]
+        Tags for wandb run.
+    output_dir : str
+        Base output directory.
     glm_args : dict
         Arguments for GraphTokenLMConfig.
 
     Returns
     -------
-    output_dir : str
+    out_dir : str
         Path to the output directory for the current run.
     date_str : str
         Timestamp string for the current run.
     """
     date_str = datetime.now().strftime("%m%d-%H%M")
     run_name = f"{subset}_{date_str}"
-    output_dir = os.path.join("outputs", subset, date_str)
+    out_dir = os.path.join(output_dir, subset, date_str)
     if use_wandb and is_main_process():
         config = {"dataset": dataset, "subset": subset, "glm_args": glm_args}
         match dataset:
             case "MotifQA":
-                wandb.init(project="MotifQA-GLM", name=run_name, config=config, dir=output_dir)
+                wandb.init(project="MotifQA-GLM", name=run_name, config=config, tags=tags)
             case "GraphQA":
-                wandb.init(project="GraphQA-GLM", name=run_name, config=config, dir=output_dir)
+                wandb.init(project="GraphQA-GLM", name=run_name, config=config, tags=tags)
 
-    return output_dir, date_str
+    return out_dir, date_str
 
 
 def build_graphqa_dataset(
-    subset: str, node_feat_dim: int, do_eval: bool = False, load_from_cache_file: bool = True
+    subset: str,
+    lpe_dim: int,
+    use_degree_emb: bool = False,
+    do_eval: bool = False,
+    load_from_cache_file: bool = True,
 ) -> tuple[Dataset, Dataset, Dataset | None, int]:
     """Build dataset for training and evaluation.
 
@@ -191,8 +217,10 @@ def build_graphqa_dataset(
     ----------
     subset : str
         Subset of the GraphQA dataset to use.
-    node_feat_dim : int
-        Dimensionality of node features (k in Laplacian PE).
+    lpe_dim : int
+        Dimensionality of Laplacian positional embeddings.
+    use_degree_emb : bool, default=False
+        Whether to append node degree as an additional feature dimension.
     do_eval : bool, default=False
         Whether to prepare the test dataset for evaluation.
     load_from_cache_file : bool, default=True
@@ -211,7 +239,12 @@ def build_graphqa_dataset(
     """
 
     def modify_dataset(example):
-        return add_graph_column(example, k=node_feat_dim, ds_name="GraphQA")
+        return add_graph_column(
+            example,
+            ds_name="GraphQA",
+            lpe_dim=lpe_dim,
+            use_degree_emb=use_degree_emb,
+        )
 
     splits = {"train": "zero_shot_train", "validation": "zero_shot_validation"}
     if do_eval:
@@ -237,7 +270,11 @@ def build_graphqa_dataset(
 
 
 def build_motifqa_dataset(
-    subset: str, node_feat_dim: int, do_eval: bool = False, load_from_cache_file: bool = True
+    subset: str,
+    lpe_dim: int,
+    use_degree_emb: bool = False,
+    do_eval: bool = False,
+    load_from_cache_file: bool = True,
 ) -> tuple[Dataset, Dataset, Optional[Dataset], int]:
     """Build MotifQA dataset for training and evaluation.
 
@@ -245,8 +282,10 @@ def build_motifqa_dataset(
     ----------
     subset : str
         MotifQA subset name.
-    node_feat_dim : int
-        Dimensionality of node features (k in Laplacian PE).
+    lpe_dim : int
+        Dimensionality of Laplacian positional embeddings.
+    use_degree_emb : bool, default=False
+        Whether to append node degree as an additional feature dimension.
     do_eval : bool, default=False
         Whether to prepare the test dataset for evaluation.
     load_from_cache_file : bool, default=True
@@ -265,7 +304,12 @@ def build_motifqa_dataset(
     """
 
     def modify_dataset(example):
-        return add_graph_column(example, k=node_feat_dim, ds_name="MotifQA")
+        return add_graph_column(
+            example,
+            ds_name="MotifQA",
+            lpe_dim=lpe_dim,
+            use_degree_emb=use_degree_emb,
+        )
 
     # Load and preprocess the dataset
     splits = {"train": "train", "validation": "validation"}
@@ -292,7 +336,10 @@ def build_motifqa_dataset(
 
 
 def build_custom_dataset(
-    subset: str, node_feat_dim: int, do_eval: bool = False
+    subset: str,
+    lpe_dim: int,
+    use_degree_emb: bool = False,
+    do_eval: bool = False,
 ) -> tuple[Dataset, Dataset, Dataset | None, int]:
     """Build custom dataset for training and evaluation.
 
@@ -300,8 +347,10 @@ def build_custom_dataset(
     ----------
     subset : str
         Subset of the GraphQA dataset to use.
-    node_feat_dim : int
-        Dimensionality of node features (k in Laplacian PE).
+    lpe_dim : int
+        Dimensionality of Laplacian positional embeddings.
+    use_degree_emb : bool, default=False
+        Whether to append node degree as an additional feature dimension.
     do_eval : bool, default=False
         Whether to prepare the test dataset for evaluation.
 
@@ -343,7 +392,12 @@ def build_custom_dataset(
                     node_str = "There are no nodes in the graph."
                 ans_digit = example["answer"].strip().split(".")[0]
                 example["answer"] = ans_label.format(node_str, ans_digit)
-                return add_graph_column(example, k=node_feat_dim)
+                return add_graph_column(
+                    example,
+                    ds_name="GraphQA",
+                    lpe_dim=lpe_dim,
+                    use_degree_emb=use_degree_emb,
+                )
 
         case "edge_count":
             ans_label = "{} Thus, the answer is {}."
@@ -361,7 +415,12 @@ def build_custom_dataset(
                     edge_str = "There are no edges in the graph."
                 ans_digit = example["answer"].strip().split(".")[0]
                 example["answer"] = ans_label.format(edge_str, ans_digit)
-                return add_graph_column(example, k=node_feat_dim)
+                return add_graph_column(
+                    example,
+                    ds_name="GraphQA",
+                    lpe_dim=lpe_dim,
+                    use_degree_emb=use_degree_emb,
+                )
 
         case "triangle_counting":
             ans_label = "{} Thus, the answer is {}."
@@ -379,7 +438,12 @@ def build_custom_dataset(
                     tri_str = "There are no triangles in the graph."
                 ans_digit = example["answer"].strip().split(".")[0]
                 example["answer"] = ans_label.format(tri_str, ans_digit)
-                return add_graph_column(example, k=node_feat_dim)
+                return add_graph_column(
+                    example,
+                    ds_name="GraphQA",
+                    lpe_dim=lpe_dim,
+                    use_degree_emb=use_degree_emb,
+                )
 
         case _:
             raise NotImplementedError(f"Custom dataset for {subset} is not implemented.")
@@ -394,7 +458,14 @@ def build_custom_dataset(
     return ds_dict["train"], ds_dict["validation"], ds_dict["test"] if do_eval else None, num_max_nodes
 
 
-def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
+def train_glm(
+    train_ds: datasets.Dataset,
+    eval_ds: datasets.Dataset,
+    out_dir: str,
+    glm_args: dict,
+    sft_args: dict,
+    args: argparse.Namespace,
+) -> GraphTokenLM:
     """
     Fine-tune a GraphToken language model on graph QA data using TRL's SFTTrainer.
 
@@ -413,7 +484,7 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
     eval_ds : datasets.Dataset
         Validation split with the same schema as ``train_ds``. Can be ``None`` to
         skip evaluation steps.
-    output_dir : str
+    out_dir : str
         Directory where checkpoints and trainer state will be written.
     glm_args : dict
         Keyword arguments forwarded to :class:`src.glm.GraphTokenLMConfig`.
@@ -427,8 +498,6 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
     -------
     model : GraphTokenLM
         The fine-tuned model instance (on the local process).
-    final_ckpt_dir : str
-        Path to the final checkpoint directory produced after training.
     """
     # Initialize model and tokenizer
     glm_cfg = GraphTokenLMConfig(**glm_args)
@@ -454,15 +523,16 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
     }
 
     # Setup SFTTrainer
+    save_strategy = "no" if args.no_save else ("steps" if save_intermediate_models else "no")
     sft_config = SFTConfig(
         optim=hf_optim_map[optim_choice],
         completion_only_loss=True,
         bf16=True,
-        output_dir=output_dir,
+        output_dir=out_dir,
         eval_strategy="steps",
         eval_steps=100,
         logging_steps=10,
-        save_strategy="steps" if save_intermediate_models else "no",
+        save_strategy=save_strategy,
         save_steps=steps_per_epoch * save_interval_epochs,
         report_to="wandb" if args.wandb else "none",
         remove_unused_columns=False,
@@ -490,16 +560,19 @@ def train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args):
         print("***** Training *****")
     trainer.train()
 
-    # Save the final model
-    final_step = trainer.state.global_step
-    final_ckpt_dir = os.path.join(output_dir, f"checkpoint-{final_step}")
-    if is_main_process():
+    # Save final model and trainer state
+    if is_main_process() and not args.no_save:
         if not save_intermediate_models:
+            final_step = trainer.state.global_step
+            final_ckpt_dir = os.path.join(out_dir, f"checkpoint-{final_step}")
             trainer.save_model(final_ckpt_dir)
+            print(f"[INFO] Final model saved at {final_ckpt_dir}.")
         trainer.save_state()
+
+    if is_main_process():
         print("***** Done *****")
 
-    return model, final_ckpt_dir
+    return model
 
 
 def eval_ddp(model, subset: str, test_ds: Dataset, max_new_tokens: int, date_str: str, use_wandb: bool):
@@ -548,32 +621,26 @@ def main():
                     print("[INFO] Building dataset with custom prompt.")
                 train_ds, eval_ds, test_ds, num_max_nodes = build_custom_dataset(
                     args.subset,
-                    glm_args["node_feat_dim"],
+                    glm_args["lpe_dim"],
+                    use_degree_emb=glm_args["use_degree_emb"],
                     do_eval=args.do_eval,
                 )
             else:
                 train_ds, eval_ds, test_ds, num_max_nodes = build_graphqa_dataset(
                     args.subset,
-                    glm_args["node_feat_dim"],
+                    glm_args["lpe_dim"],
+                    use_degree_emb=glm_args["use_degree_emb"],
                     do_eval=args.do_eval,
                     load_from_cache_file=False,
                 )
         case "MotifQA":
             train_ds, eval_ds, test_ds, num_max_nodes = build_motifqa_dataset(
                 args.subset,
-                glm_args["node_feat_dim"],
+                glm_args["lpe_dim"],
+                use_degree_emb=glm_args["use_degree_emb"],
                 do_eval=args.do_eval,
                 load_from_cache_file=False,
             )
-
-    # Save datasets locally for debugging
-    out_dir = os.path.join("ds_debug", args.subset)
-    if is_main_process():
-        os.makedirs(out_dir, exist_ok=True)
-        train_ds.to_json(os.path.join(out_dir, "train.jsonl"), orient="records", lines=True)
-        eval_ds.to_json(os.path.join(out_dir, "eval.jsonl"), orient="records", lines=True)
-        if args.do_eval:
-            test_ds.to_json(os.path.join(out_dir, "test.jsonl"), orient="records", lines=True)
 
     # Update node capacity of GLM if needed
     if num_max_nodes > glm_args["num_max_nodes"]:
@@ -582,10 +649,17 @@ def main():
             print(f"[INFO] Updated glm_args['num_max_nodes'] as {num_max_nodes}.")
 
     # Initialize wandb, setup output directory and date
-    output_dir, date_str = setup_run_context(args.dataset, args.subset, args.wandb, glm_args)
+    out_dir, date_str = setup_run_context(
+        args.dataset,
+        args.subset,
+        use_wandb=args.wandb,
+        tags=args.tags,
+        output_dir=args.output_dir,
+        glm_args=glm_args,
+    )
 
     # Training
-    model, ckpt_path = train_glm(train_ds, eval_ds, output_dir, glm_args, sft_args, args)
+    model = train_glm(train_ds, eval_ds, out_dir, glm_args, sft_args, args)
 
     # Quick evaluation with 1 trial
     if args.do_eval and test_ds is not None:
@@ -594,6 +668,11 @@ def main():
         max_new_tokens_dict = EXT_MAX_NEW_TOKENS if args.use_custom_dataset else MAX_NEW_TOKENS
         max_new_tokens = max_new_tokens_dict.get(args.subset, 32)
         eval_ddp(model, args.subset, test_ds, max_new_tokens, date_str, args.wandb)
+
+    # Remove output dir if needed
+    if args.no_save and is_main_process():
+        shutil.rmtree(out_dir)
+        print(f"[INFO] Removed output directory `{out_dir}` since --no-save is set.")
 
     if dist.is_initialized():
         dist.destroy_process_group()

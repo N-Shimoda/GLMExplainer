@@ -8,7 +8,6 @@ from typing import Iterable, Literal
 
 import torch
 import torch.distributed as dist
-import wandb
 from torch_geometric.data import Batch as PygBatch
 from torch_geometric.explain import (
     Explainer,
@@ -21,7 +20,8 @@ from tqdm import tqdm
 from transformers import AutoTokenizer, GenerationConfig
 from transformers.trainer_utils import set_seed
 
-from eval import create_pyg_batch
+import wandb
+from eval import MAX_NEW_TOKENS, create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 from src.explanation.args import check_non_negative_int, validate_args
@@ -39,7 +39,6 @@ from src.metrics import comp_accuracy
 from src.utils import visualize_motif_explanation
 
 GRAPH_PDF_SUBDIR = "graphs"
-NODE_FEAT_PDF_SUBDIR = "node_feat"
 TRIAL_OVERRIDE_COLUMN = "_trial_override"
 AVERAGE_METRIC_FIELDNAMES = [
     "sample_index",
@@ -350,6 +349,7 @@ def _generate_explanation(
     output_texts = wrapper.gen_output(
         input_text=sample["prompt"], graph=pyg_batch, gen_cfg=gen_cfg, num_trials=num_gen_trials
     )
+    print(output_texts)
 
     # Update output_text to the first correct generation
     acc, _, correct_mask = comp_accuracy(output_texts, [sample["completion"]] * len(output_texts), subset)
@@ -372,7 +372,7 @@ def _generate_explanation(
         model=wrapper,
         algorithm=GNNExplainer(num_hops=wrapper.model.config.num_gnn_layers, **explainer_args),
         explanation_type="model",
-        node_mask_type="attributes",
+        node_mask_type=None,
         edge_mask_type="object",
         model_config=dict(
             mode="regression",
@@ -464,6 +464,7 @@ def explain_sample(
     )
 
     if explanation is None:
+        print("[INFO] No explanation generated; skipping metric computation and logging.")
         exp_accuracy = {"auroc": 0.0, "auprc": 0.0, "f1": 0.0}
         ans_accuracy_val = 0.0
         return False, exp_accuracy, ans_accuracy_val, None
@@ -494,9 +495,7 @@ def explain_sample(
     suffix = f"{sample['index']}_{trial_idx}" if num_trials > 1 else f"{sample['index']}"
     out_dir = os.path.dirname(log_path)
     graph_dir = os.path.join(out_dir, GRAPH_PDF_SUBDIR, f"graph_{sample['index']}")
-    node_feat_dir = os.path.join(out_dir, NODE_FEAT_PDF_SUBDIR, f"node_feat_{sample['index']}")
     os.makedirs(graph_dir, exist_ok=True)
-    os.makedirs(node_feat_dir, exist_ok=True)
 
     # Save visualizations
     graph_path = os.path.join(graph_dir, f"{suffix}.{file_type}")
@@ -510,8 +509,6 @@ def explain_sample(
         )
     else:
         explanation.visualize_graph(graph_path)
-    feature_path = os.path.join(node_feat_dir, f"node_feat_{suffix}.{file_type}")
-    explanation.visualize_feature_importance(feature_path)
 
     return metrics_logged, exp_accuracy, ans_accuracy_val, pred_edge_mask
 
@@ -584,7 +581,7 @@ def process_dataset(
     # Initialize model wrapper
     wrapper = GLMWrapper(model, tokenizer)
     gen_cfg = GenerationConfig(
-        max_new_tokens=10,
+        max_new_tokens=MAX_NEW_TOKENS[subset],
         do_sample=True,
         eos_token_id=tokenizer.eos_token_id,
         pad_token_id=tokenizer.eos_token_id,
@@ -698,7 +695,6 @@ def process_dataset(
 
 def main():
     """Compute edge importance explanations for GraphTokenLM predictions on specified dataset samples."""
-    set_seed(42)
     args, explainer_args = build_args()
     date_str = datetime.now().strftime("%m%d-%H%M")
     run_name = f"{args.subset}_{date_str}"
@@ -721,11 +717,14 @@ def main():
     model.eval()
 
     # Load dataset and apply filtering
+    lpe_dim = getattr(model.config, "lpe_dim", model.config.node_feat_dim)
+    use_degree_emb = getattr(model.config, "use_degree_emb", False)
     dataset = build_dataset(
         args.dataset,
         args.subset,
         args.split,
-        node_feat_dim=model.config.node_feat_dim,
+        lpe_dim=lpe_dim,
+        use_degree_emb=use_degree_emb,
     )
     dataset = filter_dataset(
         dataset,
@@ -735,6 +734,12 @@ def main():
         target_value=args.target_value,
         num_samples=args.num_samples,
     )
+
+    if is_rank0:
+        os.makedirs(OUT_DIR, exist_ok=True)
+        debug_dataset_path = os.path.join(OUT_DIR, "filtered_dataset.jsonl")
+        dataset.to_json(debug_dataset_path, lines=True)
+
     if len(dataset) == 0:
         if is_rank0:
             print("[INFO] No samples to explain after filtering. Exiting.")
@@ -771,7 +776,7 @@ def main():
         wandb.init(
             project="MotifQA-Explainer",
             name=run_name,
-            config={**vars(args), **explainer_args},
+            config={**vars(args), **explainer_args, "lpe_dim": lpe_dim, "use_degree_emb": use_degree_emb},
             tags=wandb_tags,
             dir=OUT_DIR,
         )

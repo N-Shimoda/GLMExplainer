@@ -1,3 +1,5 @@
+#!/bin/bash
+
 LOG_FILE="logs/explain.log"
 rm -f "$LOG_FILE"
 mkdir -p logs
@@ -30,8 +32,8 @@ run_explain_loop() {
 		--model-path outputs/"${subset}"
 		--target-pos-samples
 		--num-trials 5
-		--epochs $epochs --lr $lr
-		--edge-size $edge_size --edge-ent $edge_ent
+		--epochs "$epochs" --lr "$lr"
+		--edge-size "$edge_size" --edge-ent "$edge_ent"
 		--wandb
 	)
 	log "[INFO] Starting explanation with edge_size: $edge_size, edge_ent: $edge_ent"

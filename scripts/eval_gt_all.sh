@@ -34,9 +34,10 @@ motifqa_subsets=(
 	tree_cycle
 	tree_grid
 	ba_two_motifs
+	shortest_path
 )
 
-ckpt_indices=(-2 -1)
+ckpt_indices=(-1)
 
 run_eval_loop() {
 	local dataset="$1"
@@ -46,8 +47,8 @@ run_eval_loop() {
 	cmd=(
 		torchrun --standalone --nproc_per_node=2 eval.py
 		--dataset "${dataset}" --subset "${subset}"
-		--model-path "outputs/${subset}"
-		--num-trials 10
+		--model-path "masters/${subset}"
+		--num-trials 5
 		--model-index -1
 		--ckpt-index "${ckpt_index}"
 	)
