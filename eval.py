@@ -251,7 +251,8 @@ def collect_result(results: list[dict], res_file: str, subset: str):
     refs = [r["answer"] for r in results]
     preds = [r["preds"] for r in results]
     acc, unknowns, correct_mask = comp_accuracy(preds, refs, subset)
-    [result.update({"correct": is_correct}) for result, is_correct in zip(results, correct_mask)]
+    for result, is_correct in zip(results, correct_mask):
+        result.update({"correct": is_correct})
     print(f"[INFO] Accuracy: {acc * 100:.4f}%")
     if unknowns:
         print(f"[WARNING] {unknowns} unknown predictions found.")
