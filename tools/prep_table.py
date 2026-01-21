@@ -43,6 +43,7 @@ def _collect_by_subset(runs: list[wandb.apis.public.Run], metrics: list[str]) ->
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--metrics", choices=["auroc", "jaccard"], default="auroc")
+    parser.add_argument("--precision", type=int, default=3)
     args = parser.parse_args()
 
     # Fetch runs from Weights & Biases
@@ -58,7 +59,6 @@ def main() -> None:
     ours = [run for run in runs if run.config.get("llr_threshold", 0) > 0]
 
     # Metric configuration
-    metric_precision = 4
     match args.metrics:
         case "auroc":
             metric_keys = ["avg_auroc"]
@@ -80,8 +80,8 @@ def main() -> None:
         rows.append(
             [
                 label,
-                _format(ours_value, metric_precision),
-                _format(baseline_value, metric_precision),
+                _format(ours_value, args.precision),
+                _format(baseline_value, args.precision),
             ]
         )
 
