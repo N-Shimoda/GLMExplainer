@@ -86,11 +86,12 @@ def plot_figure(df: pd.DataFrame, run_type: Literal["baseline", "ours"], filenam
 
     plt.figure()
     plt.plot(d[x_col], d[y1_col], label="AUROC", color="blue")
-    plt.plot(d[x_col], d[y2_col], label="Jaccard", color="orange")
+    plt.plot(d[x_col], d[y2_col], label="Jaccard Index", color="orange")
 
-    plt.xlabel("edge size")
+    plt.xscale("log")
+    plt.xlabel(r"$\lambda_\mathrm{size}$")
     plt.ylabel("AUROC")
-    plt.title("Edge Size vs AUROC")
+    plt.legend()
 
     plt.tight_layout()
     plt.savefig(filename)
@@ -102,13 +103,11 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
 
     baselines, ours = get_runs()
-    print(f"Loaded {len(baselines)} baselines and {len(ours)} ours runs.")
-
     baselines_dict = {
         subset: [run for run in baselines if run.config.get("subset") == subset] for subset in MOTIFQA_SUBSETS
     }
     ours_dict = {subset: [run for run in ours if run.config.get("subset") == subset] for subset in MOTIFQA_SUBSETS}
-    print(baselines_dict, ours_dict)
+    print(f"Loaded {len(baselines)} baselines and {len(ours)} ours runs.")
 
     for subset in MOTIFQA_SUBSETS:
         print(f"Subset: {subset}")
