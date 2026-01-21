@@ -717,8 +717,8 @@ def main():
     model.eval()
 
     # Load dataset and apply filtering
-    lpe_dim = model.config.lpe_dim if "lpe_dim" in model.config else model.config.node_feat_dim
-    use_degree_emb = model.config.use_degree_emb if "use_degree_emb" in model.config else False
+    lpe_dim = getattr(model.config, "lpe_dim", model.config.node_feat_dim)
+    use_degree_emb = getattr(model.config, "use_degree_emb", False)
     dataset = build_dataset(
         args.dataset,
         args.subset,
