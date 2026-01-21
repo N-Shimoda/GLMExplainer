@@ -45,20 +45,7 @@ def main() -> None:
     parser.add_argument("--metrics", choices=["auroc", "jaccard"], default="auroc")
     args = parser.parse_args()
 
-    metric_precision = 4
-
-    match args.metrics:
-        case "auroc":
-            metric_keys = ["avg_auroc"]
-            header = "| Subset | Ours: AUROC | Baseline: AUROC |"
-            separator = "| --- | --- | --- |"
-        case "jaccard":
-            metric_keys = ["edge_mask_jaccard"]
-            header = "| Subset | Ours: Jaccard | Baseline: Jaccard |"
-            separator = "| --- | --- | --- |"
-
-    rows = [header, separator]
-
+    # Fetch runs from Weights & Biases
     api = wandb.Api()
     runs = api.runs(
         "naos-ku/MotifQA-Explainer",
@@ -67,10 +54,21 @@ def main() -> None:
             "tags": {"$in": ["master"]},
         },
     )
-
     baselines = [run for run in runs if run.config.get("llr_threshold") == 0]
     ours = [run for run in runs if run.config.get("llr_threshold", 0) > 0]
 
+    # Metric configuration
+    metric_precision = 4
+    match args.metrics:
+        case "auroc":
+            metric_keys = ["avg_auroc"]
+        case "jaccard":
+            metric_keys = ["edge_mask_jaccard"]
+
+    header_cells = ["Subset", "Ours", "Baseline"]
+    rows: list[list[str]] = []
+
+    # Prepare table data
     baseline_metrics = _collect_by_subset(baselines, metric_keys)
     ours_metrics = _collect_by_subset(ours, metric_keys)
 
@@ -80,20 +78,30 @@ def main() -> None:
         ours_value = ours_row.get(metric_keys[0])
         baseline_value = baseline_row.get(metric_keys[0])
         rows.append(
-            "| "
-            + " | ".join(
-                [
-                    label,
-                    _format(ours_value, metric_precision),
-                    _format(baseline_value, metric_precision),
-                ]
-            )
-            + " |"
+            [
+                label,
+                _format(ours_value, metric_precision),
+                _format(baseline_value, metric_precision),
+            ]
         )
 
-    print(f"## Comparison of {args.metrics.upper()} between Ours and Baseline\n")
+    # Calculate column widths
+    col_widths = [
+        max(len(cell), max((len(row[idx]) for row in rows), default=0)) for idx, cell in enumerate(header_cells)
+    ]
+
+    def _format_row(cells: list[str]) -> str:
+        return "| " + " | ".join(cell.ljust(col_widths[idx]) for idx, cell in enumerate(cells)) + " |"
+
+    separator = "| " + " | ".join("-" * width for width in col_widths) + " |"
+
+    # Print the markdown table
+    print(f"\n## Comparison of {args.metrics.upper()}\n")
     print("```markdown")
-    print("\n".join(rows))
+    print(_format_row(header_cells))
+    print(separator)
+    for row in rows:
+        print(_format_row(row))
     print("```")
 
 
