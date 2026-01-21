@@ -166,7 +166,7 @@ def plot_prob_comparison(
     ax_prob.set_title("Token Probability Comparison", fontsize=15)
     ax_prob.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.6)
     ax_prob.legend(fontsize=12)
-    fig.tight_layout()
+    # fig.tight_layout()
 
     # Keep text as text in SVG
     suffix = output_path.split(".")[-1].lower()
@@ -321,7 +321,9 @@ def main():
     print("Loaded model from {}".format(ckpt_path))
 
     # Prepare dataset sample
-    dataset = build_dataset("MotifQA", args.subset, "test", node_feat_dim=model.config.node_feat_dim)
+    lpe_dim = getattr(model.config, "lpe_dim", model.config.node_feat_dim)
+    use_degree_emb = getattr(model.config, "use_degree_emb", False)
+    dataset = build_dataset("MotifQA", args.subset, "test", lpe_dim=lpe_dim, use_degree_emb=use_degree_emb)
     dataset = filter_dataset(
         dataset,
         "MotifQA",

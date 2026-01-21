@@ -10,7 +10,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch_geometric.data import Batch as PygBatch
 from torch_geometric.data import Data as PygData
 from tqdm import tqdm
-from transformers import AutoTokenizer, GenerationConfig
+from transformers import AutoTokenizer, GenerationConfig, set_seed
 
 from src.ckpt import _resolve_ckpt_path
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
@@ -30,6 +30,7 @@ MAX_NEW_TOKENS = {
     "tree_cycle": 8,
     "tree_grid": 8,
     "ba_two_motifs": 12,
+    "shortest_path": 12,
 }
 EXT_MAX_NEW_TOKENS = {
     "node_count": 96,
@@ -132,12 +133,23 @@ def create_pyg_batch(
     return batch
 
 
-def build_dataset(dataset: str, subset: str, split: str, node_feat_dim: int):
+def build_dataset(
+    dataset: str,
+    subset: str,
+    split: str,
+    lpe_dim: int,
+    use_degree_emb: bool = False,
+):
     match dataset:
         case "GraphQA":
             test_raw = load_dataset("baharef/GraphQA", subset, split=f"zero_shot_{split}")
             test_ds = test_raw.map(
-                lambda x: add_graph_column(x, k=node_feat_dim),
+                lambda x: add_graph_column(
+                    x,
+                    ds_name="GraphQA",
+                    lpe_dim=lpe_dim,
+                    use_degree_emb=use_degree_emb,
+                ),
                 desc="add_graph_column(test)",
                 remove_columns=[
                     "algorithm",
@@ -152,7 +164,12 @@ def build_dataset(dataset: str, subset: str, split: str, node_feat_dim: int):
         case "MotifQA":
             test_raw = load_dataset("naos-ku/motif-qa", subset, split=split)
             test_ds = test_raw.map(
-                lambda x: add_graph_column(x, k=node_feat_dim, ds_name="MotifQA"),
+                lambda x: add_graph_column(
+                    x,
+                    ds_name="MotifQA",
+                    lpe_dim=lpe_dim,
+                    use_degree_emb=use_degree_emb,
+                ),
                 remove_columns=["response", "nodes", "edges", "nnodes", "nedges"],
                 desc="add_graph_column(test)",
             )
@@ -230,9 +247,13 @@ def collect_result(results: list[dict], res_file: str, subset: str):
     subset : str
         The subset name used for accuracy computation.
     """
+    # Compute accuracy
     refs = [r["answer"] for r in results]
-    acc, unknowns, _ = comp_accuracy([r["preds"] for r in results], refs, subset)
-    print(f"Accuracy: {acc * 100:.4f}%")
+    preds = [r["preds"] for r in results]
+    acc, unknowns, correct_mask = comp_accuracy(preds, refs, subset)
+    for result, is_correct in zip(results, correct_mask):
+        result.update({"correct": is_correct})
+    print(f"[INFO] Accuracy: {acc * 100:.4f}%")
     if unknowns:
         print(f"[WARNING] {unknowns} unknown predictions found.")
 
@@ -248,6 +269,7 @@ def collect_result(results: list[dict], res_file: str, subset: str):
 def main():
     use_dist, rank, world_size, local_rank = _init_distributed()
     is_main = rank == 0
+    set_seed(42 + rank)
     args = build_args()
 
     # Load pre-trained model
@@ -261,7 +283,15 @@ def main():
     base_model = _unwrap_model(model)
 
     # Load dataset
-    test_ds = build_dataset(args.dataset, args.subset, args.split, base_model.config.node_feat_dim)
+    lpe_dim = getattr(base_model.config, "lpe_dim", base_model.config.node_feat_dim)
+    use_degree_emb = getattr(base_model.config, "use_degree_emb", False)
+    test_ds = build_dataset(
+        args.dataset,
+        args.subset,
+        args.split,
+        lpe_dim,
+        use_degree_emb=use_degree_emb,
+    )
     repeated_ds = concatenate_datasets([test_ds] * args.num_trials)
     if use_dist and world_size > 1:
         start, end = _shard_dataset(len(repeated_ds), rank, world_size)

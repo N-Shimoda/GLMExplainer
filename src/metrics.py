@@ -1,6 +1,11 @@
 import re
 
-from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
+from src.constants import (
+    CLASSIFICATION_SUBSETS,
+    GRAPHQA_SUBSETS,
+    MOTIFQA_SUBSETS,
+    NUMERIC_SUBSETS,
+)
 
 
 def get_class(class_labels: set[str], pred: str) -> str:
@@ -58,20 +63,9 @@ def comp_accuracy(
     if len(preds) != len(refs):
         raise ValueError("The number of predictions and references must be the same.")
 
-    numeric_subsets = {"node_count": int, "edge_count": int, "triangle_counting": int, "node_degree": int}
-    classification_subsets = {
-        "cycle_check": {"yes", "no"},
-        "reachability": {"yes", "no"},
-        "edge_existence": {"yes", "no"},
-        "ba_shapes": {"yes", "no"},
-        "tree_cycle": {"yes", "no"},
-        "tree_grid": {"yes", "no"},
-        "ba_two_motifs": {"house", "cycle"},
-    }
-
     num_unknown = 0
 
-    if subset in numeric_subsets.keys():
+    if subset in NUMERIC_SUBSETS.keys():
         # -100 and -1 indicates references and predictions with no digits, respectively
         ref_digits = [int(matches[-1]) if (matches := re.findall(r"\d+", ref)) else -100 for ref in refs]
         pred_digits = [int(matches[-1]) if (matches := re.findall(r"\d+", pred)) else -1 for pred in preds]
@@ -80,8 +74,8 @@ def comp_accuracy(
             correct_mask[idx] = ref_d == pred_d and not (ref_d < 0 or pred_d < 0)
         acc = sum(correct_mask[: len(ref_digits)]) / max(1, len(refs))
 
-    elif subset in classification_subsets:
-        class_labels = classification_subsets[subset]
+    elif subset in CLASSIFICATION_SUBSETS:
+        class_labels = CLASSIFICATION_SUBSETS[subset]
         preds_class = [get_class(class_labels, pred) for pred in preds]
         refs_class = [get_class(class_labels, ref) for ref in refs]
         correct_mask = [False] * len(preds_class)

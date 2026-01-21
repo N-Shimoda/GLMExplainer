@@ -51,14 +51,20 @@ def extract_edges_from_text(text: str) -> List[Tuple[int, int]]:
     return []
 
 
-def create_pyg_dict(nodes: List[int], edges: List[Tuple[int, int]], k: int) -> Dict[str, Any]:
+def create_pyg_dict(
+    nodes: List[int],
+    edges: List[Tuple[int, int]],
+    lpe_dim: int,
+    use_degree_emb: bool = False,
+) -> Dict[str, Any]:
     """
     Create a PyG-format graph dictionary from lists of nodes and edges.
 
-    The node features `x` are initialized using Laplacian Positional Embeddings (LPE):
+    The node features `x` are initialized using Laplacian Positional Embeddings (LPE),
+    with optional degree features appended:
     - The normalized Laplacian L = I - D^{-1/2} A D^{-1/2} is computed.
     - The eigenvectors corresponding to the smallest eigenvalue (constant vector) are excluded.
-    - The top `k` nontrivial eigenvectors are used as node features.
+    - The top `lpe_dim` nontrivial eigenvectors are used as node features.
     - Node IDs are mapped to consecutive indices to ensure consistency in `edge_index` and `x`.
 
     Parameters
@@ -67,18 +73,22 @@ def create_pyg_dict(nodes: List[int], edges: List[Tuple[int, int]], k: int) -> D
         List of node IDs extracted from text.
     edges : list of tuple of int
         List of undirected edges (u, v) extracted from text.
-    k : int
+    lpe_dim : int
         Number of Laplacian eigenvectors to use for node features.
+    use_degree_emb : bool, default=False
+        Whether to append node degree as an additional feature dimension.
 
     Returns
     -------
     dict
         PyG-format dictionary containing:
-        - 'x': Node feature matrix (LPE).
+        - 'x': Node feature matrix (LPE, optionally with degree appended).
         - 'edge_index': Edge indices (bidirectional, consecutive indices).
         - 'batch': Batch vector (all zeros).
     """
     num_nodes = len(nodes)
+    lpe_dim = max(lpe_dim, 0)
+    degree_dim = 1 if use_degree_emb else 0
 
     # Map node IDs to consecutive indices.
     node_to_idx = {nid: i for i, nid in enumerate(nodes)}
@@ -95,7 +105,7 @@ def create_pyg_dict(nodes: List[int], edges: List[Tuple[int, int]], k: int) -> D
 
     # Normalized Laplacian L = I - D^{-1/2} A D^{-1/2}.
     if num_nodes == 0:
-        x = torch.zeros((0, max(k, 0)), dtype=torch.float)
+        x = torch.zeros((0, lpe_dim + degree_dim), dtype=torch.float)
     else:
         deg = A.sum(dim=1)
         inv_sqrt_deg = torch.zeros_like(deg)
@@ -108,14 +118,20 @@ def create_pyg_dict(nodes: List[int], edges: List[Tuple[int, int]], k: int) -> D
         L = (L + L.T) / 2  # Symmetrize numerically.
 
         # Eigen decomposition (ascending); discard the trivial eigenvector.
-        if k <= 0:
-            x = torch.zeros((num_nodes, 0), dtype=torch.float)
+        if lpe_dim <= 0:
+            lpe = torch.zeros((num_nodes, 0), dtype=torch.float)
         else:
             _, evecs = torch.linalg.eigh(L)
-            nontrivial = min(k, max(num_nodes - 1, 0))
-            x = torch.zeros((num_nodes, k), dtype=torch.float)
+            nontrivial = min(lpe_dim, max(num_nodes - 1, 0))
+            lpe = torch.zeros((num_nodes, lpe_dim), dtype=torch.float)
             if nontrivial > 0:
-                x[:, :nontrivial] = evecs[:, 1 : 1 + nontrivial]
+                lpe[:, :nontrivial] = evecs[:, 1 : 1 + nontrivial]
+
+        if use_degree_emb:
+            degree_feat = deg.unsqueeze(1)
+            x = torch.cat([lpe, degree_feat], dim=1)
+        else:
+            x = lpe
 
     # Build bidirectional edge_index using consecutive indices.
     source_nodes: List[int] = []
@@ -137,7 +153,12 @@ def create_pyg_dict(nodes: List[int], edges: List[Tuple[int, int]], k: int) -> D
     }
 
 
-def add_graph_column(example, k: int = 4, ds_name: Literal["GraphQA", "MotifQA"] = "GraphQA") -> Dict[str, Any]:
+def add_graph_column(
+    example,
+    ds_name: Literal["GraphQA", "MotifQA"],
+    lpe_dim: int = 4,
+    use_degree_emb: bool = False,
+) -> Dict[str, Any]:
     """Enrich an example with graph metadata parsed from the question.
 
     Parameters
@@ -145,11 +166,13 @@ def add_graph_column(example, k: int = 4, ds_name: Literal["GraphQA", "MotifQA"]
     example : Mapping[str, Any]
         Input example containing at least ``question``, ``task_description``,
         and ``answer`` fields.
-    k : int, default=4
+    ds_name : Literal['GraphQA', 'MotifQA']
+        Type of dataset to process. Both 'GraphQA' and 'MotifQA' are supported.
+    lpe_dim : int, default=4
         Number of Laplacian positional embedding dimensions to include in the
         generated graph features.
-    ds_name : {'GraphQA', 'MotifQA'}, default='GraphQA'
-        Type of dataset to process. Both 'GraphQA' and 'MotifQA' are supported.
+    use_degree_emb : bool, default=False
+        Whether to append node degree as an additional feature dimension.
 
     Returns
     -------
@@ -163,11 +186,21 @@ def add_graph_column(example, k: int = 4, ds_name: Literal["GraphQA", "MotifQA"]
             edges = extract_edges_from_text(text)
             example["prompt"] = example["task_description"]
             example["completion"] = example["answer"].strip()
-            example["graph"] = create_pyg_dict(nodes, edges, k=k)  # k: dimension of LPE
+            example["graph"] = create_pyg_dict(
+                nodes,
+                edges,
+                lpe_dim=lpe_dim,
+                use_degree_emb=use_degree_emb,
+            )
         case "MotifQA":
             example["prompt"] = f"Q: {example['prompt']}\nA:"
             example["completion"] = example["response"]
-            example["graph"] = create_pyg_dict(example["nodes"], example["edges"], k=k)
+            example["graph"] = create_pyg_dict(
+                example["nodes"],
+                example["edges"],
+                lpe_dim=lpe_dim,
+                use_degree_emb=use_degree_emb,
+            )
 
     return example
 
@@ -209,7 +242,7 @@ if __name__ == "__main__":
     edges = extract_edges_from_text(text1)
 
     if nodes:
-        pyg_graph = create_pyg_dict(nodes, edges, k=4)
+        pyg_graph = create_pyg_dict(nodes, edges, lpe_dim=4)
         print(f"✅ Extracted nodes: {nodes}")
         print(f"✅ Extracted edges: {edges}")
         print("\n✅ Generated PyG dictionary:")

@@ -1,3 +1,5 @@
+#!/bin/bash
+
 torchrun --nproc_per_node 2 train_multitask.py \
 	--base-model "Qwen/Qwen3-4B-Base" \
 	--gnn-type "GCN" \
