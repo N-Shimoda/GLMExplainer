@@ -21,6 +21,9 @@ fine-tuning/models/
 explanations/
 case_study/
 
+# Figures
+plots/
+
 # logs
 logs/
 wandb/
