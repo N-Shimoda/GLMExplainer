@@ -35,20 +35,16 @@ def get_runs():
     baselines = [run for run in runs if run.config.get("llr_threshold") == 0]
     ours = [run for run in runs if run.config.get("llr_threshold", 0) > 0]
 
-    print(ours[0].config)
-
     return baselines, ours
 
 
-def create_log_df(runs):
-    df = pd.DataFrame(
-        {
-            "edge size": [],
-            "AUROC": [],
-            "Jaccard": [],
-        }
-    )
-    for run in runs:
+def create_log_df(runs, subset: str) -> pd.DataFrame:
+    # Filter runs by subset
+    subset_runs = [run for run in runs if run.config.get("subset") == subset]
+
+    # Create dataframe
+    df = pd.DataFrame({"edge size": [], "AUROC": [], "Jaccard": []})
+    for run in subset_runs:
         df = pd.concat(
             [
                 df,
@@ -65,32 +61,54 @@ def create_log_df(runs):
     return df
 
 
-def plot_figure(df: pd.DataFrame, run_type: Literal["baseline", "ours"], filename: str):
+def plot_figure(ours_df: pd.DataFrame, baseline_df: pd.DataFrame, metric: Literal["auroc", "jaccard"], filename: str):
+    """Plot baseline vs. ours for a selected metric over edge sizes."""
+
+    metric_col_map = {
+        "auroc": "AUROC",
+        "jaccard": "Jaccard",
+    }
+
+    if metric not in metric_col_map:
+        raise ValueError(f"Unsupported metric '{metric}'. Expected one of {list(metric_col_map)}")
+
     x_col = "edge size"
-    y1_col = "AUROC"
-    y2_col = "Jaccard"
+    y_col = metric_col_map[metric]
 
-    # 必要な列チェック
-    for col in (x_col, y1_col, y2_col):
-        if col not in df.columns:
-            raise ValueError(f"'{col}' 列が見つかりません。現状の列: {list(df.columns)}")
+    def _prepare(df: pd.DataFrame) -> pd.DataFrame:
+        if x_col not in df.columns or y_col not in df.columns:
+            raise ValueError(
+                f"Missing required columns in dataframe. Needed: '{x_col}', '{y_col}'. Available: {list(df.columns)}"
+            )
+        d = df[[x_col, y_col]].copy()
+        d[x_col] = pd.to_numeric(d[x_col], errors="coerce")
+        d[y_col] = pd.to_numeric(d[y_col], errors="coerce")
+        return d.dropna(subset=[x_col, y_col]).sort_values(by=x_col)
 
-    # 数値化（文字列でもOKにする）
-    d = df[[x_col, y1_col, y2_col]].copy()
-    d[x_col] = pd.to_numeric(d[x_col], errors="coerce")
-    d[y1_col] = pd.to_numeric(d[y1_col], errors="coerce")
-    d[y2_col] = pd.to_numeric(d[y2_col], errors="coerce")
-    d = d.dropna(subset=[x_col, y1_col, y2_col])
-
-    d = d.sort_values(by=x_col)
+    ours_clean = _prepare(ours_df)
+    baseline_clean = _prepare(baseline_df)
 
     plt.figure()
-    plt.plot(d[x_col], d[y1_col], label="AUROC", color="blue")
-    plt.plot(d[x_col], d[y2_col], label="Jaccard Index", color="orange")
+    plt.plot(
+        ours_clean[x_col],
+        ours_clean[y_col],
+        label="w/ token selection",
+        color="C0",
+        linestyle="-",
+        marker="o",
+    )
+    plt.plot(
+        baseline_clean[x_col],
+        baseline_clean[y_col],
+        label="w/o token selection",
+        color="gray",
+        linestyle="--",
+        marker="o",
+    )
 
     plt.xscale("log")
     plt.xlabel(r"$\lambda_\mathrm{size}$")
-    plt.ylabel("AUROC")
+    plt.ylabel(y_col)
     plt.legend()
 
     plt.tight_layout()
@@ -99,30 +117,23 @@ def plot_figure(df: pd.DataFrame, run_type: Literal["baseline", "ours"], filenam
 
 def main():
     args = build_args()
+    metrics = ["auroc", "jaccard"]
 
-    os.makedirs(args.output_dir, exist_ok=True)
+    # Create output directory
+    for metric in metrics:
+        dir_path = os.path.join(args.output_dir, metric)
+        os.makedirs(dir_path, exist_ok=True)
 
     baselines, ours = get_runs()
-    baselines_dict = {
-        subset: [run for run in baselines if run.config.get("subset") == subset] for subset in MOTIFQA_SUBSETS
-    }
-    ours_dict = {subset: [run for run in ours if run.config.get("subset") == subset] for subset in MOTIFQA_SUBSETS}
     print(f"Loaded {len(baselines)} baselines and {len(ours)} ours runs.")
 
     for subset in MOTIFQA_SUBSETS:
         print(f"Subset: {subset}")
-        baseline_df = create_log_df(baselines_dict[subset])
-        ours_df = create_log_df(ours_dict[subset])
-        plot_figure(
-            baseline_df,
-            run_type="baseline",
-            filename=os.path.join(args.output_dir, f"{subset}_baseline.{args.output_format}"),
-        )
-        plot_figure(
-            ours_df,
-            run_type="ours",
-            filename=os.path.join(args.output_dir, f"{subset}_ours.{args.output_format}"),
-        )
+        baseline_df = create_log_df(baselines, subset)
+        ours_df = create_log_df(ours, subset)
+        for metric in metrics:
+            filename = os.path.join(args.output_dir, metric, f"{subset}.{args.output_format}")
+            plot_figure(ours_df, baseline_df, metric=metric, filename=filename)
 
 
 if __name__ == "__main__":
