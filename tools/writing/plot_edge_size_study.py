@@ -1,7 +1,7 @@
 import argparse
 import os
 import sys
-from typing import Literal
+from typing import Literal, Optional
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -16,6 +16,9 @@ from src.constants import MOTIFQA_SUBSETS  # noqa: E402
 
 def build_args():
     p = argparse.ArgumentParser()
+    p.add_argument(
+        "--set-y-lim", action="store_true", help="Set y-axis limits based on min/max values across all runs."
+    )
     p.add_argument("--output-dir", type=str, default="plots/edge_size_study")
     p.add_argument("--output-format", type=str, default="pdf", choices=["pdf", "svg"])
     return p.parse_args()
@@ -61,7 +64,13 @@ def create_log_df(runs, subset: str) -> pd.DataFrame:
     return df
 
 
-def plot_figure(ours_df: pd.DataFrame, baseline_df: pd.DataFrame, metric: Literal["auroc", "jaccard"], filename: str):
+def plot_figure(
+    ours_df: pd.DataFrame,
+    baseline_df: pd.DataFrame,
+    y_lim: Optional[tuple[float, float]],
+    metric: Literal["auroc", "jaccard"],
+    filename: str,
+):
     """Plot baseline vs. ours for a selected metric over edge sizes."""
     metric_col_map = {
         "auroc": "AUROC",
@@ -108,6 +117,7 @@ def plot_figure(ours_df: pd.DataFrame, baseline_df: pd.DataFrame, metric: Litera
     plt.xscale("log")
     plt.xlabel(r"$\lambda_\mathrm{size}$")
     plt.ylabel(y_col)
+    plt.ylim(y_lim)
     plt.legend()
 
     plt.tight_layout()
@@ -116,23 +126,45 @@ def plot_figure(ours_df: pd.DataFrame, baseline_df: pd.DataFrame, metric: Litera
 
 def main():
     args = build_args()
-    metrics = ["auroc", "jaccard"]
+    metric_mapping = {"auroc": "avg_auroc", "jaccard": "edge_mask_jaccard"}
+    metrics = list(metric_mapping.keys())
 
     # Create output directory
     for metric in metrics:
         dir_path = os.path.join(args.output_dir, metric)
         os.makedirs(dir_path, exist_ok=True)
 
+    # Load runs from wandb
     baselines, ours = get_runs()
     print(f"Loaded {len(baselines)} baselines and {len(ours)} ours runs.")
 
+    # Determine y-limits for each metric
+    if args.set_y_lim:
+        y_lim_dict = {
+            metric: (
+                min([run.summary[wandb_metric] for run in baselines + ours]),
+                max([run.summary[wandb_metric] for run in baselines + ours]) + 0.0005,
+            )
+            for metric, wandb_metric in metric_mapping.items()
+        }
+        print(y_lim_dict)
+    else:
+        y_lim_dict = None
+
+    # Create plots
     for subset in MOTIFQA_SUBSETS:
         print(f"Subset: {subset}")
         baseline_df = create_log_df(baselines, subset)
         ours_df = create_log_df(ours, subset)
         for metric in metrics:
             filename = os.path.join(args.output_dir, metric, f"{subset}.{args.output_format}")
-            plot_figure(ours_df, baseline_df, metric=metric, filename=filename)
+            plot_figure(
+                ours_df,
+                baseline_df,
+                y_lim=y_lim_dict[metric] if y_lim_dict else None,
+                metric=metric,
+                filename=filename,
+            )
 
 
 if __name__ == "__main__":
