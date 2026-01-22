@@ -117,7 +117,11 @@ class GraphViewerPage(AppPage):
 
         # Graph index selection
         with st.sidebar:
-            self.graph_index = st.selectbox("Graph", graph_indices, index=graph_indices.index(self.graph_index))
+            self.graph_index = st.selectbox(
+                "Graph",
+                graph_indices,
+                index=graph_indices.index(self.graph_index) if self.graph_index in graph_indices else 0,
+            )
 
         left_graph_path = self.subset_path / self.left_run_name / "graphs" / Path(f"graph_{self.graph_index}")
         right_graph_path = self.subset_path / self.right_run_name / "graphs" / Path(f"graph_{self.graph_index}")
@@ -177,7 +181,7 @@ class GraphViewerPage(AppPage):
         with st.sidebar:
             st.divider()
             st.markdown("### Display settings")
-            self.show_common_graphs = st.toggle("Show common graphs only", value=self.show_common_graphs)
+            self.show_common_graphs = st.toggle("Show only common graphs", value=self.show_common_graphs)
             st.session_state["show_common_graphs"] = self.show_common_graphs
 
     def create_graphs(self) -> None:
@@ -198,36 +202,28 @@ class GraphViewerPage(AppPage):
             else None
         )
 
+        # Display graphs and metrics for each run
         left_col, right_col = st.columns(2)
-        both_have_graph = self.left_has_graph and self.right_has_graph
-
-        if self.left_has_graph and left_metrics is None:
-            with left_col:
-                st.warning("Metrics unavailable for the selected graph.")
-        if self.right_has_graph and right_metrics is None:
-            with right_col:
-                st.warning("Metrics unavailable for the selected graph.")
-
-        if both_have_graph and left_metrics is not None and right_metrics is not None:
-            with left_col:
-                self.display_graph(left_pdf, left_metrics, left_metrics, delta_color="off")
-            with right_col:
-                self.display_graph(right_pdf, right_metrics, left_metrics)
-            return
-
-        if self.left_has_graph and left_metrics is not None:
-            with left_col:
-                self.display_graph(left_pdf, left_metrics, left_metrics, delta_color="off")
-        elif not self.left_has_graph:
-            with left_col:
-                st.info("Graph is not available in the left run.")
-
-        if self.right_has_graph and right_metrics is not None:
-            with right_col:
-                self.display_graph(right_pdf, right_metrics, right_metrics, delta_color="off")
-        elif not self.right_has_graph:
-            with right_col:
-                st.info("Graph is not available in the right run.")
+        with left_col:
+            if self.left_has_graph:
+                if left_metrics is not None:
+                    self.display_graph(left_pdf, left_metrics, left_metrics, delta_color="off")
+                    expander = st.expander("File path", expanded=False)
+                    expander.code(left_pdf, language="bash")
+                else:
+                    st.warning("Metrics unavailable for the selected graph.")
+            else:
+                st.warning("Graph is not available in the left run.")
+        with right_col:
+            if self.right_has_graph:
+                if right_metrics is not None:
+                    self.display_graph(right_pdf, right_metrics, left_metrics or right_metrics)
+                    expander = st.expander("File path", expanded=False)
+                    expander.code(right_pdf, language="bash")
+                else:
+                    st.warning("Metrics unavailable for the selected graph.")
+            else:
+                st.warning("Graph is not available in the right run.")
 
     def display_graph(
         self,
