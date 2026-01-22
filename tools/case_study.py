@@ -53,7 +53,10 @@ def parse_args():
         help="Type of baseline graph to use (default: complete).",
     )
     p.add_argument(
-        "--output-dir", type=str, default="case_study", help="Directory to save output plots (default: case_study)."
+        "--output-dir",
+        type=str,
+        default="plots/llr_study",
+        help="Directory to save output plots (default: plots/llr_study).",
     )
     p.add_argument(
         "--output-format",
