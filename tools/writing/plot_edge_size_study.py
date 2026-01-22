@@ -63,12 +63,10 @@ def create_log_df(runs, subset: str) -> pd.DataFrame:
 
 def plot_figure(ours_df: pd.DataFrame, baseline_df: pd.DataFrame, metric: Literal["auroc", "jaccard"], filename: str):
     """Plot baseline vs. ours for a selected metric over edge sizes."""
-
     metric_col_map = {
         "auroc": "AUROC",
         "jaccard": "Jaccard",
     }
-
     if metric not in metric_col_map:
         raise ValueError(f"Unsupported metric '{metric}'. Expected one of {list(metric_col_map)}")
 
@@ -93,7 +91,7 @@ def plot_figure(ours_df: pd.DataFrame, baseline_df: pd.DataFrame, metric: Litera
         ours_clean[x_col],
         ours_clean[y_col],
         label="w/ token selection",
-        color="C0",
+        color="orange" if metric == "auroc" else "cyan",
         linestyle="-",
         marker="o",
     )
@@ -105,6 +103,7 @@ def plot_figure(ours_df: pd.DataFrame, baseline_df: pd.DataFrame, metric: Litera
         linestyle="--",
         marker="o",
     )
+    plt.grid(visible=True, which="both", linestyle="--", linewidth=0.5)
 
     plt.xscale("log")
     plt.xlabel(r"$\lambda_\mathrm{size}$")
