@@ -4,7 +4,7 @@ set -euo pipefail
 # Move to project root
 cd /home/naoki/github/GraphToken
 
-edge_sizes=(1e-6 3e-6 1e-5 3e-5 300 1000)
+edge_sizes=(3e3 1e4 3e4 1e5)
 subset=tree_grid
 
 for edge_size in "${edge_sizes[@]}"; do
