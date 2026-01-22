@@ -100,7 +100,7 @@ def plot_figure(
         ours_clean[x_col],
         ours_clean[y_col],
         label="w/ token selection",
-        color="C0" if metric == "auroc" else "C1",
+        color="C1" if metric == "auroc" else "C0",
         linestyle="-",
         marker="o",
     )
