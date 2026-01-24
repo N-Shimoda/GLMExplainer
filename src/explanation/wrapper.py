@@ -275,7 +275,7 @@ class GLMWrapper(torch.nn.Module):
         # Prevent empty relevant_idx
         if not self.relevant_idx:
             print(
-                "\n[WARNING] No relevant tokens found based on the given LLR threshold. "
+                "[WARN] No relevant tokens found based on the given LLR threshold. "
                 "All tokens will be considered relevant."
             )
             self.relevant_idx = list(range(len(org_token_probs)))
