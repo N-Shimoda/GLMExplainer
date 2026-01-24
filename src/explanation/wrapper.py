@@ -89,7 +89,9 @@ class GLMWrapper(torch.nn.Module):
         token_log_probs = shift_log_probs.gather(dim=-1, index=shift_token_ids.unsqueeze(-1)).squeeze(-1)
 
         gen_len = generated_ids.size(1)
-        output_log_probs = token_log_probs[:, -gen_len:-1] if gen_len > 0 else token_log_probs[:, :0]
+        if gen_len == 0:
+            raise ValueError("Generated sequence is empty; expected at least 1 token.")
+        output_log_probs = token_log_probs[:, -gen_len:]
 
         if output_log_probs.numel() == 0:
             cumulative_log_likelihood = torch.zeros((), device=self.model.device)
