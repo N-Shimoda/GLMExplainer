@@ -12,7 +12,7 @@ for i in "${!subsets[@]}"; do
 	edge_size="${edge_sizes[$i]}"
 	thresh="${llr_thresholds[$i]}"
 
-	conda run -n graphtoken --no-capture-output \
+	/home/naoki/anaconda3/condabin/conda run -n graphtoken --no-capture-output \
 		torchrun --nproc_per_node=2 explain.py \
 		--dataset MotifQA --subset "$subset" \
 		--model-path "masters/$subset" \
