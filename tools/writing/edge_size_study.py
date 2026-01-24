@@ -5,7 +5,6 @@ from typing import Literal, Optional
 
 import matplotlib.pyplot as plt
 import pandas as pd
-
 import wandb
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -31,7 +30,7 @@ def get_runs():
     runs = api.runs(
         "naos-ku/MotifQA-Explainer",
         filters={
-            "tags": {"$in": ["master"]},
+            "tags": {"$all": ["master", "small"]},
             "state": "finished",
             "config.edge_size": {"$exists": True},
         },
