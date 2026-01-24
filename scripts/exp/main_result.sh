@@ -16,7 +16,7 @@ for i in "${!subsets[@]}"; do
 		torchrun --nproc_per_node=2 explain.py \
 		--dataset MotifQA --subset "$subset" \
 		--model-path "masters/$subset" \
-		--target-pos-samples --num-trials 10 \
+		--target-pos-samples --num-trials 5 \
 		--llr-threshold "$thresh" \
 		--epochs 200 --lr 0.3 \
 		--edge-size "$edge_size" --edge-ent 1.0 \
