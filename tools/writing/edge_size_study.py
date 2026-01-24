@@ -5,6 +5,7 @@ from typing import Literal, Optional
 
 import matplotlib.pyplot as plt
 import pandas as pd
+
 import wandb
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -39,6 +40,46 @@ def get_runs():
     ours = [run for run in runs if run.config.get("llr_threshold", 0) > 0]
 
     return baselines, ours
+
+
+def get_best_run(
+    runs: list[wandb.apis.public.Run], metric: Literal["avg_auroc", "edge_mask_jaccard"]
+) -> wandb.apis.public.Run:
+    """Get the run with the best value for the specified metric."""
+    best_run = max(runs, key=lambda run: run.summary.get(metric, float("-inf")))
+    return best_run
+
+
+def report_best_runs(runs, metric: Literal["avg_auroc", "edge_mask_jaccard"] = "avg_auroc"):
+    def _format_metric(value):
+        if value is None:
+            return "n/a"
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return f"{value:.4f}"
+        return str(value)
+
+    rows = []
+    for subset in MOTIFQA_SUBSETS:
+        subset_runs = [run for run in runs if run.config.get("subset") == subset]
+        if not subset_runs:
+            continue
+        best_run = get_best_run(subset_runs, metric)
+        rows.append(
+            {
+                "subset": subset,
+                "metric": metric,
+                "value": _format_metric(best_run.summary.get(metric)),
+                "run": best_run.name or best_run.id,
+                "edge_size": best_run.config.get("edge_size", "n/a"),
+            }
+        )
+
+    if not rows:
+        print("No runs found for the specified subsets.")
+        return
+
+    df = pd.DataFrame(rows)
+    print(df.to_string(index=False))
 
 
 def create_log_df(runs, subset: str) -> pd.DataFrame:
@@ -138,6 +179,11 @@ def main():
     baselines, ours = get_runs()
     print(f"Loaded {len(baselines)} baselines and {len(ours)} ours runs.")
 
+    # Report best runs
+    for run_type, runs in [("Baselines", baselines), ("Ours", ours)]:
+        print(f"\n{run_type} best runs:")
+        report_best_runs(runs, metric="avg_auroc")
+
     # Determine y-limits for each metric
     if args.set_y_lim:
         y_lim_dict = {
@@ -153,7 +199,6 @@ def main():
 
     # Create plots
     for subset in MOTIFQA_SUBSETS:
-        print(f"Subset: {subset}")
         baseline_df = create_log_df(baselines, subset)
         ours_df = create_log_df(ours, subset)
         for metric in metrics:
@@ -165,6 +210,7 @@ def main():
                 metric=metric,
                 filename=filename,
             )
+    print(f"\nPlots saved to {args.output_dir}")
 
 
 if __name__ == "__main__":
