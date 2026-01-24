@@ -1,5 +1,6 @@
 import argparse
 import csv
+import json
 import os
 import time
 from collections import defaultdict
@@ -39,6 +40,8 @@ from src.metrics import comp_accuracy
 from src.utils import visualize_motif_explanation
 
 GRAPH_PDF_SUBDIR = "graphs"
+OUTPUT_TEXTS_FILENAME = "output_texts.jsonl"
+DATASET_FILENAME = "filtered_dataset.jsonl"
 TRIAL_OVERRIDE_COLUMN = "_trial_override"
 AVERAGE_METRIC_FIELDNAMES = [
     "sample_index",
@@ -309,6 +312,7 @@ def _generate_explanation(
     pyg_batch: PygBatch,
     subset: str,
     gen_cfg: GenerationConfig,
+    output_texts_path: str,
     explainer_args: dict[str, float | int],
     llr_threshold: float,
     baseline_graph: str,
@@ -328,6 +332,8 @@ def _generate_explanation(
         The dataset subset name (e.g., "ba_shapes").
     gen_cfg : GenerationConfig
         Configuration for text generation.
+    output_texts_path : str
+        File path under which generated output text logs are appended.
     explainer_args : dict[str, float | int]
         Keyword arguments forwarded to :class:`GNNExplainer` controlling its optimization.
     llr_threshold : Optional[float]
@@ -349,7 +355,12 @@ def _generate_explanation(
     output_texts = wrapper.gen_output(
         input_text=sample["prompt"], graph=pyg_batch, gen_cfg=gen_cfg, num_trials=num_gen_trials
     )
-    print(output_texts)
+    record = {
+        "sample_index": sample.get("index"),
+        "output_texts": output_texts,
+    }
+    with open(output_texts_path, "a", encoding="utf-8") as output_file:
+        output_file.write(json.dumps(record, ensure_ascii=True) + "\n")
 
     # Update output_text to the first correct generation
     acc, _, correct_mask = comp_accuracy(output_texts, [sample["completion"]] * len(output_texts), subset)
@@ -457,6 +468,7 @@ def explain_sample(
         pyg_batch,
         subset,
         gen_cfg,
+        output_texts_path=os.path.join(os.path.dirname(log_path), OUTPUT_TEXTS_FILENAME),
         explainer_args=explainer_args,
         llr_threshold=llr_threshold,
         baseline_graph=baseline_graph,
@@ -699,6 +711,7 @@ def main():
     date_str = datetime.now().strftime("%m%d-%H%M")
     run_name = f"{args.subset}_{date_str}"
     OUT_DIR = os.path.join(args.outdir_base, args.subset, date_str)
+    os.makedirs(OUT_DIR, exist_ok=True)
 
     # Setup DDP, random seed, and device
     rank, world_size, local_rank, is_distributed = _init_distributed_if_needed()
@@ -736,8 +749,7 @@ def main():
     )
 
     if is_rank0:
-        os.makedirs(OUT_DIR, exist_ok=True)
-        debug_dataset_path = os.path.join(OUT_DIR, "filtered_dataset.jsonl")
+        debug_dataset_path = os.path.join(OUT_DIR, DATASET_FILENAME)
         dataset.to_json(debug_dataset_path, lines=True)
 
     if len(dataset) == 0:
