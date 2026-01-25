@@ -19,9 +19,42 @@ def build_args():
     p.add_argument(
         "--set-y-lim", action="store_true", help="Set y-axis limits based on min/max values across all runs."
     )
+    p.add_argument(
+        "--test",
+        action="store_true",
+        help="Run a synthetic test of plot_figure() and save directly under plots/edge_size_study.",
+    )
     p.add_argument("--output-dir", type=str, default="plots/edge_size_study")
     p.add_argument("--output-format", type=str, default="pdf", choices=["pdf", "svg"])
     return p.parse_args()
+
+
+def run_test(args: argparse.Namespace):
+    """Run a synthetic test of plot_figure()"""
+    os.makedirs(args.output_dir, exist_ok=True)
+    synthetic_ours = pd.DataFrame(
+        {
+            "edge size": [1, 2, 4, 8, 16],
+            "AUROC": [0.61, 0.65, 0.7, 0.73, 0.76],
+            "Jaccard": [0.2, 0.24, 0.27, 0.29, 0.31],
+        }
+    )
+    synthetic_baseline = pd.DataFrame(
+        {
+            "edge size": [1, 2, 4, 8, 16],
+            "AUROC": [0.55, 0.58, 0.61, 0.63, 0.64],
+            "Jaccard": [0.16, 0.18, 0.2, 0.21, 0.22],
+        }
+    )
+    filename = os.path.join(args.output_dir, f"edge_size_study_test.{args.output_format}")
+    plot_figure(
+        synthetic_ours,
+        synthetic_baseline,
+        y_lim=None,
+        metric="auroc",
+        filename=filename,
+    )
+    print(f"Test plot saved to {filename}")
 
 
 def get_runs():
@@ -168,6 +201,10 @@ def main():
     args = build_args()
     metric_mapping = {"auroc": "avg_auroc", "jaccard": "edge_mask_jaccard"}
     metrics = list(metric_mapping.keys())
+
+    if args.test:
+        run_test(args)
+        return
 
     # Create output directory
     for metric in metrics:
