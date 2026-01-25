@@ -163,12 +163,12 @@ def plot_prob_comparison(
     ax_prob.plot(xs, org_probs, marker="o", linewidth=1.5, label="Original graph")
     ax_prob.plot(xs, base_probs, marker="x", linewidth=1.5, label=f"{baseline_graph.capitalize()} graph")
     ax_prob.set_xticks(xs)
-    ax_prob.set_xticklabels(tokens, rotation=40, ha="right", fontsize=14)
-    ax_prob.tick_params(axis="y", labelsize=12)
+    ax_prob.set_xticklabels(tokens, rotation=40, ha="right", fontsize=15)
+    ax_prob.tick_params(axis="y", labelsize=14)
     ax_prob.set_ylabel("Probability", fontsize=14)
     ax_prob.set_title("Token Probability Comparison", fontsize=15)
     ax_prob.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.6)
-    ax_prob.legend(fontsize=12)
+    ax_prob.legend(fontsize=14)
 
     # Keep text as text in SVG
     suffix = output_path.split(".")[-1].lower()
