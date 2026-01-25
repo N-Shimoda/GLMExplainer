@@ -51,8 +51,7 @@ def main() -> None:
     runs = api.runs(
         "naos-ku/MotifQA-Explainer",
         filters={
-            "config.edge_size": 10,
-            "tags": {"$in": ["master"]},
+            "tags": {"$all": ["master", "full"]},
         },
     )
     baselines = [run for run in runs if run.config.get("llr_threshold") == 0]
