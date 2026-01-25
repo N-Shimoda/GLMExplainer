@@ -46,7 +46,7 @@ def run_test(args: argparse.Namespace):
             "Jaccard": [0.16, 0.18, 0.2, 0.21, 0.22],
         }
     )
-    filename = os.path.join(args.output_dir, f"edge_size_study_test.{args.output_format}")
+    filename = os.path.join(args.output_dir, f"auroc_test.{args.output_format}")
     plot_figure(
         synthetic_ours,
         synthetic_baseline,
@@ -57,7 +57,7 @@ def run_test(args: argparse.Namespace):
     print(f"Test plot saved to {filename}")
 
 
-def get_runs():
+def get_wandb_runs():
     """Load wandb runs from MotifQA-Explainer project."""
     api = wandb.Api()
     runs = api.runs(
@@ -188,10 +188,11 @@ def plot_figure(
     plt.grid(visible=True, which="both", linestyle="--", linewidth=0.5)
 
     plt.xscale("log")
-    plt.xlabel(r"$\lambda_\mathrm{size}$")
-    plt.ylabel(y_col)
+    plt.xlabel(r"$\lambda_\mathrm{size}$", fontsize=16)
+    plt.ylabel(y_col, fontsize=14)
+    plt.tick_params(axis="both", which="major", labelsize=12)
     plt.ylim(y_lim)
-    plt.legend()
+    plt.legend(fontsize=14)
 
     plt.tight_layout()
     plt.savefig(filename)
@@ -212,7 +213,7 @@ def main():
         os.makedirs(dir_path, exist_ok=True)
 
     # Load runs from wandb
-    baselines, ours = get_runs()
+    baselines, ours = get_wandb_runs()
     print(f"Loaded {len(baselines)} baselines and {len(ours)} ours runs.")
 
     # Report best runs
