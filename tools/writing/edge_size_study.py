@@ -12,6 +12,7 @@ if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 from src.constants import MOTIFQA_SUBSETS  # noqa: E402
+from tools.writing.wandb_cache import load_cached_runs, save_cached_runs  # noqa: E402
 
 
 def build_args():
@@ -23,6 +24,11 @@ def build_args():
         "--test",
         action="store_true",
         help="Run a synthetic test of plot_figure() and save directly under plots/edge_size_study.",
+    )
+    p.add_argument(
+        "--use-cache",
+        action="store_true",
+        help="Load cached wandb runs from output dir instead of fetching from remote.",
     )
     p.add_argument("--output-dir", type=str, default="plots/edge_size_study")
     p.add_argument("--output-format", type=str, default="pdf", choices=["pdf", "svg"])
@@ -207,14 +213,22 @@ def main():
         run_test(args)
         return
 
+    cache_path = os.path.join(args.output_dir, "wandb_runs_cache.json")
+
     # Create output directory
     for metric in metrics:
         dir_path = os.path.join(args.output_dir, metric)
         os.makedirs(dir_path, exist_ok=True)
 
     # Load runs from wandb
-    baselines, ours = get_wandb_runs()
-    print(f"Loaded {len(baselines)} baselines and {len(ours)} ours runs.")
+    if args.use_cache:
+        baselines, ours = load_cached_runs(cache_path)
+        print(f"Loaded cached runs from {cache_path}.")
+    else:
+        baselines, ours = get_wandb_runs()
+        print(f"Loaded {len(baselines)} baselines and {len(ours)} ours runs.")
+        save_cached_runs(cache_path, baselines, ours)
+        print(f"Saved runs cache to {cache_path}.")
 
     # Report best runs
     for run_type, runs in [("Baselines", baselines), ("Ours", ours)]:
