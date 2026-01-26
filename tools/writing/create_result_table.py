@@ -42,7 +42,6 @@ def _collect_by_subset(runs: list[wandb.apis.public.Run], metrics: list[str]) ->
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--metrics", choices=["auroc", "jaccard"], default="auroc")
     parser.add_argument("--precision", type=int, default=3)
     args = parser.parse_args()
 
@@ -57,51 +56,44 @@ def main() -> None:
     baselines = [run for run in runs if run.config.get("llr_threshold") == 0]
     ours = [run for run in runs if run.config.get("llr_threshold", 0) > 0]
 
-    # Metric configuration
-    match args.metrics:
-        case "auroc":
-            metric_keys = ["avg_auroc"]
-        case "jaccard":
-            metric_keys = ["edge_mask_jaccard"]
+    header_cells = ["Subset", "w/ Token Selection", "w/o Token Selection"]
 
-    header_cells = ["Subset", "Ours", "Baseline"]
-    rows: list[list[str]] = []
+    def _build_rows(metric_key: str) -> list[list[str]]:
+        rows: list[list[str]] = []
+        baseline_metrics = _collect_by_subset(baselines, [metric_key])
+        ours_metrics = _collect_by_subset(ours, [metric_key])
+        for subset, label in SUBSET_LABELS.items():
+            ours_row = ours_metrics.get(subset, {})
+            baseline_row = baseline_metrics.get(subset, {})
+            rows.append(
+                [
+                    label,
+                    _format(ours_row.get(metric_key), args.precision),
+                    _format(baseline_row.get(metric_key), args.precision),
+                ]
+            )
+        return rows
 
-    # Prepare table data
-    baseline_metrics = _collect_by_subset(baselines, metric_keys)
-    ours_metrics = _collect_by_subset(ours, metric_keys)
+    def _print_table(title: str, rows: list[list[str]]) -> None:
+        col_widths = [
+            max(len(cell), max((len(row[idx]) for row in rows), default=0)) for idx, cell in enumerate(header_cells)
+        ]
 
-    for subset, label in SUBSET_LABELS.items():
-        ours_row = ours_metrics.get(subset, {})
-        baseline_row = baseline_metrics.get(subset, {})
-        ours_value = ours_row.get(metric_keys[0])
-        baseline_value = baseline_row.get(metric_keys[0])
-        rows.append(
-            [
-                label,
-                _format(ours_value, args.precision),
-                _format(baseline_value, args.precision),
-            ]
-        )
+        def _format_row(cells: list[str]) -> str:
+            return "| " + " | ".join(cell.ljust(col_widths[idx]) for idx, cell in enumerate(cells)) + " |"
 
-    # Calculate column widths
-    col_widths = [
-        max(len(cell), max((len(row[idx]) for row in rows), default=0)) for idx, cell in enumerate(header_cells)
-    ]
+        separator = "| " + " | ".join("-" * width for width in col_widths) + " |"
 
-    def _format_row(cells: list[str]) -> str:
-        return "| " + " | ".join(cell.ljust(col_widths[idx]) for idx, cell in enumerate(cells)) + " |"
+        print(f"\n## {title}\n")
+        print("```markdown")
+        print(_format_row(header_cells))
+        print(separator)
+        for row in rows:
+            print(_format_row(row))
+        print("```")
 
-    separator = "| " + " | ".join("-" * width for width in col_widths) + " |"
-
-    # Print the markdown table
-    print(f"\n## Comparison of {args.metrics.upper()}\n")
-    print("```markdown")
-    print(_format_row(header_cells))
-    print(separator)
-    for row in rows:
-        print(_format_row(row))
-    print("```")
+    _print_table("Comparison of AUROC", _build_rows("avg_auroc"))
+    _print_table("Comparison of Jaccard Index", _build_rows("edge_mask_jaccard"))
 
 
 if __name__ == "__main__":
