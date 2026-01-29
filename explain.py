@@ -256,18 +256,11 @@ def _get_gt_explanation(sample: dict[str, str]) -> torch.Tensor:
     """
     Build the binary ground-truth edge mask for a MotifQA sample.
 
-    The dataset stores graphs using the canonical node ordering employed
-    when constructing PyG objects. Edges that connect two nodes belonging
-    to the 5-node house motif are marked with ``1``; all other edges are
-    labeled ``0``. Because the explainer produces a bidirectional edge
-    mask, both directions of each motif edge receive the positive label.
-
     Parameters
     ----------
     sample : dict[str, str]
-        Dataset sample containing at least ``graph``, ``nodes``, ``edges``,
-        and ``motif_nodes`` fields. ``graph`` must hold a PyG-compatible
-        dictionary whose ``edge_index`` encodes the bidirectional edge list.
+        Dataset sample containing at least ``graph``, ``nodes``, ``edges``, and ``motif_nodes`` fields.
+        ``graph`` must hold a PyG-compatible dictionary whose ``edge_index`` encodes the bidirectional edge list.
 
     Returns
     -------
