@@ -19,7 +19,10 @@ fine-tuning/models/
 
 # GNNExplainer
 explanations/
-case_study/
+
+# Figures
+plots/llr_study/
+plots/edge_size_study/
 
 # logs
 logs/

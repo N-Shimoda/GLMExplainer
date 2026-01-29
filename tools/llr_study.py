@@ -53,7 +53,10 @@ def parse_args():
         help="Type of baseline graph to use (default: complete).",
     )
     p.add_argument(
-        "--output-dir", type=str, default="case_study", help="Directory to save output plots (default: case_study)."
+        "--output-dir",
+        type=str,
+        default="plots/llr_study",
+        help="Directory to save output plots (default: plots/llr_study).",
     )
     p.add_argument(
         "--output-format",
@@ -63,6 +66,12 @@ def parse_args():
         help="Output plot format (default: pdf).",
     )
     p.add_argument("--verbose", action="store_true", help="If set, print token probabilities.")
+    p.add_argument(
+        "--llr-threshold",
+        type=float,
+        default=1.0,
+        help="Absolute LLR threshold to highlight token labels (default: 1.0).",
+    )
     p.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility (default: 42).")
 
     return p.parse_args()
@@ -85,6 +94,8 @@ def plot_prob_comparison(
     baseline_graph: Literal["complete", "empty", "random"],
     num_nodes: int,
     node_labels: Optional[list[int]] = None,
+    llr_rows: Optional[list[tuple[str, int, float]]] = None,
+    llr_threshold: float = 1.0,
     output_path: str = "plots/token_prob_comparison.png",
 ):
     """Plot token probability comparison with original and baseline graphs.
@@ -105,6 +116,11 @@ def plot_prob_comparison(
         Number of nodes in both graphs.
     node_labels : list[int] | None, optional
         Optional node labels to render; length must match ``num_nodes`` when provided.
+    llr_rows : list[tuple[str, int, float]] | None, optional
+        Optional LLR rows as (token_str, token_id, llr). If not provided, LLRs
+        are computed from the provided probabilities.
+    llr_threshold : float, optional
+        Absolute LLR threshold above which token labels are highlighted, by default 1.0.
     output_path : str, optional
         Path to save the rendered figure.
     """
@@ -122,6 +138,15 @@ def plot_prob_comparison(
         tokens.append(org_token)
         org_probs.append(org_prob)
         base_probs.append(base_prob)
+    if llr_rows is None:
+        llr_rows, _ = comp_log_likelihood_ratio(org_token_probs, base_token_probs)
+    if len(llr_rows) != len(tokens):
+        raise ValueError("LLR rows length must match token probabilities length.")
+    for (llr_token, llr_id, _), org_row in zip(llr_rows, org_token_probs):
+        org_id, org_token, _, _ = org_row
+        if llr_id != org_id or llr_token != org_token:
+            raise ValueError("LLR token sequence does not match token probabilities.")
+    llrs = [llr for _, _, llr in llr_rows]
 
     # Build two graphs
     org_edge_index = torch.as_tensor(org_edge_index, dtype=torch.long)
@@ -157,16 +182,20 @@ def plot_prob_comparison(
 
     xs = list(range(len(tokens)))
     ax_prob.set_ylim(0, 1.05)
-    ax_prob.plot(xs, org_probs, marker="o", linewidth=1.5, label="w/ graph")
-    ax_prob.plot(xs, base_probs, marker="x", linewidth=1.5, label="w/o graph")
+    ax_prob.plot(xs, org_probs, marker="o", linewidth=1.5, label="Original graph")
+    ax_prob.plot(xs, base_probs, marker="x", linewidth=1.5, label=f"{baseline_graph.capitalize()} graph")
     ax_prob.set_xticks(xs)
-    ax_prob.set_xticklabels(tokens, rotation=40, ha="right", fontsize=14)
-    ax_prob.tick_params(axis="y", labelsize=12)
+    ax_prob.set_xticklabels(tokens, rotation=40, ha="right", fontsize=15)
+    ax_prob.tick_params(axis="y", labelsize=14)
     ax_prob.set_ylabel("Probability", fontsize=14)
     ax_prob.set_title("Token Probability Comparison", fontsize=15)
     ax_prob.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.6)
-    ax_prob.legend(fontsize=12)
-    # fig.tight_layout()
+    ax_prob.legend(fontsize=14)
+
+    # Highlight tokens with high absolute LLR
+    for label, llr in zip(ax_prob.get_xticklabels(), llrs):
+        if abs(llr) > llr_threshold:
+            label.set_color("#d62728")
 
     # Keep text as text in SVG
     suffix = output_path.split(".")[-1].lower()
@@ -356,14 +385,14 @@ def main():
 
         base_edge_index = base_sample["graph"]["edge_index"]
         base_token_probs = comp_token_probs(model, tok, base_sample)
+        llr_rows, total_llr = comp_log_likelihood_ratio(org_token_probs, base_token_probs)
 
         # Verbose output
         if args.verbose:
             print(f"\n======== Sample ID: {sample['index']} ========")
             print("- Prompt:", repr(sample["prompt"]))
             print("- Completion:", repr(sample["completion"]))
-            print("\nCompletion token probabilities:")
-            llr_rows, total_llr = comp_log_likelihood_ratio(org_token_probs, base_token_probs)
+            print("\nCompletion token probabilities (incl. EOS):")
             print(f"{'Token':<8} {'ID':>6} {'Org prob':>10} {'Base prob':>10} {'LLR':>10}")
             print("-" * 50)
             for (token_str, token_id, llr), org_row, base_row in zip(llr_rows, org_token_probs, base_token_probs):
@@ -381,6 +410,8 @@ def main():
             args.baseline_graph,
             num_nodes,
             node_labels=sample["nodes"],
+            llr_rows=llr_rows,
+            llr_threshold=args.llr_threshold,
             output_path=os.path.join(OUT_DIR, f"tok_probs_{sample['index']}.{args.output_format}"),
         )
 
