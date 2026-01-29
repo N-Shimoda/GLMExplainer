@@ -881,6 +881,7 @@ def main():
                 "avg_f1": avg_f1,
                 **stability_metrics,
                 **explainer_args,
+                "llr_threshold": args.llr_threshold,
             },
         )
 

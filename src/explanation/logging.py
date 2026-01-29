@@ -154,6 +154,7 @@ def append_run_history_row(history_path: str | Path, row: Mapping[str, Any]) -> 
         "lr",
         "edge_size",
         "edge_ent",
+        "llr_threshold",
         "avg_auroc",
         "avg_auprc",
         "avg_f1",
