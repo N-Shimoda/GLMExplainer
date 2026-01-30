@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-subsets=(ba_shapes tree_cycle tree_grid ba_two_motifs)
+subsets=(ba_shapes tree_cycle tree_grid ba_two_motifs shortest_path)
 gnn_types=(GCN GAT GIN)
 
 for gnn in "${gnn_types[@]}"; do
@@ -15,7 +15,7 @@ for gnn in "${gnn_types[@]}"; do
 				--gnn-type "${gnn}" \
 				--gnn-hidden-dim 256 --gnn-out-dim 512 \
 				--num-gnn-layers "${num_layer}" \
-				--epochs 12 \
+				--epochs 24 \
 				--optim "adamw" --lr 0.0075 --weight-decay 0.01 \
 				--lr-scheduler-type "cosine" --warmup-ratio 0.05 \
 				--do-eval --no-save \
