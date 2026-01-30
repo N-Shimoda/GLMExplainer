@@ -84,6 +84,13 @@ def build_args(*, multitask: bool = False):
     )
     p.add_argument("--num-max-nodes", type=int, default=20)
     p.add_argument("--num-graph-tokens", type=int, default=4)
+    p.add_argument(
+        "--graph-pooling",
+        type=str,
+        default="mean",
+        choices=["mean", "sum"],
+        help="Pooling strategy to aggregate node embeddings into graph embeddings.",
+    )
     p.add_argument("--pos-emb-dim", type=int, default=8)
     p.add_argument("--lpe-dim", type=int, default=8)
     p.add_argument("--use-degree-emb", action="store_true")
@@ -137,6 +144,7 @@ def build_args(*, multitask: bool = False):
         "num_max_nodes": args.num_max_nodes,
         "lpe_dim": args.lpe_dim,
         "use_degree_emb": args.use_degree_emb,
+        "graph_pooling": args.graph_pooling,
     }
     sft_args = {
         "per_device_train_batch_size": args.per_device_train_batch_size,
