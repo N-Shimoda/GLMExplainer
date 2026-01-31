@@ -278,10 +278,10 @@ class DomainProjector(nn.Module):
         pooled_list = []
         for pooling in self.graph_pooling:
             match pooling:
-                case "sum":
-                    pooled_list.append(global_add_pool(node_repr, batch_index))  # [B, gnn_out_dim]
                 case "mean":
                     pooled_list.append(global_mean_pool(node_repr, batch_index))  # [B, gnn_out_dim]
+                case "sum":
+                    pooled_list.append(global_add_pool(node_repr, batch_index))  # [B, gnn_out_dim]
         pooled = torch.cat(pooled_list, dim=-1) if len(pooled_list) > 1 else pooled_list[0]
         B = pooled.size(0)
 
