@@ -2,9 +2,9 @@
 
 torchrun --nproc_per_node=2 train.py \
 	--dataset MotifQA --subset tree_grid \
+	--gnn-type GCN \
 	--lpe-dim 8 \
 	--pos-emb-dim 8 \
-	--gnn-type GCN \
 	--gnn-hidden-dim 16 --gnn-out-dim 32 \
 	--num-gnn-layers 3 \
 	--num-graph-tokens 4 \

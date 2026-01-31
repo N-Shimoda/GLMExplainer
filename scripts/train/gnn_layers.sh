@@ -12,8 +12,8 @@ for gnn in "${gnn_types[@]}"; do
 			for graph_pooling in "${graph_pooling_types[@]}"; do
 				torchrun --nproc_per_node=2 train.py \
 					--dataset "MotifQA" --subset "${subset}" \
-					--lpe-dim 8 --pos-emb-dim 8 \
 					--gnn-type "${gnn}" \
+					--lpe-dim 8 --pos-emb-dim 8 \
 					--gnn-hidden-dim 256 --gnn-out-dim 512 \
 					--num-gnn-layers "${num_layer}" \
 					--graph-pooling "${graph_pooling}" \

@@ -36,14 +36,51 @@ class GraphTokenLMConfig(PretrainedConfig):
         gnn_hidden_dim=256,
         gnn_out_dim=512,
         num_gnn_layers=2,
+        graph_pooling: Literal["mean", "sum"] = "mean",
         num_proj_layers=1,
         num_graph_tokens=4,
         num_max_nodes=20,  # maximum number of nodes per batch
-        graph_pooling: Literal["mean", "sum"] = "mean",
         freeze_llm=True,
         tie_word_embeddings=True,
         **kwargs,
     ):
+        """Initialize a GraphToken language model configuration.
+
+        Parameters
+        ----------
+        base_model : str, default="Qwen/Qwen3-4B-Base"
+            Hugging Face model name or path for the underlying LLM.
+        gnn_type : {"GCN", "GAT", "GIN", "GraphSAGE", "GraphTransformer"}, default="GCN"
+            Type of GNN layer to use for encoding graph nodes.
+        node_feat_dim : int, default=8
+            Dimensionality of the raw node features.
+        lpe_dim : int or None, default=None
+            Dimensionality for Laplacian positional encodings; defaults to ``node_feat_dim``.
+        use_degree_emb : bool, default=False
+            Whether to add degree-based embeddings to node features.
+        pos_emb_dim : int, default=8
+            Dimensionality of learned positional embeddings for nodes.
+        gnn_hidden_dim : int, default=256
+            Hidden dimensionality for the GNN stack.
+        gnn_out_dim : int, default=512
+            Output dimensionality of the GNN encoder.
+        num_gnn_layers : int, default=2
+            Number of GNN layers to apply.
+        num_proj_layers : int, default=1
+            Number of projection layers mapping graph reps to tokens.
+        num_graph_tokens : int, default=4
+            Number of graph tokens to prepend to the LLM.
+        num_max_nodes : int, default=20
+            Maximum number of nodes per graph in a batch.
+        graph_pooling : {"mean", "sum"}, default="mean"
+            Pooling strategy for graph-level aggregation.
+        freeze_llm : bool, default=True
+            Whether to freeze the underlying LLM parameters.
+        tie_word_embeddings : bool, default=True
+            Whether to tie input/output embeddings in the LLM config.
+        **kwargs
+            Additional arguments forwarded to ``PretrainedConfig``.
+        """
         self.base_model = base_model
         self.llm_name = base_model  # backward compatibility
         self.gnn_type = gnn_type
@@ -78,27 +115,6 @@ class GraphTokenLMConfig(PretrainedConfig):
 
 
 class GNNEncoder(nn.Module):
-    """Encode graph node features with a configurable GNN stack.
-
-    Parameters
-    ----------
-    in_dim : int
-        Dimensionality of the input node features.
-    hid_dim : int
-        Hidden dimensionality used for intermediate layers.
-    out_dim : int
-        Dimensionality of the output node representations.
-    max_nodes : int
-        Maximum number of nodes per graph in a batch.
-    num_layers : int, default=2
-        Number of graph convolution layers.
-    node_pos_emb_dim : int, default=8
-        Dimensionality of the optional learned positional embeddings.
-    dropout : float, default=0.1
-        Dropout probability applied between hidden layers.
-    gnn_type : {"GCN", "GAT", "GIN", "GraphSAGE", "GraphTransformer"}, default="GCN"
-        Type of graph convolution layer to build.
-    """
 
     def __init__(
         self,
@@ -111,6 +127,27 @@ class GNNEncoder(nn.Module):
         dropout: float = 0.1,
         gnn_type: Literal["GCN", "GAT", "GIN", "GraphSAGE", "GraphTransformer"] = "GCN",
     ):
+        """Encode graph node features with a configurable GNN stack.
+
+        Parameters
+        ----------
+        in_dim : int
+            Dimensionality of the input node features.
+        hid_dim : int
+            Hidden dimensionality used for intermediate layers.
+        out_dim : int
+            Dimensionality of the output node representations.
+        max_nodes : int
+            Maximum number of nodes per graph in a batch.
+        num_layers : int, default=2
+            Number of graph convolution layers.
+        node_pos_emb_dim : int, default=8
+            Dimensionality of the optional learned positional embeddings.
+        dropout : float, default=0.1
+            Dropout probability applied between hidden layers.
+        gnn_type : {"GCN", "GAT", "GIN", "GraphSAGE", "GraphTransformer"}, default="GCN"
+            Type of graph convolution layer to build.
+        """
         super().__init__()
         self.max_nodes = max_nodes
         self.pos_emb = nn.Embedding(max_nodes, node_pos_emb_dim) if node_pos_emb_dim > 0 else None
@@ -156,27 +193,27 @@ class GNNEncoder(nn.Module):
 
 
 class DomainProjector(nn.Module):
-    """Project graph-level representations into graph tokens.
-
-    The projector first pools node embeddings into a graph representation and
-    then maps it into ``k`` graph tokens that match the language model's hidden
-    dimension.
-
-    Parameters
-    ----------
-    gnn_out_dim : int
-        Dimensionality of the encoder output to project from.
-    llm_hidden_size : int
-        Target dimensionality matching the language model embeddings.
-    num_graph_tokens : int, default=4
-        Number of graph tokens to produce.
-    graph_pooling : {"mean", "sum"}, default="mean"
-        Pooling strategy used to aggregate node embeddings.
-    num_layers : int, default=1
-        Number of linear/GELU projection layers.
-    """
 
     def __init__(self, gnn_out_dim, llm_hidden_size, num_graph_tokens=4, num_layers=1, graph_pooling: str = "mean"):
+        """Project graph-level representations into graph tokens.
+
+        The projector first pools node embeddings into a graph representation and
+        then maps it into ``k`` graph tokens that match the language model's hidden
+        dimension.
+
+        Parameters
+        ----------
+        gnn_out_dim : int
+            Dimensionality of the encoder output to project from.
+        llm_hidden_size : int
+            Target dimensionality matching the language model embeddings.
+        num_graph_tokens : int, default=4
+            Number of graph tokens to produce.
+        graph_pooling : {"mean", "sum"}, default="mean"
+            Pooling strategy used to aggregate node embeddings.
+        num_layers : int, default=1
+            Number of linear/GELU projection layers.
+        """
         super().__init__()
         if num_layers < 1:
             raise ValueError("DomainProjector requires at least one projection layer.")
