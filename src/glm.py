@@ -2,7 +2,15 @@ from typing import Literal
 
 import torch
 import torch.nn as nn
-from torch_geometric.nn import GATConv, GCNConv, GINConv, GraphSAGE, TransformerConv, global_mean_pool
+from torch_geometric.nn import (
+    GATConv,
+    GCNConv,
+    GINConv,
+    GraphSAGE,
+    TransformerConv,
+    global_add_pool,
+    global_mean_pool,
+)
 from torch_geometric.utils import to_dense_batch
 from transformers import (
     AutoConfig,
@@ -31,6 +39,7 @@ class GraphTokenLMConfig(PretrainedConfig):
         num_proj_layers=1,
         num_graph_tokens=4,
         num_max_nodes=20,  # maximum number of nodes per batch
+        graph_pooling: Literal["mean", "sum"] = "mean",
         freeze_llm=True,
         tie_word_embeddings=True,
         **kwargs,
@@ -52,6 +61,7 @@ class GraphTokenLMConfig(PretrainedConfig):
         self.num_proj_layers = num_proj_layers
         self.num_graph_tokens = num_graph_tokens
         self.num_max_nodes = num_max_nodes
+        self.graph_pooling = graph_pooling
         self.freeze_llm = freeze_llm
 
         # Keep generation-related fields for compatibility (updated later).
@@ -160,16 +170,21 @@ class DomainProjector(nn.Module):
         Target dimensionality matching the language model embeddings.
     num_graph_tokens : int, default=4
         Number of graph tokens to produce.
+    graph_pooling : {"mean", "sum"}, default="mean"
+        Pooling strategy used to aggregate node embeddings.
     num_layers : int, default=1
         Number of linear/GELU projection layers.
     """
 
-    def __init__(self, gnn_out_dim, llm_hidden_size, num_graph_tokens=4, num_layers=1):
+    def __init__(self, gnn_out_dim, llm_hidden_size, num_graph_tokens=4, num_layers=1, graph_pooling: str = "mean"):
         super().__init__()
         if num_layers < 1:
             raise ValueError("DomainProjector requires at least one projection layer.")
+        if graph_pooling not in {"mean", "sum"}:
+            raise ValueError(f"Unsupported graph_pooling: {graph_pooling}")
 
         self.num_graph_tokens = num_graph_tokens
+        self.graph_pooling = graph_pooling
         layers = []
         in_dim = gnn_out_dim
         for layer_idx in range(num_layers):
@@ -199,11 +214,17 @@ class DomainProjector(nn.Module):
             Graph token tensor of shape ``(batch_size, num_graph_tokens, hidden)``.
         """
         # Global pooling yields a single vector per graph.
-        pooled = global_mean_pool(node_repr, batch_index)  # [B, gnn_out_dim]
+        match self.graph_pooling:
+            case "sum":
+                pooled = global_add_pool(node_repr, batch_index)  # [B, gnn_out_dim]
+            case "mean":
+                pooled = global_mean_pool(node_repr, batch_index)  # [B, gnn_out_dim]
         B = pooled.size(0)
+
         # Expand into k tokens via the projection stack.
         tokens = self.project(pooled)  # [B, k*H]
         Hk = tokens.view(B, self.num_graph_tokens, -1)  # [B, k, hidden]
+
         # Add learned positional embeddings.
         pos = self.graph_pos.weight.unsqueeze(0).expand(B, -1, -1)  # [B, k, hidden]
         Hk = Hk + pos
@@ -261,6 +282,7 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
             llm_hidden_size=self.llm.config.hidden_size,
             num_graph_tokens=config.num_graph_tokens,
             num_layers=config.num_proj_layers,
+            graph_pooling=config.graph_pooling,
         )
 
         if config.freeze_llm:
