@@ -4,6 +4,7 @@ import json
 import os
 import time
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Iterable, Literal
 
@@ -45,6 +46,23 @@ AVERAGE_METRIC_FIELDNAMES = [
     "f1",
     *EDGE_MASK_STABILITY_KEYS,
 ]
+
+
+@dataclass(frozen=True)
+class ExplainSampleConfig:
+    """Configuration bundle for explain_sample to keep the call site compact."""
+
+    num_trials: int
+    num_gen_trials: int
+    min_correct_answers: int
+    explainer_args: dict[str, float | int]
+    llr_threshold: float | None
+    baseline_graph: str
+    dataset_name: str
+    subset: str
+    log_path: str
+    fieldnames: list[str]
+    file_type: Literal["svg", "pdf"]
 
 
 def _init_distributed_if_needed() -> tuple[int, int, int, bool]:
@@ -306,18 +324,8 @@ def explain_sample(
     wrapper: GLMWrapper,
     sample: dict[str, str],
     trial_idx: int,
-    num_trials: int,
-    num_gen_trials: int,
-    min_correct_answers: int,
     gen_cfg: GenerationConfig,
-    explainer_args: dict[str, float | int],
-    llr_threshold: float,
-    baseline_graph: str,
-    dataset_name: str,
-    subset: str,
-    log_path: str,
-    fieldnames: list[str],
-    file_type: Literal["svg", "pdf"],
+    cfg: ExplainSampleConfig,
 ) -> tuple[bool, dict[str, float], float, torch.Tensor | None]:
     """Explain a single dataset sample, collect metrics, and persist trial artifacts.
 
@@ -331,30 +339,10 @@ def explain_sample(
         required by :func:`create_pyg_batch`.
     trial_idx : int
         Index of the current trial for the given ``sample``.
-    num_trials : int
-        Total number of explanation trials that will be executed for the ``sample``.
-    num_gen_trials : int
-        Maximum number of generation trials before giving up on the answer.
-    min_correct_answers : int
-        Minimum number of correct generations required (exclusive) before running the explainer.
     gen_cfg : GenerationConfig
         Configuration controlling the language-model generation step.
-    explainer_args : dict[str, float | int]
-        Keyword arguments forwarded to the explainer factory.
-    llr_threshold : Optional[float]
-        LLR threshold for selecting relevant tokens before running the explainer.
-    baseline_graph : str
-        Baseline graph type used for LLR computation.
-    dataset_name : str
-        Name of the dataset being processed (e.g., ``"MotifQA"``).
-    subset : str
-        Name of the dataset subset being processed (e.g., ``"ba_shapes"``).
-    log_path : str
-        CSV destination to which per-trial metrics are appended.
-    fieldnames : list[str]
-        Column ordering used when writing to ``log_path``.
-    file_type : Literal["svg", "pdf"]
-        File type for saved figures.
+    cfg : ExplainSampleConfig
+        Configuration bundle for explanation and logging settings.
 
     Returns
     -------
@@ -374,7 +362,7 @@ def explain_sample(
 
     # Generate output texts
     output_texts = wrapper.gen_output(
-        input_text=sample["prompt"], graph=pyg_batch, gen_cfg=gen_cfg, num_trials=num_gen_trials
+        input_text=sample["prompt"], graph=pyg_batch, gen_cfg=gen_cfg, num_trials=cfg.num_gen_trials
     )
     record = {
         "sample_index": sample["index"],
@@ -382,17 +370,17 @@ def explain_sample(
     }
 
     # Append output texts to JSONL log
-    output_texts_path = os.path.join(os.path.dirname(log_path), OUTPUT_TEXTS_FILENAME)
+    output_texts_path = os.path.join(os.path.dirname(cfg.log_path), OUTPUT_TEXTS_FILENAME)
     with open(output_texts_path, "a", encoding="utf-8") as output_file:
         output_file.write(json.dumps(record, ensure_ascii=True) + "\n")
 
     # Compute answer accuracy to find the first correct generation
-    ans_accuracy, _, correct_mask = comp_accuracy(output_texts, [sample["completion"]] * len(output_texts), subset)
+    ans_accuracy, _, correct_mask = comp_accuracy(output_texts, [sample["completion"]] * len(output_texts), cfg.subset)
     correct_count = sum(correct_mask)
-    if correct_count <= min_correct_answers:
+    if correct_count <= cfg.min_correct_answers:
         print(
             f"[WARN] Sample[index={sample['index']}] has {correct_count} correct answers "
-            f"(threshold: >{min_correct_answers}); skipping explanation."
+            f"(threshold: >{cfg.min_correct_answers}); skipping explanation."
         )
         exp_accuracy = {"auroc": 0.0, "auprc": 0.0, "f1": 0.0}
         ans_accuracy_val = 0.0
@@ -402,13 +390,13 @@ def explain_sample(
 
     # Set relevant token IDs if LLR threshold is specified
     wrapper.relevant_idx = None
-    if llr_threshold is not None and llr_threshold > 0.0:
-        wrapper.set_relevant_ids(baseline_graph, llr_threshold=llr_threshold)
+    if cfg.llr_threshold is not None and cfg.llr_threshold > 0.0:
+        wrapper.set_relevant_ids(cfg.baseline_graph, llr_threshold=cfg.llr_threshold)
 
     # Generate explanation using GNNExplainer
     explainer = Explainer(
         model=wrapper,
-        algorithm=GNNExplainer(num_hops=wrapper.model.config.num_gnn_layers, **explainer_args),
+        algorithm=GNNExplainer(num_hops=wrapper.model.config.num_gnn_layers, **cfg.explainer_args),
         explanation_type="model",
         node_mask_type=None,
         edge_mask_type="object",
@@ -420,12 +408,6 @@ def explain_sample(
     )
     explanation = explainer(x=pyg_batch.x, edge_index=pyg_batch.edge_index, batch=pyg_batch.batch)
 
-    # if explanation is None:
-    #     print("[INFO] No explanation generated; skipping metric computation and logging.")
-    #     exp_accuracy = {"auroc": 0.0, "auprc": 0.0, "f1": 0.0}
-    #     ans_accuracy_val = 0.0
-    #     return False, exp_accuracy, ans_accuracy_val, None
-
     # Compute explanation accuracy
     gt_edge_mask = _get_gt_explanation(sample)
     pred_edge_mask = explanation.edge_mask.detach().cpu().float()
@@ -436,27 +418,27 @@ def explain_sample(
 
     # Log explanation accuracy for positive samples
     metrics_logged = False
-    if dataset_name == "MotifQA" and len(sample.get("motif_nodes", [])) > 0:
+    if cfg.dataset_name == "MotifQA" and len(sample.get("motif_nodes", [])) > 0:
         record = {
             "sample_index": sample["index"],
             "trial": trial_idx,
             "answer_accuracy": ans_accuracy_val,
             **exp_accuracy,
         }
-        with open(log_path, "a", newline="") as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        with open(cfg.log_path, "a", newline="") as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=cfg.fieldnames)
             writer.writerow(record)
         metrics_logged = True
 
     # Directories to save figures
-    suffix = f"{sample['index']}_{trial_idx}" if num_trials > 1 else f"{sample['index']}"
-    out_dir = os.path.dirname(log_path)
+    suffix = f"{sample['index']}_{trial_idx}" if cfg.num_trials > 1 else f"{sample['index']}"
+    out_dir = os.path.dirname(cfg.log_path)
     graph_dir = os.path.join(out_dir, GRAPH_PDF_SUBDIR, f"graph_{sample['index']}")
     os.makedirs(graph_dir, exist_ok=True)
 
     # Save visualizations
-    graph_path = os.path.join(graph_dir, f"{suffix}.{file_type}")
-    if dataset_name == "MotifQA":
+    graph_path = os.path.join(graph_dir, f"{suffix}.{cfg.file_type}")
+    if cfg.dataset_name == "MotifQA":
         visualize_motif_explanation(
             sample=sample,
             explanation=explanation,
@@ -543,6 +525,19 @@ def process_dataset(
         eos_token_id=tokenizer.eos_token_id,
         pad_token_id=tokenizer.eos_token_id,
     )
+    sample_cfg = ExplainSampleConfig(
+        num_trials=args.num_trials,
+        num_gen_trials=args.num_gen_trials,
+        min_correct_answers=args.min_correct_answers,
+        explainer_args=explainer_args,
+        llr_threshold=args.llr_threshold,
+        baseline_graph=args.baseline_graph,
+        dataset_name=args.dataset,
+        subset=subset,
+        log_path=log_path,
+        fieldnames=fieldnames,
+        file_type=args.output_file_type,
+    )
 
     # Prepare logging
     exp_metric_totals = {"auroc": 0.0, "auprc": 0.0, "f1": 0.0}
@@ -589,18 +584,8 @@ def process_dataset(
                 wrapper=wrapper,
                 sample=sample,
                 trial_idx=i,
-                num_trials=args.num_trials,
-                num_gen_trials=args.num_gen_trials,
-                min_correct_answers=args.min_correct_answers,
                 gen_cfg=gen_cfg,
-                explainer_args=explainer_args,
-                llr_threshold=args.llr_threshold,
-                baseline_graph=args.baseline_graph,
-                dataset_name=args.dataset,
-                subset=subset,
-                log_path=log_path,
-                fieldnames=fieldnames,
-                file_type=args.output_file_type,
+                cfg=sample_cfg,
             )
             if edge_mask is not None:
                 sample_edge_masks[sample_idx].append(edge_mask)
