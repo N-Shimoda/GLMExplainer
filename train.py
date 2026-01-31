@@ -58,6 +58,14 @@ def validate_args(args: argparse.Namespace):
     if args.no_save and not args.wandb:
         raise ValueError("--no-save without --wandb is prohibited since no checkpoints are saved locally.")
 
+    # Graph pooling
+    if not (1 <= len(args.graph_pooling) <= 2):
+        raise ValueError("--graph-pooling expects one or two values.")
+    if len(args.graph_pooling) == 2 and set(args.graph_pooling) != {"mean", "sum"}:
+        raise ValueError("--graph-pooling supports only 'mean', 'sum', or both.")
+    if len(set(args.graph_pooling)) != len(args.graph_pooling):
+        raise ValueError("--graph-pooling values must be unique.")
+
 
 def build_args(*, multitask: bool = False):
     p = argparse.ArgumentParser(description="Train GraphTokenLM on GraphQA or MotifQA dataset.")
@@ -87,9 +95,10 @@ def build_args(*, multitask: bool = False):
     p.add_argument(
         "--graph-pooling",
         type=str,
-        default="mean",
+        nargs="+",
+        default=["mean"],
         choices=["mean", "sum"],
-        help="Pooling strategy to aggregate node embeddings into graph embeddings.",
+        help="Pooling strategy to aggregate node embeddings into graph embeddings. Pass one or two values.",
     )
     p.add_argument("--pos-emb-dim", type=int, default=8)
     p.add_argument("--lpe-dim", type=int, default=8)
@@ -144,7 +153,7 @@ def build_args(*, multitask: bool = False):
         "num_max_nodes": args.num_max_nodes,
         "lpe_dim": args.lpe_dim,
         "use_degree_emb": args.use_degree_emb,
-        "graph_pooling": args.graph_pooling,
+        "graph_pooling": args.graph_pooling if len(args.graph_pooling) > 1 else args.graph_pooling[0],
     }
     sft_args = {
         "per_device_train_batch_size": args.per_device_train_batch_size,
