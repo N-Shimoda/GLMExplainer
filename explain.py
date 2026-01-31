@@ -843,6 +843,14 @@ def main():
         avg_auroc = 0.0
         avg_auprc = 0.0
         avg_f1 = 0.0
+        samples_used_count = 0
+        samples_total_count = 0
+        samples_used_pct = 0.0
+        if merged_sample_metrics is not None:
+            samples_total_count = len(merged_sample_metrics)
+            samples_used_count = sum(1 for stats in merged_sample_metrics.values() if stats.get("count", 0) > 0)
+            if samples_total_count > 0:
+                samples_used_pct = (samples_used_count / samples_total_count) * 100.0
         if total_count > 0:
             avg_answer_accuracy = total_answer_accuracy / total_count
             avg_auroc = exp_metric_totals["auroc"] / total_count
@@ -884,6 +892,8 @@ def main():
 
         if args.wandb:
             wandb_payload = stability_metrics.copy()
+            wandb_payload["samples_used_pct"] = samples_used_pct
+            wandb_payload["samples_used_count"] = samples_used_count
             if total_count > 0:
                 wandb_payload.update(
                     {
