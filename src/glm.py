@@ -1,4 +1,4 @@
-from typing import Literal, Sequence
+from typing import Literal
 
 import torch
 import torch.nn as nn
@@ -9,6 +9,7 @@ from torch_geometric.nn import (
     GraphSAGE,
     TransformerConv,
     global_add_pool,
+    global_max_pool,
     global_mean_pool,
 )
 from torch_geometric.utils import to_dense_batch
@@ -20,6 +21,8 @@ from transformers import (
 )
 from transformers.generation.utils import GenerationMixin
 from transformers.modeling_outputs import CausalLMOutputWithPast
+
+VALID_GRAPH_POOLING = ["mean", "sum", "max"]
 
 
 class GraphTokenLMConfig(PretrainedConfig):
@@ -36,7 +39,7 @@ class GraphTokenLMConfig(PretrainedConfig):
         gnn_hidden_dim=256,
         gnn_out_dim=512,
         num_gnn_layers=2,
-        graph_pooling: Literal["mean", "sum"] | Sequence[Literal["mean", "sum"]] = "mean",
+        graph_pooling: set[Literal["mean", "sum", "max"]] = {"mean"},
         num_proj_layers=1,
         num_graph_tokens=4,
         num_max_nodes=20,  # maximum number of nodes per batch
@@ -72,7 +75,7 @@ class GraphTokenLMConfig(PretrainedConfig):
             Number of graph tokens to prepend to the LLM.
         num_max_nodes : int, default=20
             Maximum number of nodes per graph in a batch.
-        graph_pooling : {"mean", "sum"} or sequence of them, default="mean"
+        graph_pooling : {"mean", "sum", "max"} set, default={"mean"}
             Pooling strategy for graph-level aggregation. When multiple values are
             provided, pooled vectors are concatenated.
         freeze_llm : bool, default=True
@@ -193,23 +196,6 @@ class GNNEncoder(nn.Module):
         return x  # [num_nodes, out_dim]
 
 
-def _normalize_graph_pooling(graph_pooling: str | Sequence[str]) -> tuple[str, ...]:
-    """Normalize and validate graph pooling values into a canonical tuple."""
-    if isinstance(graph_pooling, str):
-        poolings = (graph_pooling,)
-    else:
-        poolings = tuple(graph_pooling)
-    if not (1 <= len(poolings) <= 2):
-        raise ValueError(f"Unsupported graph_pooling length: {len(poolings)}")
-    if len(set(poolings)) != len(poolings):
-        raise ValueError(f"Duplicate graph_pooling values: {poolings}")
-    if not set(poolings).issubset({"mean", "sum"}):
-        raise ValueError(f"Unsupported graph_pooling values: {poolings}")
-    if len(poolings) == 2 and set(poolings) != {"mean", "sum"}:
-        raise ValueError(f"Unsupported graph_pooling combination: {poolings}")
-    return poolings
-
-
 class DomainProjector(nn.Module):
 
     def __init__(
@@ -218,7 +204,7 @@ class DomainProjector(nn.Module):
         llm_hidden_size,
         num_graph_tokens=4,
         num_layers=1,
-        graph_pooling: str | Sequence[str] = "mean",
+        graph_pooling: set[str] = {"mean"},
     ):
         """Project graph-level representations into graph tokens.
 
@@ -234,7 +220,7 @@ class DomainProjector(nn.Module):
             Target dimensionality matching the language model embeddings.
         num_graph_tokens : int, default=4
             Number of graph tokens to produce.
-        graph_pooling : {"mean", "sum"} or sequence of them, default="mean"
+        graph_pooling : {"mean", "sum", "max"} set, default={"mean"}
             Pooling strategy used to aggregate node embeddings. When multiple values are
             provided, pooled vectors are concatenated.
         num_layers : int, default=1
@@ -243,11 +229,12 @@ class DomainProjector(nn.Module):
         super().__init__()
         if num_layers < 1:
             raise ValueError("DomainProjector requires at least one projection layer.")
-        poolings = _normalize_graph_pooling(graph_pooling)
+        if not graph_pooling.issubset(VALID_GRAPH_POOLING):
+            raise ValueError(f"Invalid graph_pooling values: {graph_pooling}. Valid options: {VALID_GRAPH_POOLING}")
         self.num_graph_tokens = num_graph_tokens
-        self.graph_pooling = poolings
+        self.graph_pooling = graph_pooling
         layers = []
-        in_dim = gnn_out_dim * len(poolings)
+        in_dim = gnn_out_dim * len(graph_pooling)
         for layer_idx in range(num_layers):
             out_dim = llm_hidden_size * num_graph_tokens if layer_idx == num_layers - 1 else gnn_out_dim
             layers.append(nn.Linear(in_dim, out_dim))
@@ -255,6 +242,7 @@ class DomainProjector(nn.Module):
                 layers.append(nn.GELU())
             in_dim = out_dim
         self.project = nn.Sequential(*layers)
+
         # Optional learned positional embeddings for graph tokens.
         self.graph_pos = nn.Embedding(num_graph_tokens, llm_hidden_size)
 
@@ -274,14 +262,14 @@ class DomainProjector(nn.Module):
         torch.Tensor
             Graph token tensor of shape ``(batch_size, num_graph_tokens, hidden)``.
         """
-        # Global pooling yields a single vector per graph.
+        # Pool node representations into a graph-level vector.
         pooled_list = []
-        for pooling in self.graph_pooling:
-            match pooling:
-                case "mean":
-                    pooled_list.append(global_mean_pool(node_repr, batch_index))  # [B, gnn_out_dim]
-                case "sum":
-                    pooled_list.append(global_add_pool(node_repr, batch_index))  # [B, gnn_out_dim]
+        if "mean" in self.graph_pooling:
+            pooled_list.append(global_mean_pool(node_repr, batch_index))  # [B, gnn_out_dim]
+        if "sum" in self.graph_pooling:
+            pooled_list.append(global_add_pool(node_repr, batch_index))  # [B, gnn_out_dim]
+        if "max" in self.graph_pooling:
+            pooled_list.append(global_max_pool(node_repr, batch_index))  # [B, gnn_out_dim]
         pooled = torch.cat(pooled_list, dim=-1) if len(pooled_list) > 1 else pooled_list[0]
         B = pooled.size(0)
 

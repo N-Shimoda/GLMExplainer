@@ -19,7 +19,7 @@ from eval import EXT_MAX_NEW_TOKENS, MAX_NEW_TOKENS, collect_result, eval_model
 from src.collator import GraphQACollator
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 from src.ds_stats import completion_length_report
-from src.glm import GraphTokenLM, GraphTokenLMConfig
+from src.glm import GraphTokenLM, GraphTokenLMConfig, VALID_GRAPH_POOLING
 from src.preprocess import add_graph_column
 
 
@@ -59,12 +59,13 @@ def validate_args(args: argparse.Namespace):
         raise ValueError("--no-save without --wandb is prohibited since no checkpoints are saved locally.")
 
     # Graph pooling
-    if not (1 <= len(args.graph_pooling) <= 2):
-        raise ValueError("--graph-pooling expects one or two values.")
-    if len(args.graph_pooling) == 2 and set(args.graph_pooling) != {"mean", "sum"}:
-        raise ValueError("--graph-pooling supports only 'mean', 'sum', or both.")
+    if not (1 <= len(args.graph_pooling) <= 3):
+        raise ValueError("--graph-pooling expects one to three values.")
+    if not set(args.graph_pooling).issubset(set(VALID_GRAPH_POOLING)):
+        raise ValueError(f"--graph-pooling supports only {', '.join(VALID_GRAPH_POOLING)}.")
     if len(set(args.graph_pooling)) != len(args.graph_pooling):
         raise ValueError("--graph-pooling values must be unique.")
+    args.graph_pooling = set(args.graph_pooling)
 
 
 def build_args(*, multitask: bool = False):
@@ -97,8 +98,8 @@ def build_args(*, multitask: bool = False):
         type=str,
         nargs="+",
         default=["mean"],
-        choices=["mean", "sum"],
-        help="Pooling strategy to aggregate node embeddings into graph embeddings. Pass one or two values.",
+        choices=VALID_GRAPH_POOLING,
+        help="Pooling strategy to aggregate node embeddings into graph embeddings. Pass one to three values.",
     )
     p.add_argument("--pos-emb-dim", type=int, default=8)
     p.add_argument("--lpe-dim", type=int, default=8)
@@ -153,7 +154,7 @@ def build_args(*, multitask: bool = False):
         "num_max_nodes": args.num_max_nodes,
         "lpe_dim": args.lpe_dim,
         "use_degree_emb": args.use_degree_emb,
-        "graph_pooling": args.graph_pooling if len(args.graph_pooling) > 1 else args.graph_pooling[0],
+        "graph_pooling": args.graph_pooling,
     }
     sft_args = {
         "per_device_train_batch_size": args.per_device_train_batch_size,
