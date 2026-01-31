@@ -30,3 +30,7 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("Only one of `num_samples` or `sample_idx` should be specified.")
     if args.num_trials < 1:
         raise ValueError("`num_trials` must be at least 1.")
+    if args.min_correct_answers < 0:
+        raise ValueError("`min_correct_answers` must be non-negative.")
+    if args.min_correct_answers >= args.num_gen_trials:
+        raise ValueError("`min_correct_answers` must be less than `num_gen_trials`.")

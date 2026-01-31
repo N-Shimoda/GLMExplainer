@@ -9,13 +9,13 @@ from typing import Iterable, Literal
 
 import torch
 import torch.distributed as dist
+import wandb
 from torch_geometric.explain import Explainer, GNNExplainer, groundtruth_metrics
 from torchmetrics.functional import average_precision
 from tqdm import tqdm
 from transformers import AutoTokenizer, GenerationConfig
 from transformers.trainer_utils import set_seed
 
-import wandb
 from eval import MAX_NEW_TOKENS, create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
@@ -147,6 +147,15 @@ def build_args():
     )
     p.add_argument(
         "--num-gen-trials", type=int, default=10, help="Number of generation trials per explanation (default: 10)"
+    )
+    p.add_argument(
+        "--min-correct-answers",
+        type=check_non_negative_int,
+        default=0,
+        help=(
+            "Minimum number of correct generations required (exclusive) before running the explainer. "
+            "Explanations run only if correct_count > min_correct_answers (default: 0)."
+        ),
     )
 
     # Hyper-parameters for GNNExplainer
@@ -299,6 +308,7 @@ def explain_sample(
     trial_idx: int,
     num_trials: int,
     num_gen_trials: int,
+    min_correct_answers: int,
     gen_cfg: GenerationConfig,
     explainer_args: dict[str, float | int],
     llr_threshold: float,
@@ -325,6 +335,8 @@ def explain_sample(
         Total number of explanation trials that will be executed for the ``sample``.
     num_gen_trials : int
         Maximum number of generation trials before giving up on the answer.
+    min_correct_answers : int
+        Minimum number of correct generations required (exclusive) before running the explainer.
     gen_cfg : GenerationConfig
         Configuration controlling the language-model generation step.
     explainer_args : dict[str, float | int]
@@ -365,7 +377,7 @@ def explain_sample(
         input_text=sample["prompt"], graph=pyg_batch, gen_cfg=gen_cfg, num_trials=num_gen_trials
     )
     record = {
-        "sample_index": sample.get("index"),
+        "sample_index": sample["index"],
         "output_texts": output_texts,
     }
 
@@ -376,18 +388,17 @@ def explain_sample(
 
     # Compute answer accuracy to find the first correct generation
     ans_accuracy, _, correct_mask = comp_accuracy(output_texts, [sample["completion"]] * len(output_texts), subset)
-    try:
-        first_correct_idx = correct_mask.index(True)
-        wrapper.set_generated_ids(output_texts[first_correct_idx])
-    except ValueError:
+    correct_count = sum(correct_mask)
+    if correct_count <= min_correct_answers:
         print(
-            f"[WARN] Failed to generate the correct answer for sample[index={sample['index']}] "
-            f"(correct answer: `{sample['completion']}`)."
+            f"[WARN] Sample[index={sample['index']}] has {correct_count} correct answers "
+            f"(threshold: >{min_correct_answers}); skipping explanation."
         )
-        print("[INFO] No explanation generated; skipping metric computation and logging.")
         exp_accuracy = {"auroc": 0.0, "auprc": 0.0, "f1": 0.0}
         ans_accuracy_val = 0.0
         return False, exp_accuracy, ans_accuracy_val, None
+    first_correct_idx = correct_mask.index(True)
+    wrapper.set_generated_ids(output_texts[first_correct_idx])
 
     # Set relevant token IDs if LLR threshold is specified
     wrapper.relevant_idx = None
@@ -580,6 +591,7 @@ def process_dataset(
                 trial_idx=i,
                 num_trials=args.num_trials,
                 num_gen_trials=args.num_gen_trials,
+                min_correct_answers=args.min_correct_answers,
                 gen_cfg=gen_cfg,
                 explainer_args=explainer_args,
                 llr_threshold=args.llr_threshold,
