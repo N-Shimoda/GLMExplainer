@@ -8,8 +8,8 @@ torchrun --nproc_per_node=2 train.py \
 	--gnn-hidden-dim 128 --gnn-out-dim 256 \
 	--num-gnn-layers 3 \
 	--num-graph-tokens 4 \
-	--graph-pooling mean sum add \
-	--epochs 2 \
+	--graph-pooling mean sum max \
+	--epochs 6 \
 	--optim adamw \
 	--lr 0.0075 --weight-decay 0.01 \
 	--lr-scheduler-type cosine --warmup-ratio 0.05 \
