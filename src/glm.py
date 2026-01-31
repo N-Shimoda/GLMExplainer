@@ -281,11 +281,13 @@ class DomainProjector(nn.Module):
             pooled_list.append(global_add_pool(node_repr, batch_index))  # [B, gnn_out_dim]
         if "max" in self.graph_pooling:
             pooled_list.append(global_max_pool(node_repr, batch_index))  # [B, gnn_out_dim]
-        pooled = torch.cat(pooled_list, dim=-1) if len(pooled_list) > 1 else pooled_list[0]
+        pooled = (
+            torch.cat(pooled_list, dim=-1) if len(pooled_list) > 1 else pooled_list[0]
+        )  # [B, gnn_out_dim * num_poolings]
         B = pooled.size(0)
 
         # Expand into k tokens via the projection stack.
-        tokens = self.project(pooled)  # [B, k*H]
+        tokens = self.project(pooled)  # [B, k * hidden]
         Hk = tokens.view(B, self.num_graph_tokens, -1)  # [B, k, hidden]
 
         # Add learned positional embeddings.
