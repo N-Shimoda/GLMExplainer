@@ -2,7 +2,7 @@
 
 torchrun --nproc_per_node=2 train.py \
 	--dataset MotifQA --subset ba_two_motifs \
-	--gnn-type GCN \
+	--gnn-type GAT \
 	--lpe-dim 8 \
 	--pos-emb-dim 8 \
 	--gnn-hidden-dim 128 --gnn-out-dim 256 \
