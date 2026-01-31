@@ -3,13 +3,13 @@
 set -euo pipefail
 
 subsets=(ba_shapes tree_cycle tree_grid ba_two_motifs shortest_path)
-gnn_types=(GCN GAT GIN)
-graph_pooling_types=(sum mean)
+gnn_types=(GAT GIN GCN)
+graph_poolings=("mean sum" "mean sum max")
 
 for gnn in "${gnn_types[@]}"; do
 	for subset in "${subsets[@]}"; do
 		for num_layer in 3 4 5; do
-			for graph_pooling in "${graph_pooling_types[@]}"; do
+			for graph_pooling in "${graph_poolings[@]}"; do
 				torchrun --nproc_per_node=2 train.py \
 					--dataset "MotifQA" --subset "${subset}" \
 					--gnn-type "${gnn}" \
