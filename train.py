@@ -19,7 +19,7 @@ from eval import EXT_MAX_NEW_TOKENS, MAX_NEW_TOKENS, collect_result, eval_model
 from src.collator import GraphQACollator
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 from src.ds_stats import completion_length_report
-from src.glm import GraphTokenLM, GraphTokenLMConfig, VALID_GRAPH_POOLING
+from src.glm import VALID_GRAPH_POOLING, GraphTokenLM, GraphTokenLMConfig
 from src.preprocess import add_graph_column
 
 
@@ -65,7 +65,6 @@ def validate_args(args: argparse.Namespace):
         raise ValueError(f"--graph-pooling supports only {', '.join(VALID_GRAPH_POOLING)}.")
     if len(set(args.graph_pooling)) != len(args.graph_pooling):
         raise ValueError("--graph-pooling values must be unique.")
-    args.graph_pooling = set(args.graph_pooling)
 
 
 def build_args(*, multitask: bool = False):
@@ -521,6 +520,7 @@ def train_glm(
     glm_cfg = GraphTokenLMConfig(**glm_args)
     model = GraphTokenLM(glm_cfg)
     tokenizer = AutoTokenizer.from_pretrained(glm_cfg.base_model, trust_remote_code=True)
+    print(model)
 
     # Compute save interval steps
     world_size = int(os.environ.get("WORLD_SIZE", "1"))

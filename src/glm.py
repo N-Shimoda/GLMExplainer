@@ -39,7 +39,7 @@ class GraphTokenLMConfig(PretrainedConfig):
         gnn_hidden_dim=256,
         gnn_out_dim=512,
         num_gnn_layers=2,
-        graph_pooling: set[Literal["mean", "sum", "max"]] = {"mean"},
+        graph_pooling: list[Literal["mean", "sum", "max"]] = ["mean"],
         num_proj_layers=1,
         num_graph_tokens=4,
         num_max_nodes=20,  # maximum number of nodes per batch
@@ -75,7 +75,7 @@ class GraphTokenLMConfig(PretrainedConfig):
             Number of graph tokens to prepend to the LLM.
         num_max_nodes : int, default=20
             Maximum number of nodes per graph in a batch.
-        graph_pooling : {"mean", "sum", "max"} set, default={"mean"}
+        graph_pooling : {"mean", "sum", "max"} list, default=["mean"]
             Pooling strategy for graph-level aggregation. When multiple values are
             provided, pooled vectors are concatenated.
         freeze_llm : bool, default=True
@@ -196,6 +196,18 @@ class GNNEncoder(nn.Module):
         return x  # [num_nodes, out_dim]
 
 
+def _normalize_graph_pooling(graph_pooling: list[str]) -> list[str]:
+    """Normalize and validate graph pooling values into a canonical list."""
+    poolings = list(graph_pooling)
+    if not (1 <= len(poolings) <= 3):
+        raise ValueError(f"Unsupported graph_pooling length: {len(poolings)}")
+    if len(set(poolings)) != len(poolings):
+        raise ValueError(f"Duplicate graph_pooling values: {poolings}")
+    if not set(poolings).issubset(set(VALID_GRAPH_POOLING)):
+        raise ValueError(f"Unsupported graph_pooling values: {poolings}")
+    return poolings
+
+
 class DomainProjector(nn.Module):
 
     def __init__(
@@ -204,7 +216,7 @@ class DomainProjector(nn.Module):
         llm_hidden_size,
         num_graph_tokens=4,
         num_layers=1,
-        graph_pooling: set[str] = {"mean"},
+        graph_pooling: list[str] = ["mean"],
     ):
         """Project graph-level representations into graph tokens.
 
@@ -220,7 +232,7 @@ class DomainProjector(nn.Module):
             Target dimensionality matching the language model embeddings.
         num_graph_tokens : int, default=4
             Number of graph tokens to produce.
-        graph_pooling : {"mean", "sum", "max"} set, default={"mean"}
+        graph_pooling : {"mean", "sum", "max"} list, default=["mean"]
             Pooling strategy used to aggregate node embeddings. When multiple values are
             provided, pooled vectors are concatenated.
         num_layers : int, default=1
@@ -229,12 +241,11 @@ class DomainProjector(nn.Module):
         super().__init__()
         if num_layers < 1:
             raise ValueError("DomainProjector requires at least one projection layer.")
-        if not graph_pooling.issubset(VALID_GRAPH_POOLING):
-            raise ValueError(f"Invalid graph_pooling values: {graph_pooling}. Valid options: {VALID_GRAPH_POOLING}")
+        poolings = _normalize_graph_pooling(graph_pooling)
         self.num_graph_tokens = num_graph_tokens
-        self.graph_pooling = graph_pooling
+        self.graph_pooling = poolings
         layers = []
-        in_dim = gnn_out_dim * len(graph_pooling)
+        in_dim = gnn_out_dim * len(poolings)
         for layer_idx in range(num_layers):
             out_dim = llm_hidden_size * num_graph_tokens if layer_idx == num_layers - 1 else gnn_out_dim
             layers.append(nn.Linear(in_dim, out_dim))
