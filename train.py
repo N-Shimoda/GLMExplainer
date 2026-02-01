@@ -681,6 +681,10 @@ def main():
     if args.no_save and is_main_process():
         shutil.rmtree(out_dir)
         print(f"[INFO] Removed output directory `{out_dir}` since --no-save is set.")
+        parent_dir = os.path.dirname(out_dir.rstrip(os.sep))
+        if parent_dir and os.path.isdir(parent_dir) and not os.listdir(parent_dir):
+            os.rmdir(parent_dir)
+            print(f"[INFO] Removed empty parent directory `{parent_dir}`.")
 
     if dist.is_initialized():
         dist.destroy_process_group()
