@@ -29,6 +29,7 @@ MAX_NEW_TOKENS = {
     "ba_shapes": 8,
     "tree_cycle": 8,
     "tree_grid": 8,
+    "tree_grid_v2": 8,
     "ba_two_motifs": 12,
     "shortest_path": 12,
 }
