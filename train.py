@@ -225,7 +225,7 @@ def setup_run_context(
         out_dir = os.path.join(output_dir, subset, date_str)
     if use_wandb and is_main_process():
         if multitask:
-            config = {"dataset": dataset, "subsets": subsets, "glm_args": glm_args}
+            config = {"dataset": dataset, "subset": subsets, "glm_args": glm_args}
         else:
             config = {"dataset": dataset, "subset": subsets[0], "glm_args": glm_args}
         match dataset:
