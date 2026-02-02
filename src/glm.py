@@ -44,6 +44,7 @@ class GraphTokenLMConfig(PretrainedConfig):
         num_graph_tokens=4,
         num_max_nodes=20,  # maximum number of nodes per batch
         freeze_llm=True,
+        enable_lora: bool = False,
         tie_word_embeddings=True,
         **kwargs,
     ):
@@ -80,6 +81,10 @@ class GraphTokenLMConfig(PretrainedConfig):
             provided, pooled vectors are concatenated.
         freeze_llm : bool, default=True
             Whether to freeze the underlying LLM parameters.
+        enable_lora : bool, default=False
+            Whether LoRA adapters are expected to be active, in which case the
+            base LLM should remain in training mode unless explicitly set
+            elsewhere.
         tie_word_embeddings : bool, default=True
             Whether to tie input/output embeddings in the LLM config.
         **kwargs
@@ -104,6 +109,7 @@ class GraphTokenLMConfig(PretrainedConfig):
         self.num_max_nodes = num_max_nodes
         self.graph_pooling = graph_pooling
         self.freeze_llm = freeze_llm
+        self.enable_lora = enable_lora
 
         # Keep generation-related fields for compatibility (updated later).
         self.vocab_size = kwargs.get("vocab_size", None)
@@ -353,7 +359,8 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         if config.freeze_llm:
             for p in self.llm.parameters():
                 p.requires_grad = False
-            self.llm.eval()
+            if not config.enable_lora:
+                self.llm.eval()
 
         # --- sync basic generation fields so GenerationMixin works cleanly ---
         mirror_keys = [
