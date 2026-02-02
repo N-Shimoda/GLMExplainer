@@ -8,7 +8,7 @@ from typing import Optional
 import datasets
 import torch
 import torch.distributed as dist
-from datasets import load_dataset
+from datasets import concatenate_datasets, load_dataset
 from datasets.arrow_dataset import Dataset
 from transformers import AutoTokenizer
 from transformers.trainer_utils import set_seed
@@ -38,19 +38,31 @@ def _safe_barrier():
         dist.barrier()
 
 
+def _as_list(value: str | list[str]) -> list[str]:
+    return value if isinstance(value, list) else [value]
+
+
 def validate_args(args: argparse.Namespace):
+    if not hasattr(args, "dataset") or not hasattr(args, "subset"):
+        # Skip validation for multitask helper scripts that don't define dataset/subset.
+        return
+
     # Subsets
+    subsets = _as_list(args.subset)
     match args.dataset:
         case "GraphQA":
             valid_subsets = GRAPHQA_SUBSETS
         case "MotifQA":
             valid_subsets = MOTIFQA_SUBSETS
-    if args.subset not in valid_subsets:
-        raise ValueError(f"Subset {args.subset} is not valid for dataset {args.dataset}.")
+    invalid = [subset for subset in subsets if subset not in valid_subsets]
+    if invalid:
+        raise ValueError(f"Subsets {invalid} are not valid for dataset {args.dataset}.")
 
     # Custom dataset
     if args.use_custom_dataset and args.dataset != "GraphQA":
         raise ValueError("--use-custom-dataset is only supported with GraphQA dataset.")
+    if args.use_custom_dataset and len(subsets) != 1:
+        raise ValueError("--use-custom-dataset only supports a single subset.")
 
     # Checkpointing
     if args.no_save and args.save_intermediate_models:
@@ -68,8 +80,10 @@ def build_args(*, multitask: bool = False):
         p.add_argument(
             "--subset",
             type=str,
-            default="edge_count",
+            nargs="+",
+            required=True,
             choices=GRAPHQA_SUBSETS + MOTIFQA_SUBSETS,
+            help="One or more subsets. Passing multiple subsets enables multitask training.",
         )
     p.add_argument("--do-eval", action="store_true", help="Run evaluation after training")
     p.add_argument("--use-custom-dataset", action="store_true", help="Use custom dataset with extended answer labels.")
@@ -173,7 +187,13 @@ def build_args(*, multitask: bool = False):
 
 
 def setup_run_context(
-    dataset: str, subset: str, use_wandb: bool, tags: list[str], output_dir: str, glm_args: dict
+    dataset: str,
+    subsets: list[str],
+    use_wandb: bool,
+    tags: list[str],
+    output_dir: str,
+    glm_args: dict,
+    multitask: bool = False,
 ) -> tuple[str, str]:
     """Setup output directory and initialize wandb if needed.
 
@@ -181,8 +201,8 @@ def setup_run_context(
     ----------
     dataset : str
         Dataset name for the current run.
-    subset : str
-        Subset name for the current run.
+    subsets : list[str]
+        Subset name(s) for the current run.
     use_wandb : bool
         Whether to use wandb logging.
     tags : list[str]
@@ -200,10 +220,18 @@ def setup_run_context(
         Timestamp string for the current run.
     """
     date_str = datetime.now().strftime("%m%d-%H%M")
-    run_name = f"{subset}_{date_str}"
-    out_dir = os.path.join(output_dir, subset, date_str)
+    if multitask:
+        run_name = f"multitask_{date_str}"
+        out_dir = os.path.join(output_dir, "multitask", date_str)
+    else:
+        subset = subsets[0]
+        run_name = f"{subset}_{date_str}"
+        out_dir = os.path.join(output_dir, subset, date_str)
     if use_wandb and is_main_process():
-        config = {"dataset": dataset, "subset": subset, "glm_args": glm_args}
+        if multitask:
+            config = {"dataset": dataset, "subsets": subsets, "glm_args": glm_args}
+        else:
+            config = {"dataset": dataset, "subset": subsets[0], "glm_args": glm_args}
         match dataset:
             case "MotifQA":
                 wandb.init(project="MotifQA-GLM", name=run_name, config=config, tags=tags)
@@ -467,6 +495,107 @@ def build_custom_dataset(
     return ds_dict["train"], ds_dict["validation"], ds_dict["test"] if do_eval else None, num_max_nodes
 
 
+def build_multitask_dataset(
+    dataset: str,
+    subsets: list[str],
+    lpe_dim: int,
+    use_degree_emb: bool = False,
+    do_eval: bool = False,
+    load_from_cache_file: bool = True,
+) -> tuple[Dataset, Dataset, list[Dataset] | None, int]:
+    def modify_dataset(example):
+        return add_graph_column(
+            example,
+            ds_name=dataset,
+            lpe_dim=lpe_dim,
+            use_degree_emb=use_degree_emb,
+        )
+
+    if dataset == "GraphQA":
+        cols = ["algorithm", "answer", "nedges", "nnodes", "question", "task_description", "text_encoding"]
+        train_parts = []
+        eval_parts = []
+        test_parts = []
+        for subset in subsets:
+            train_parts.append(load_dataset("baharef/GraphQA", subset, split="zero_shot_train"))
+            eval_parts.append(load_dataset("baharef/GraphQA", subset, split="zero_shot_validation"))
+            if do_eval:
+                test_parts.append(load_dataset("baharef/GraphQA", subset, split="zero_shot_test"))
+        train_raw = concatenate_datasets(train_parts).shuffle(seed=42)
+        eval_raw = concatenate_datasets(eval_parts).shuffle(seed=42)
+        train_ds = train_raw.map(
+            modify_dataset,
+            remove_columns=cols,
+            load_from_cache_file=load_from_cache_file,
+            desc="Preprocessing train (multitask)",
+        )
+        eval_ds = eval_raw.map(
+            modify_dataset,
+            remove_columns=cols,
+            load_from_cache_file=load_from_cache_file,
+            desc="Preprocessing eval (multitask)",
+        )
+        test_ds_list = (
+            [
+                test_raw.map(
+                    modify_dataset,
+                    remove_columns=cols,
+                    load_from_cache_file=load_from_cache_file,
+                    desc="Preprocessing test (multitask)",
+                )
+                for test_raw in test_parts
+            ]
+            if do_eval
+            else None
+        )
+        num_max_nodes = 20
+        return train_ds, eval_ds, test_ds_list, num_max_nodes
+
+    cols = ["response", "nodes", "edges", "nnodes", "nedges"]
+    train_parts = []
+    eval_parts = []
+    test_parts = []
+    num_max_nodes = 0
+    for subset in subsets:
+        train_raw = load_dataset("naos-ku/motif-qa", subset, split="train")
+        eval_raw = load_dataset("naos-ku/motif-qa", subset, split="validation")
+        train_parts.append(train_raw)
+        eval_parts.append(eval_raw)
+        num_max_nodes = max(num_max_nodes, max(train_raw["nnodes"]), max(eval_raw["nnodes"]))
+        if do_eval:
+            test_raw = load_dataset("naos-ku/motif-qa", subset, split="test")
+            test_parts.append(test_raw)
+            num_max_nodes = max(num_max_nodes, max(test_raw["nnodes"]))
+    train_raw = concatenate_datasets(train_parts).shuffle(seed=42)
+    eval_raw = concatenate_datasets(eval_parts).shuffle(seed=42)
+    train_ds = train_raw.map(
+        modify_dataset,
+        remove_columns=cols,
+        load_from_cache_file=load_from_cache_file,
+        desc="Preprocessing train (multitask)",
+    )
+    eval_ds = eval_raw.map(
+        modify_dataset,
+        remove_columns=cols,
+        load_from_cache_file=load_from_cache_file,
+        desc="Preprocessing eval (multitask)",
+    )
+    test_ds_list = (
+        [
+            test_raw.map(
+                modify_dataset,
+                remove_columns=cols,
+                load_from_cache_file=load_from_cache_file,
+                desc="Preprocessing test (multitask)",
+            )
+            for test_raw in test_parts
+        ]
+        if do_eval
+        else None
+    )
+    return train_ds, eval_ds, test_ds_list, num_max_nodes
+
+
 def train_glm(
     train_ds: datasets.Dataset,
     eval_ds: datasets.Dataset,
@@ -584,7 +713,9 @@ def train_glm(
     return model
 
 
-def eval_ddp(model, subset: str, test_ds: Dataset, max_new_tokens: int, date_str: str, use_wandb: bool):
+def eval_ddp(
+    model, subset: str, test_ds: Dataset, max_new_tokens: int, date_str: str, use_wandb: bool, wandb_key: str
+):
     if dist.is_initialized():
         _safe_barrier()
         world_size = dist.get_world_size()
@@ -610,46 +741,63 @@ def eval_ddp(model, subset: str, test_ds: Dataset, max_new_tokens: int, date_str
     if is_main_process():
         res_file = os.path.join("results", subset, f"{date_str}.json")
         acc = collect_result(results, res_file, subset)
-        if use_wandb:
-            wandb.log({"test_acc": acc})
+        if use_wandb and wandb_key:
+            wandb.log({wandb_key: acc})
+        return acc
+    return None
 
 
 def main():
     glm_args, sft_args, args = build_args()
     if is_main_process():
-        print(f"Subset: {args.subset}")
+        print(f"Subsets: {', '.join(_as_list(args.subset))}")
+    subsets = _as_list(args.subset)
+    multitask = len(subsets) > 1
+    test_ds = None
+    test_ds_list = None
 
     # Fix seed for reproducibility
     set_seed(42)
 
     # Load dataset
-    match args.dataset:
-        case "GraphQA":
-            if args.use_custom_dataset:
-                if is_main_process():
-                    print("[INFO] Building dataset with custom prompt.")
-                train_ds, eval_ds, test_ds, num_max_nodes = build_custom_dataset(
-                    args.subset,
-                    glm_args["lpe_dim"],
-                    use_degree_emb=glm_args["use_degree_emb"],
-                    do_eval=args.do_eval,
-                )
-            else:
-                train_ds, eval_ds, test_ds, num_max_nodes = build_graphqa_dataset(
-                    args.subset,
+    if multitask:
+        train_ds, eval_ds, test_ds_list, num_max_nodes = build_multitask_dataset(
+            args.dataset,
+            subsets,
+            glm_args["lpe_dim"],
+            use_degree_emb=glm_args["use_degree_emb"],
+            do_eval=args.do_eval,
+            load_from_cache_file=False,
+        )
+    else:
+        subset = subsets[0]
+        match args.dataset:
+            case "GraphQA":
+                if args.use_custom_dataset:
+                    if is_main_process():
+                        print("[INFO] Building dataset with custom prompt.")
+                    train_ds, eval_ds, test_ds, num_max_nodes = build_custom_dataset(
+                        subset,
+                        glm_args["lpe_dim"],
+                        use_degree_emb=glm_args["use_degree_emb"],
+                        do_eval=args.do_eval,
+                    )
+                else:
+                    train_ds, eval_ds, test_ds, num_max_nodes = build_graphqa_dataset(
+                        subset,
+                        glm_args["lpe_dim"],
+                        use_degree_emb=glm_args["use_degree_emb"],
+                        do_eval=args.do_eval,
+                        load_from_cache_file=False,
+                    )
+            case "MotifQA":
+                train_ds, eval_ds, test_ds, num_max_nodes = build_motifqa_dataset(
+                    subset,
                     glm_args["lpe_dim"],
                     use_degree_emb=glm_args["use_degree_emb"],
                     do_eval=args.do_eval,
                     load_from_cache_file=False,
                 )
-        case "MotifQA":
-            train_ds, eval_ds, test_ds, num_max_nodes = build_motifqa_dataset(
-                args.subset,
-                glm_args["lpe_dim"],
-                use_degree_emb=glm_args["use_degree_emb"],
-                do_eval=args.do_eval,
-                load_from_cache_file=False,
-            )
 
     # Update node capacity of GLM if needed
     if num_max_nodes > glm_args["num_max_nodes"]:
@@ -660,23 +808,46 @@ def main():
     # Initialize wandb, setup output directory and date
     out_dir, date_str = setup_run_context(
         args.dataset,
-        args.subset,
+        subsets,
         use_wandb=args.wandb,
         tags=args.tags,
         output_dir=args.output_dir,
         glm_args=glm_args,
+        multitask=multitask,
     )
 
     # Training
     model = train_glm(train_ds, eval_ds, out_dir, glm_args, sft_args, args)
 
     # Quick evaluation with 1 trial
-    if args.do_eval and test_ds is not None:
+    if args.do_eval and (test_ds_list is not None if multitask else test_ds is not None):
         if is_main_process():
             print("***** Evaluation *****")
         max_new_tokens_dict = EXT_MAX_NEW_TOKENS if args.use_custom_dataset else MAX_NEW_TOKENS
-        max_new_tokens = max_new_tokens_dict.get(args.subset, 32)
-        eval_ddp(model, args.subset, test_ds, max_new_tokens, date_str, args.wandb)
+        if multitask:
+            for subset, subset_test_ds in zip(subsets, test_ds_list):
+                max_new_tokens = max_new_tokens_dict.get(subset, 32)
+                eval_ddp(
+                    model,
+                    subset,
+                    subset_test_ds,
+                    max_new_tokens,
+                    date_str,
+                    args.wandb,
+                    wandb_key=f"acc_{subset}",
+                )
+        else:
+            subset = subsets[0]
+            max_new_tokens = max_new_tokens_dict.get(subset, 32)
+            eval_ddp(
+                model,
+                subset,
+                test_ds,
+                max_new_tokens,
+                date_str,
+                args.wandb,
+                wandb_key="test_acc",
+            )
 
     # Remove output dir if needed
     if args.no_save and is_main_process():
