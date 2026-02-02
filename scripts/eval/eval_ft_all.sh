@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 SCRIPT_DIR=$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT_DIR=$(dirname "$SCRIPT_DIR")
@@ -9,7 +9,7 @@ mkdir -p "$LOG_DIR"
 LOGFILE="$LOG_DIR/eval_ft_all.log"
 : >"$LOGFILE" # Create empty log file
 
-cd "$FT_DIR"
+cd "$FT_DIR" || exit 1
 
 subsets=(
 	node_count

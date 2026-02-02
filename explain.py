@@ -10,13 +10,13 @@ from typing import Iterable, Literal
 
 import torch
 import torch.distributed as dist
-import wandb
 from torch_geometric.explain import Explainer, GNNExplainer, groundtruth_metrics
 from torchmetrics.functional import average_precision
 from tqdm import tqdm
 from transformers import AutoTokenizer, GenerationConfig
 from transformers.trainer_utils import set_seed
 
+import wandb
 from eval import MAX_NEW_TOKENS, create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS

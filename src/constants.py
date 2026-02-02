@@ -8,7 +8,7 @@ GRAPHQA_SUBSETS = [
     "node_degree",
     "edge_existence",
 ]
-MOTIFQA_SUBSETS = ["ba_shapes", "tree_cycle", "tree_grid", "ba_two_motifs", "shortest_path"]
+MOTIFQA_SUBSETS = ["ba_shapes", "tree_cycle", "tree_grid", "tree_grid_v2", "ba_two_motifs", "shortest_path"]
 
 # Mapping of subsets to their output types
 NUMERIC_SUBSETS = {
@@ -24,5 +24,6 @@ CLASSIFICATION_SUBSETS = {
     "ba_shapes": {"yes", "no"},
     "tree_cycle": {"yes", "no"},
     "tree_grid": {"yes", "no"},
+    "tree_grid_v2": {"yes", "no"},
     "ba_two_motifs": {"house", "cycle"},
 }

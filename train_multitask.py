@@ -2,9 +2,9 @@ import os
 from datetime import datetime
 
 import torch.distributed as dist
-import wandb
 from datasets import Dataset, concatenate_datasets, load_dataset
 
+import wandb
 from eval import collect_result, eval_model
 from src.preprocess import add_graph_column
 from train import build_args, is_main_process, train_glm

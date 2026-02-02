@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 LOG_FILE="logs/explain.log"
 rm -f "$LOG_FILE"
@@ -21,7 +21,7 @@ format_duration() {
 
 run_explain_loop() {
 	local subset="$1"
-	local epochs="$2"
+	local epoch="$2"
 	local lr="$3"
 	local edge_size="$4"
 	local edge_ent="$5"
@@ -32,7 +32,7 @@ run_explain_loop() {
 		--model-path outputs/"${subset}"
 		--target-pos-samples
 		--num-trials 5
-		--epochs "$epochs" --lr "$lr"
+		--epoch "$epoch" --lr "$lr"
 		--edge-size "$edge_size" --edge-ent "$edge_ent"
 		--wandb
 	)
@@ -66,13 +66,10 @@ subsets=(
 
 for subset in "${subsets[@]}"; do
 	log "[INFO] Starting explanations for subset='${subset}'"
-	for epochs in 200; do
-		for lr in 0.1; do
-			for edge_size in 0.0005 0.005 0.05 0.5 5.0; do
-				for edge_ent in 1.0; do
-					run_explain_loop "$subset" "$epochs" "$lr" "$edge_size" "$edge_ent"
-				done
-			done
-		done
+	epoch=200
+	lr=0.1
+	edge_ent=1.0
+	for edge_size in 0.0005 0.005 0.05 0.5 5.0; do
+		run_explain_loop "$subset" "$epoch" "$lr" "$edge_size" "$edge_ent"
 	done
 done
