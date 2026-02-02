@@ -12,9 +12,9 @@ for i in "${!subsets[@]}"; do
 	use_degree_emb="${use_degree_embs[$i]}"
 	torchrun --nproc_per_node=2 train.py \
 		--dataset MotifQA --subset "$subset" \
+		--gnn-type GCN \
 		--lpe-dim 8 --use-degree-emb "$use_degree_emb" \
 		--pos-emb-dim 8 \
-		--gnn-type GCN \
 		--gnn-hidden-dim "$gnn_dim" --gnn-out-dim $((gnn_dim * 2)) \
 		--num-gnn-layers 3 \
 		--num-graph-tokens 4 \

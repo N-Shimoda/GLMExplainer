@@ -9,6 +9,7 @@ from torch_geometric.nn import (
     GraphSAGE,
     TransformerConv,
     global_add_pool,
+    global_max_pool,
     global_mean_pool,
 )
 from torch_geometric.utils import to_dense_batch
@@ -20,6 +21,8 @@ from transformers import (
 )
 from transformers.generation.utils import GenerationMixin
 from transformers.modeling_outputs import CausalLMOutputWithPast
+
+VALID_GRAPH_POOLING = ["mean", "sum", "max"]
 
 
 class GraphTokenLMConfig(PretrainedConfig):
@@ -36,14 +39,52 @@ class GraphTokenLMConfig(PretrainedConfig):
         gnn_hidden_dim=256,
         gnn_out_dim=512,
         num_gnn_layers=2,
+        graph_pooling: list[Literal["mean", "sum", "max"]] = ["mean"],
         num_proj_layers=1,
         num_graph_tokens=4,
         num_max_nodes=20,  # maximum number of nodes per batch
-        graph_pooling: Literal["mean", "sum"] = "mean",
         freeze_llm=True,
         tie_word_embeddings=True,
         **kwargs,
     ):
+        """Initialize a GraphToken language model configuration.
+
+        Parameters
+        ----------
+        base_model : str, default="Qwen/Qwen3-4B-Base"
+            Hugging Face model name or path for the underlying LLM.
+        gnn_type : {"GCN", "GAT", "GIN", "GraphSAGE", "GraphTransformer"}, default="GCN"
+            Type of GNN layer to use for encoding graph nodes.
+        node_feat_dim : int, default=8
+            Dimensionality of the raw node features.
+        lpe_dim : int or None, default=None
+            Dimensionality for Laplacian positional encodings; defaults to ``node_feat_dim``.
+        use_degree_emb : bool, default=False
+            Whether to add degree-based embeddings to node features.
+        pos_emb_dim : int, default=8
+            Dimensionality of learned positional embeddings for nodes.
+        gnn_hidden_dim : int, default=256
+            Hidden dimensionality for the GNN stack.
+        gnn_out_dim : int, default=512
+            Output dimensionality of the GNN encoder.
+        num_gnn_layers : int, default=2
+            Number of GNN layers to apply.
+        num_proj_layers : int, default=1
+            Number of projection layers mapping graph reps to tokens.
+        num_graph_tokens : int, default=4
+            Number of graph tokens to prepend to the LLM.
+        num_max_nodes : int, default=20
+            Maximum number of nodes per graph in a batch.
+        graph_pooling : {"mean", "sum", "max"} list, default=["mean"]
+            Pooling strategy for graph-level aggregation. When multiple values are
+            provided, pooled vectors are concatenated.
+        freeze_llm : bool, default=True
+            Whether to freeze the underlying LLM parameters.
+        tie_word_embeddings : bool, default=True
+            Whether to tie input/output embeddings in the LLM config.
+        **kwargs
+            Additional arguments forwarded to ``PretrainedConfig``.
+        """
         self.base_model = base_model
         self.llm_name = base_model  # backward compatibility
         self.gnn_type = gnn_type
@@ -78,27 +119,6 @@ class GraphTokenLMConfig(PretrainedConfig):
 
 
 class GNNEncoder(nn.Module):
-    """Encode graph node features with a configurable GNN stack.
-
-    Parameters
-    ----------
-    in_dim : int
-        Dimensionality of the input node features.
-    hid_dim : int
-        Hidden dimensionality used for intermediate layers.
-    out_dim : int
-        Dimensionality of the output node representations.
-    max_nodes : int
-        Maximum number of nodes per graph in a batch.
-    num_layers : int, default=2
-        Number of graph convolution layers.
-    node_pos_emb_dim : int, default=8
-        Dimensionality of the optional learned positional embeddings.
-    dropout : float, default=0.1
-        Dropout probability applied between hidden layers.
-    gnn_type : {"GCN", "GAT", "GIN", "GraphSAGE", "GraphTransformer"}, default="GCN"
-        Type of graph convolution layer to build.
-    """
 
     def __init__(
         self,
@@ -111,6 +131,27 @@ class GNNEncoder(nn.Module):
         dropout: float = 0.1,
         gnn_type: Literal["GCN", "GAT", "GIN", "GraphSAGE", "GraphTransformer"] = "GCN",
     ):
+        """Encode graph node features with a configurable GNN stack.
+
+        Parameters
+        ----------
+        in_dim : int
+            Dimensionality of the input node features.
+        hid_dim : int
+            Hidden dimensionality used for intermediate layers.
+        out_dim : int
+            Dimensionality of the output node representations.
+        max_nodes : int
+            Maximum number of nodes per graph in a batch.
+        num_layers : int, default=2
+            Number of graph convolution layers.
+        node_pos_emb_dim : int, default=8
+            Dimensionality of the optional learned positional embeddings.
+        dropout : float, default=0.1
+            Dropout probability applied between hidden layers.
+        gnn_type : {"GCN", "GAT", "GIN", "GraphSAGE", "GraphTransformer"}, default="GCN"
+            Type of graph convolution layer to build.
+        """
         super().__init__()
         self.max_nodes = max_nodes
         self.pos_emb = nn.Embedding(max_nodes, node_pos_emb_dim) if node_pos_emb_dim > 0 else None
@@ -155,38 +196,56 @@ class GNNEncoder(nn.Module):
         return x  # [num_nodes, out_dim]
 
 
+def _normalize_graph_pooling(graph_pooling: list[str]) -> list[str]:
+    """Normalize and validate graph pooling values into a canonical list."""
+    poolings = list(graph_pooling)
+    if not (1 <= len(poolings) <= 3):
+        raise ValueError(f"Unsupported graph_pooling length: {len(poolings)}")
+    if len(set(poolings)) != len(poolings):
+        raise ValueError(f"Duplicate graph_pooling values: {poolings}")
+    if not set(poolings).issubset(set(VALID_GRAPH_POOLING)):
+        raise ValueError(f"Unsupported graph_pooling values: {poolings}")
+    return poolings
+
+
 class DomainProjector(nn.Module):
-    """Project graph-level representations into graph tokens.
 
-    The projector first pools node embeddings into a graph representation and
-    then maps it into ``k`` graph tokens that match the language model's hidden
-    dimension.
+    def __init__(
+        self,
+        gnn_out_dim,
+        llm_hidden_size,
+        num_graph_tokens=4,
+        num_layers=1,
+        graph_pooling: list[str] = ["mean"],
+    ):
+        """Project graph-level representations into graph tokens.
 
-    Parameters
-    ----------
-    gnn_out_dim : int
-        Dimensionality of the encoder output to project from.
-    llm_hidden_size : int
-        Target dimensionality matching the language model embeddings.
-    num_graph_tokens : int, default=4
-        Number of graph tokens to produce.
-    graph_pooling : {"mean", "sum"}, default="mean"
-        Pooling strategy used to aggregate node embeddings.
-    num_layers : int, default=1
-        Number of linear/GELU projection layers.
-    """
+        The projector first pools node embeddings into a graph representation and
+        then maps it into ``k`` graph tokens that match the language model's hidden
+        dimension.
 
-    def __init__(self, gnn_out_dim, llm_hidden_size, num_graph_tokens=4, num_layers=1, graph_pooling: str = "mean"):
+        Parameters
+        ----------
+        gnn_out_dim : int
+            Dimensionality of the encoder output to project from.
+        llm_hidden_size : int
+            Target dimensionality matching the language model embeddings.
+        num_graph_tokens : int, default=4
+            Number of graph tokens to produce.
+        graph_pooling : {"mean", "sum", "max"} list, default=["mean"]
+            Pooling strategy used to aggregate node embeddings. When multiple values are
+            provided, pooled vectors are concatenated.
+        num_layers : int, default=1
+            Number of linear/GELU projection layers.
+        """
         super().__init__()
         if num_layers < 1:
             raise ValueError("DomainProjector requires at least one projection layer.")
-        if graph_pooling not in {"mean", "sum"}:
-            raise ValueError(f"Unsupported graph_pooling: {graph_pooling}")
-
+        poolings = _normalize_graph_pooling(graph_pooling)
         self.num_graph_tokens = num_graph_tokens
-        self.graph_pooling = graph_pooling
+        self.graph_pooling = poolings
         layers = []
-        in_dim = gnn_out_dim
+        in_dim = gnn_out_dim * len(poolings)
         for layer_idx in range(num_layers):
             out_dim = llm_hidden_size * num_graph_tokens if layer_idx == num_layers - 1 else gnn_out_dim
             layers.append(nn.Linear(in_dim, out_dim))
@@ -194,6 +253,7 @@ class DomainProjector(nn.Module):
                 layers.append(nn.GELU())
             in_dim = out_dim
         self.project = nn.Sequential(*layers)
+
         # Optional learned positional embeddings for graph tokens.
         self.graph_pos = nn.Embedding(num_graph_tokens, llm_hidden_size)
 
@@ -213,16 +273,21 @@ class DomainProjector(nn.Module):
         torch.Tensor
             Graph token tensor of shape ``(batch_size, num_graph_tokens, hidden)``.
         """
-        # Global pooling yields a single vector per graph.
-        match self.graph_pooling:
-            case "sum":
-                pooled = global_add_pool(node_repr, batch_index)  # [B, gnn_out_dim]
-            case "mean":
-                pooled = global_mean_pool(node_repr, batch_index)  # [B, gnn_out_dim]
+        # Pool node representations into a graph-level vector.
+        pooled_list = []
+        if "mean" in self.graph_pooling:
+            pooled_list.append(global_mean_pool(node_repr, batch_index))  # [B, gnn_out_dim]
+        if "sum" in self.graph_pooling:
+            pooled_list.append(global_add_pool(node_repr, batch_index))  # [B, gnn_out_dim]
+        if "max" in self.graph_pooling:
+            pooled_list.append(global_max_pool(node_repr, batch_index))  # [B, gnn_out_dim]
+        pooled = (
+            torch.cat(pooled_list, dim=-1) if len(pooled_list) > 1 else pooled_list[0]
+        )  # [B, gnn_out_dim * num_poolings]
         B = pooled.size(0)
 
         # Expand into k tokens via the projection stack.
-        tokens = self.project(pooled)  # [B, k*H]
+        tokens = self.project(pooled)  # [B, k * hidden]
         Hk = tokens.view(B, self.num_graph_tokens, -1)  # [B, k, hidden]
 
         # Add learned positional embeddings.

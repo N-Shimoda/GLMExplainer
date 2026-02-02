@@ -54,10 +54,10 @@ run_train_loop() {
 	cmd=(
 		torchrun --nproc_per_node=2 train.py
 		--dataset "${dataset}" --subset "${subset}"
-		--num-graph-tokens 4
-		--lpe-dim 8 --use-degree-emb --pos-emb-dim 8
 		--gnn-type "${gnn}"
+		--lpe-dim 8 --use-degree-emb --pos-emb-dim 8
 		--gnn-hidden-dim 256 --gnn-out-dim 512 --num-gnn-layers 4
+		--num-graph-tokens 4
 		--epochs 12
 		# --save-intermediate-models --save-interval-epochs 6
 		# --optim "lion" --lr 0.01

@@ -32,9 +32,10 @@ for subset in "${subsets[@]}"; do
 		--use-custom-dataset
 		--base-model "Qwen/Qwen3-4B-Base"
 		--gnn-type "GCN"
-		--num-graph-tokens 4 --node-feat-dim 8 --pos-emb-dim 8
+		--node-feat-dim 8 --pos-emb-dim 8
 		--gnn-hidden-dim 256 --gnn-out-dim 512 --num-gnn-layers 4
 		--num-proj-layers 2
+		--num-graph-tokens 4
 		--epochs 3
 		--optim "lion" --lr 0.01
 		--lr-scheduler-type "linear" --warmup-ratio 0.05
