@@ -58,15 +58,6 @@ def validate_args(args: argparse.Namespace):
     if args.no_save and not args.wandb:
         raise ValueError("--no-save without --wandb is prohibited since no checkpoints are saved locally.")
 
-    # Graph pooling
-    if not (1 <= len(args.graph_pooling) <= 3):
-        raise ValueError("--graph-pooling expects one to three values.")
-    if not set(args.graph_pooling).issubset(set(VALID_GRAPH_POOLING)):
-        raise ValueError(f"--graph-pooling supports only {', '.join(VALID_GRAPH_POOLING)}.")
-    if len(set(args.graph_pooling)) != len(args.graph_pooling):
-        raise ValueError("--graph-pooling values must be unique.")
-
-
 def build_args(*, multitask: bool = False):
     p = argparse.ArgumentParser(description="Train GraphTokenLM on GraphQA or MotifQA dataset.")
 
