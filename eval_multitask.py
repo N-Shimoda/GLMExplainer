@@ -1,11 +1,18 @@
 import argparse
 import os
 
+import torch
+import torch.distributed as dist
 from datasets import concatenate_datasets
+from torch.nn.parallel import DistributedDataParallel as DDP
+from transformers import set_seed
 
 from eval import (
     EXT_MAX_NEW_TOKENS,
     MAX_NEW_TOKENS,
+    _init_distributed,
+    _shard_dataset,
+    _unwrap_model,
     build_dataset,
     collect_result,
     eval_model,
@@ -32,7 +39,7 @@ def _build_args():
     parser.add_argument("--model-index", type=int, default=-1, help="Which trained model version to use.")
     parser.add_argument("--ckpt-index", type=int, default=-1, help="Which checkpoint version to use.")
     parser.add_argument("--num-trials", type=int, default=1)
-    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--per-device-batch-size", type=int, default=4)
     parser.add_argument("--max-new-tokens", type=int)
     return parser.parse_args()
 
@@ -49,25 +56,35 @@ def _validate_args(args: argparse.Namespace):
 if __name__ == "__main__":
     args = _build_args()
     _validate_args(args)
+    use_dist, rank, world_size, local_rank = _init_distributed()
+    is_main = rank == 0
+    set_seed(42 + rank)
+
     model_path, run_name = _resolve_ckpt_path(args.model_path, args.model_index, args.ckpt_index)
-    print(f"Checkpoint: {model_path}")
-    print(f"Number of trials: {args.num_trials}")
+    if is_main:
+        print(f"Checkpoint: {model_path}")
+        print(f"Number of trials: {args.num_trials}")
 
     # Logging setup: create (or overwrite) a new log file for each run
     log_dir = "logs"
-    os.makedirs(log_dir, exist_ok=True)
-    if run_name:
-        log_path = os.path.join(log_dir, f"eval_multitask_{run_name}.log")
-    else:
-        log_path = os.path.join(log_dir, "eval_multitask.log")
-    # Initialize file with header row
-    with open(log_path, "w", encoding="utf-8") as lf:
-        lf.write("subset\tsplit\ttrials\taccuracy\n")
+    if is_main:
+        os.makedirs(log_dir, exist_ok=True)
+        if run_name:
+            log_path = os.path.join(log_dir, f"eval_multitask_{run_name}.log")
+        else:
+            log_path = os.path.join(log_dir, "eval_multitask.log")
+        # Initialize file with header row
+        with open(log_path, "w", encoding="utf-8") as lf:
+            lf.write("subset\tsplit\ttrials\taccuracy\n")
 
     # Load model
-    model = load_model_for_eval(model_path, load_llm_weights=False)
-    lpe_dim = getattr(model.config, "lpe_dim", model.config.node_feat_dim)
-    use_degree_emb = getattr(model.config, "use_degree_emb", False)
+    device = torch.device(f"cuda:{local_rank}") if torch.cuda.is_available() else torch.device("cpu")
+    model = load_model_for_eval(model_path, load_llm_weights=False, device=device)
+    if use_dist:
+        model = DDP(model, device_ids=[local_rank] if torch.cuda.is_available() else None)
+    base_model = _unwrap_model(model)
+    lpe_dim = getattr(base_model.config, "lpe_dim", base_model.config.node_feat_dim)
+    use_degree_emb = getattr(base_model.config, "use_degree_emb", False)
 
     for subset in args.subset:
         # Load dataset
@@ -79,24 +96,40 @@ if __name__ == "__main__":
             use_degree_emb=use_degree_emb,
         )
         repeated_ds = concatenate_datasets([test_ds] * args.num_trials)
+        if use_dist and world_size > 1:
+            start, end = _shard_dataset(len(repeated_ds), rank, world_size)
+            repeated_ds = repeated_ds.select(range(start, end))
 
         # Evaluate
-        print(f"Evaluating subset: {subset}")
+        if is_main:
+            print(f"Evaluating subset: {subset}")
         if args.max_new_tokens is not None:
             max_new_tokens = args.max_new_tokens
         else:
             max_new_tokens_dict = EXT_MAX_NEW_TOKENS if args.use_custom_dataset else MAX_NEW_TOKENS
             max_new_tokens = max_new_tokens_dict.get(subset, 32)
-        results = eval_model(model, repeated_ds, args.batch_size, max_new_tokens)
+        results = eval_model(model, repeated_ds, args.per_device_batch_size, max_new_tokens)
 
         # Save results
-        out_dir = os.path.join("results", subset)
-        os.makedirs(out_dir, exist_ok=True)
-        file_name = f"{run_name}_{args.split}.json" if run_name else f"results_{args.split}.json"
-        res_file = os.path.join(out_dir, file_name)
-        acc = collect_result(results, res_file, subset)
-        print(f"[SUMMARY] subset={subset} accuracy={acc:.4f}")
+        if use_dist:
+            gathered: list[list[dict]] = [None for _ in range(world_size)]
+            dist.all_gather_object(gathered, results)
+            if is_main:
+                results = [item for sublist in gathered for item in sublist]
+
+        if is_main:
+            out_dir = os.path.join("results", subset)
+            os.makedirs(out_dir, exist_ok=True)
+            file_name = f"{run_name}_{args.split}.json" if run_name else f"results_{args.split}.json"
+            res_file = os.path.join(out_dir, file_name)
+            acc = collect_result(results, res_file, subset)
+            print(f"[SUMMARY] subset={subset} accuracy={acc:.4f}")
 
         # Append accuracy to the log (file was initialized at start of run)
-        with open(log_path, "a", encoding="utf-8") as log_file:
-            log_file.write(f"{subset}\t{args.split}\t{args.num_trials}\t{acc:.4f}\n")
+        if is_main:
+            with open(log_path, "a", encoding="utf-8") as log_file:
+                log_file.write(f"{subset}\t{args.split}\t{args.num_trials}\t{acc:.4f}\n")
+
+    if use_dist:
+        dist.barrier()
+        dist.destroy_process_group()
