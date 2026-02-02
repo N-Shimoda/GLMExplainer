@@ -256,6 +256,8 @@ class DomainProjector(nn.Module):
             for layer_idx in range(num_layers):
                 t = (layer_idx + 1) / num_layers
                 dim = max(1, int(round(in_dim * (ratio ** t))))
+                if dim % 2 != 0:
+                    dim += 1
                 dim = max(dim, prev_dim)
                 layer_dims.append(dim)
                 prev_dim = dim
