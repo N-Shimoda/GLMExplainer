@@ -19,7 +19,7 @@ from eval import EXT_MAX_NEW_TOKENS, MAX_NEW_TOKENS, collect_result, eval_model
 from src.collator import GraphQACollator
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 from src.ds_stats import completion_length_report
-from src.glm import GraphTokenLM, GraphTokenLMConfig
+from src.glm import VALID_GRAPH_POOLING, GraphTokenLM, GraphTokenLMConfig
 from src.preprocess import add_graph_column
 
 
@@ -58,7 +58,6 @@ def validate_args(args: argparse.Namespace):
     if args.no_save and not args.wandb:
         raise ValueError("--no-save without --wandb is prohibited since no checkpoints are saved locally.")
 
-
 def build_args(*, multitask: bool = False):
     p = argparse.ArgumentParser(description="Train GraphTokenLM on GraphQA or MotifQA dataset.")
 
@@ -87,9 +86,10 @@ def build_args(*, multitask: bool = False):
     p.add_argument(
         "--graph-pooling",
         type=str,
-        default="mean",
-        choices=["mean", "sum"],
-        help="Pooling strategy to aggregate node embeddings into graph embeddings.",
+        nargs="+",
+        default=["mean"],
+        choices=VALID_GRAPH_POOLING,
+        help="Pooling strategy to aggregate node embeddings into graph embeddings. Pass one to three values.",
     )
     p.add_argument("--pos-emb-dim", type=int, default=8)
     p.add_argument("--lpe-dim", type=int, default=8)
