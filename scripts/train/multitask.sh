@@ -2,8 +2,10 @@
 
 set -euo pipefail
 
-for gnn in GAT GIN; do
-	for hidden_dim in 32 64 128; do
+gnn="GIN"
+
+for graph_poolings in "mean" "mean sum"; do
+	for hidden_dim in 32 64; do
 		torchrun --nproc_per_node=2 train.py \
 			--dataset MotifQA \
 			--subset ba_shapes ba_two_motifs tree_cycle tree_grid_v2 \
@@ -11,13 +13,14 @@ for gnn in GAT GIN; do
 			--gnn-type $gnn \
 			--gnn-hidden-dim $hidden_dim --gnn-out-dim $hidden_dim \
 			--num-gnn-layers 5 \
+			--graph-pooling-type "${graph_poolings[@]}" \
 			--num-proj-layers 2 \
 			--num-graph-tokens 4 \
-			--epochs 24 \
+			--epochs 32 \
 			--optim adamw \
-			--lr 0.0075 --weight-decay 0.01 \
+			--lr 0.01 --weight-decay 0.01 \
 			--lr-scheduler-type cosine --warmup-ratio 0.05 \
 			--do-eval \
-			--wandb --tags multitask hidden_dim
+			--wandb --tags multitask
 	done
 done
