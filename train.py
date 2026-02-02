@@ -58,6 +58,7 @@ def validate_args(args: argparse.Namespace):
     if args.no_save and not args.wandb:
         raise ValueError("--no-save without --wandb is prohibited since no checkpoints are saved locally.")
 
+
 def build_args(*, multitask: bool = False):
     p = argparse.ArgumentParser(description="Train GraphTokenLM on GraphQA or MotifQA dataset.")
 
