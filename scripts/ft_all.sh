@@ -10,7 +10,7 @@ cd "$FT_DIR"
 LOG_DIR="$ROOT_DIR/logs"
 LOG_FILE="$LOG_DIR/ft_all.log"
 mkdir -p "$LOG_DIR"
->"$LOG_FILE"
+: >"$LOG_FILE"
 
 ACCELERATE_BIN=${ACCELERATE_BIN:-accelerate}
 ACCELERATE_CONFIG=${ACCELERATE_CONFIG:-accelerate_config.yaml}

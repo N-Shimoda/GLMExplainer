@@ -9,7 +9,7 @@ mkdir -p "$LOG_DIR"
 LOGFILE="$LOG_DIR/eval_zs_all.log"
 : >"$LOGFILE" # Create empty log file
 
-cd "$FT_DIR"
+cd "$FT_DIR" || exit 1
 
 subsets=(
 	node_count
