@@ -246,8 +246,21 @@ class DomainProjector(nn.Module):
         self.graph_pooling = poolings
         layers = []
         in_dim = gnn_out_dim * len(poolings)
-        for layer_idx in range(num_layers):
-            out_dim = llm_hidden_size * num_graph_tokens if layer_idx == num_layers - 1 else gnn_out_dim
+        final_dim = llm_hidden_size * num_graph_tokens
+        if num_layers == 1:
+            layer_dims = [final_dim]
+        else:
+            ratio = final_dim / in_dim
+            layer_dims = []
+            prev_dim = in_dim
+            for layer_idx in range(num_layers):
+                t = (layer_idx + 1) / num_layers
+                dim = max(1, int(round(in_dim * (ratio ** t))))
+                dim = max(dim, prev_dim)
+                layer_dims.append(dim)
+                prev_dim = dim
+            layer_dims[-1] = final_dim
+        for layer_idx, out_dim in enumerate(layer_dims):
             layers.append(nn.Linear(in_dim, out_dim))
             if layer_idx < num_layers - 1:
                 layers.append(nn.GELU())
