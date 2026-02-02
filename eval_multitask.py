@@ -1,19 +1,55 @@
+import argparse
 import os
 
 from datasets import concatenate_datasets
 
 from eval import (
-    build_args,
+    EXT_MAX_NEW_TOKENS,
+    MAX_NEW_TOKENS,
     build_dataset,
     collect_result,
     eval_model,
     load_model_for_eval,
 )
 from src.ckpt import _resolve_ckpt_path
+from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
+
+
+def _build_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", type=str, choices=["GraphQA", "MotifQA"], required=True)
+    parser.add_argument(
+        "--subset",
+        type=str,
+        nargs="+",
+        choices=GRAPHQA_SUBSETS + MOTIFQA_SUBSETS,
+        required=True,
+        help="One or more subsets to evaluate.",
+    )
+    parser.add_argument("--split", choices=["train", "validation", "test"], default="test")
+    parser.add_argument("--use-custom-dataset", action="store_true", default=False)
+    parser.add_argument("--model-path", type=str, required=True)
+    parser.add_argument("--model-index", type=int, default=-1, help="Which trained model version to use.")
+    parser.add_argument("--ckpt-index", type=int, default=-1, help="Which checkpoint version to use.")
+    parser.add_argument("--num-trials", type=int, default=1)
+    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--max-new-tokens", type=int)
+    return parser.parse_args()
+
+
+def _validate_args(args: argparse.Namespace):
+    valid_subsets = GRAPHQA_SUBSETS if args.dataset == "GraphQA" else MOTIFQA_SUBSETS
+    invalid = [subset for subset in args.subset if subset not in valid_subsets]
+    if invalid:
+        raise ValueError(f"Subsets {invalid} are not valid for dataset {args.dataset}.")
+    if args.use_custom_dataset and args.dataset != "GraphQA":
+        raise ValueError("--use-custom-dataset is only supported with GraphQA dataset.")
+
 
 if __name__ == "__main__":
-    args = build_args(multitask=True)
-    model_path, run_name = _resolve_ckpt_path(args.model_path)
+    args = _build_args()
+    _validate_args(args)
+    model_path, run_name = _resolve_ckpt_path(args.model_path, args.model_index, args.ckpt_index)
     print(f"Checkpoint: {model_path}")
     print(f"Number of trials: {args.num_trials}")
 
@@ -30,16 +66,28 @@ if __name__ == "__main__":
 
     # Load model
     model = load_model_for_eval(model_path, load_llm_weights=False)
+    lpe_dim = getattr(model.config, "lpe_dim", model.config.node_feat_dim)
+    use_degree_emb = getattr(model.config, "use_degree_emb", False)
 
-    subsets = ["node_count", "edge_count", "cycle_check", "triangle_counting"]
-    for subset in subsets:
+    for subset in args.subset:
         # Load dataset
-        test_ds = build_dataset(subset, args.split, model.config.node_feat_dim)
+        test_ds = build_dataset(
+            args.dataset,
+            subset,
+            args.split,
+            lpe_dim,
+            use_degree_emb=use_degree_emb,
+        )
         repeated_ds = concatenate_datasets([test_ds] * args.num_trials)
 
         # Evaluate
         print(f"Evaluating subset: {subset}")
-        results = eval_model(model, repeated_ds, args.batch_size, subset)
+        if args.max_new_tokens is not None:
+            max_new_tokens = args.max_new_tokens
+        else:
+            max_new_tokens_dict = EXT_MAX_NEW_TOKENS if args.use_custom_dataset else MAX_NEW_TOKENS
+            max_new_tokens = max_new_tokens_dict.get(subset, 32)
+        results = eval_model(model, repeated_ds, args.batch_size, max_new_tokens)
 
         # Save results
         out_dir = os.path.join("results", subset)
