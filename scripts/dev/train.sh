@@ -7,6 +7,7 @@ torchrun --nproc_per_node=2 train.py \
 	--gnn-type GAT \
 	--gnn-hidden-dim 32 --gnn-out-dim 32 \
 	--num-gnn-layers 5 \
+	--num-proj-layers 3 \
 	--num-graph-tokens 4 \
 	--epochs 2 \
 	--optim adamw \
