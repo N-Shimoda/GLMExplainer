@@ -12,6 +12,7 @@ from datasets import load_dataset
 from datasets.arrow_dataset import Dataset
 from transformers import AutoTokenizer
 from transformers.trainer_utils import set_seed
+from peft import LoraConfig, TaskType, get_peft_model
 from trl import SFTConfig, SFTTrainer
 
 import wandb
@@ -116,6 +117,16 @@ def build_args(*, multitask: bool = False):
     p.add_argument("--per-device-train-batch-size", type=int, default=2)
     p.add_argument("--per-device-eval-batch-size", type=int, default=4)
     p.add_argument("--gradient-accumulation-steps", type=int, default=4)
+    p.add_argument("--use-lora", action="store_true", help="Enable LoRA adapters on the base LLM.")
+    p.add_argument("--lora-r", type=int, default=16, help="LoRA rank.")
+    p.add_argument("--lora-alpha", type=int, default=16, help="LoRA alpha.")
+    p.add_argument("--lora-dropout", type=float, default=0.05, help="LoRA dropout.")
+    p.add_argument(
+        "--lora-target-modules",
+        type=str,
+        default="q_proj,k_proj,v_proj,o_proj",
+        help="Comma-separated target module names for LoRA adapters.",
+    )
 
     # Checkpointing
     p.add_argument("--save-intermediate-models", action="store_true", help="Save intermediate models")
@@ -512,6 +523,32 @@ def train_glm(
     glm_cfg = GraphTokenLMConfig(**glm_args)
     model = GraphTokenLM(glm_cfg)
     tokenizer = AutoTokenizer.from_pretrained(glm_cfg.base_model, trust_remote_code=True)
+
+    lora_config: LoraConfig | None = None
+    if args.use_lora:
+        target_modules = [name.strip() for name in args.lora_target_modules.split(",") if name.strip()]
+        if not target_modules:
+            raise ValueError("--lora-target-modules must specify at least one module name.")
+        lora_config = LoraConfig(
+            task_type=TaskType.CAUSAL_LM,
+            r=args.lora_r,
+            lora_alpha=args.lora_alpha,
+            lora_dropout=args.lora_dropout,
+            target_modules=target_modules,
+            bias="none",
+        )
+        model.llm = get_peft_model(model.llm, lora_config)
+        for param in model.parameters():
+            param.requires_grad = False
+        for name, param in model.named_parameters():
+            if "lora_" in name:
+                param.requires_grad = True
+        non_lora_trainable = [name for name, param in model.named_parameters() if param.requires_grad and "lora_" not in name]
+        if non_lora_trainable:
+            raise ValueError(
+                "Expected only LoRA parameters to be trainable, but found: "
+                + ", ".join(non_lora_trainable)
+            )
 
     # Compute save interval steps
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
