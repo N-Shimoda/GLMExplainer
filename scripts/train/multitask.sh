@@ -4,7 +4,7 @@ set -euo pipefail
 
 gnn="GIN"
 
-for graph_poolings in "mean" "mean sum"; do
+for graph_poolings in "mean sum" "mean"; do
 	for hidden_dim in 32 64; do
 		torchrun --nproc_per_node=2 train.py \
 			--dataset MotifQA \
@@ -13,7 +13,7 @@ for graph_poolings in "mean" "mean sum"; do
 			--gnn-type $gnn \
 			--gnn-hidden-dim $hidden_dim --gnn-out-dim $hidden_dim \
 			--num-gnn-layers 5 \
-			--graph-pooling-type "${graph_poolings[@]}" \
+			--graph-pooling "${graph_poolings[@]}" \
 			--num-proj-layers 2 \
 			--num-graph-tokens 4 \
 			--epochs 32 \
