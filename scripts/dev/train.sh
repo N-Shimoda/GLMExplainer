@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 torchrun --nproc_per_node=2 train.py \
 	--dataset MotifQA --subset tree_grid_v2 \

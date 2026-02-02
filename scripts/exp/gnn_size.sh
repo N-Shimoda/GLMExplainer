@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 for subset in ba_shapes tree_cycle tree_grid ba_two_motifs shortest_path; do
 	for epochs in 12 24; do

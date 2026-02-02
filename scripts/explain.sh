@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 LOG_FILE="logs/explain.log"
 rm -f "$LOG_FILE"
