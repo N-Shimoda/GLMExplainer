@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
-for gnn in GAT GIN GraphTransformer; do
+set -euo pipefail
+
+for gnn in GAT GIN; do
 	for hidden_dim in 32 64 128; do
 		torchrun --nproc_per_node=2 train.py \
 			--dataset MotifQA \
