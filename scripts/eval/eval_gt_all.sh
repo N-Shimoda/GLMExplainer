@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Move to repository root (assuming this script is directly under scripts/)
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "$(dirname "${BASH_SOURCE[0]}")")/.." && pwd)"
 cd "$ROOT_DIR"
 
 LOG_DIR="$ROOT_DIR/logs"
@@ -48,7 +48,7 @@ run_eval_loop() {
 		torchrun --standalone --nproc_per_node=2 eval.py
 		--dataset "${dataset}" --subset "${subset}"
 		--model-path "masters/${subset}"
-		--num-trials 5
+		--num-trials 10
 		--model-index -1
 		--ckpt-index "${ckpt_index}"
 	)
@@ -84,7 +84,7 @@ run_eval_loop() {
 		log "[COMPLETED] dataset=${dataset} subset=${subset} ckpt_index=${ckpt_index} duration=${dur}s${acc_note}"
 	else
 		log "[ERROR] dataset=${dataset} subset=${subset} ckpt_index=${ckpt_index} rc=${rc} duration=${dur}s"
-		exit $rc
+		exit "$rc"
 	fi
 	echo
 }
