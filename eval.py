@@ -41,18 +41,19 @@ EXT_MAX_NEW_TOKENS = {
 }
 
 
-def build_args(*, multitask: bool = False):
+def build_args():
     p = argparse.ArgumentParser()
 
     # Dataset settings
-    if not multitask:
-        p.add_argument("--dataset", type=str, choices=["GraphQA", "MotifQA"], required=True)
-        p.add_argument(
-            "--subset",
-            type=str,
-            choices=GRAPHQA_SUBSETS + MOTIFQA_SUBSETS,
-            default="edge_count",
-        )
+    p.add_argument("--dataset", type=str, choices=["GraphQA", "MotifQA"], default="MotifQA")
+    p.add_argument(
+        "--subset",
+        type=str,
+        nargs="+",
+        choices=GRAPHQA_SUBSETS + MOTIFQA_SUBSETS,
+        required=True,
+        help="One or more subsets to evaluate.",
+    )
     p.add_argument("--split", choices=["train", "validation", "test"], default="test")
     p.add_argument("--use-custom-dataset", action="store_true", default=False)
 
@@ -66,7 +67,19 @@ def build_args(*, multitask: bool = False):
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--max-new-tokens", type=int)
 
-    return p.parse_args()
+    args = p.parse_args()
+    _validate_args(args)
+
+    return args
+
+
+def _validate_args(args: argparse.Namespace):
+    valid_subsets = GRAPHQA_SUBSETS if args.dataset == "GraphQA" else MOTIFQA_SUBSETS
+    invalid = [subset for subset in args.subset if subset not in valid_subsets]
+    if invalid:
+        raise ValueError(f"Subsets {invalid} are not valid for dataset {args.dataset}.")
+    if args.use_custom_dataset and args.dataset != "GraphQA":
+        raise ValueError("--use-custom-dataset is only supported with GraphQA dataset.")
 
 
 def load_model_for_eval(
@@ -283,47 +296,48 @@ def main():
         model = DDP(model, device_ids=[local_rank] if torch.cuda.is_available() else None)
     base_model = _unwrap_model(model)
 
-    # Load dataset
     lpe_dim = getattr(base_model.config, "lpe_dim", base_model.config.node_feat_dim)
     use_degree_emb = getattr(base_model.config, "use_degree_emb", False)
-    test_ds = build_dataset(
-        args.dataset,
-        args.subset,
-        args.split,
-        lpe_dim,
-        use_degree_emb=use_degree_emb,
-    )
-    repeated_ds = concatenate_datasets([test_ds] * args.num_trials)
-    if use_dist and world_size > 1:
-        start, end = _shard_dataset(len(repeated_ds), rank, world_size)
-        repeated_ds = repeated_ds.select(range(start, end))
+    for subset in args.subset:
+        # Load dataset
+        test_ds = build_dataset(
+            args.dataset,
+            subset,
+            args.split,
+            lpe_dim,
+            use_degree_emb=use_degree_emb,
+        )
+        repeated_ds = concatenate_datasets([test_ds] * args.num_trials)
+        if use_dist and world_size > 1:
+            start, end = _shard_dataset(len(repeated_ds), rank, world_size)
+            repeated_ds = repeated_ds.select(range(start, end))
 
-    # Evaluate the model
-    if args.max_new_tokens is not None:
-        max_new_tokens = args.max_new_tokens
+        # Evaluate the model
+        if args.max_new_tokens is not None:
+            max_new_tokens = args.max_new_tokens
+            if is_main:
+                print(f"Using user-specified max_new_tokens: {max_new_tokens}")
+        else:
+            max_new_tokens_dict = EXT_MAX_NEW_TOKENS if args.use_custom_dataset else MAX_NEW_TOKENS
+            max_new_tokens = max_new_tokens_dict.get(subset, 32)
+        results = eval_model(model, repeated_ds, args.batch_size, max_new_tokens)
+
+        # Save results
+        if use_dist:
+            gathered: list[list[dict]] = [None for _ in range(world_size)]
+            dist.all_gather_object(gathered, results)
+            if is_main:
+                results = [item for sublist in gathered for item in sublist]
+
         if is_main:
-            print(f"Using user-specified max_new_tokens: {max_new_tokens}")
-    else:
-        max_new_tokens_dict = EXT_MAX_NEW_TOKENS if args.use_custom_dataset else MAX_NEW_TOKENS
-        max_new_tokens = max_new_tokens_dict.get(args.subset, 32)
-    results = eval_model(model, repeated_ds, args.batch_size, max_new_tokens)
-
-    # Save results
-    if use_dist:
-        gathered: list[list[dict]] = [None for _ in range(world_size)]
-        dist.all_gather_object(gathered, results)
-        if is_main:
-            results = [item for sublist in gathered for item in sublist]
-
-    if is_main:
-        match args.split:
-            case "test":
-                file_name = f"{run_name}.json" if run_name else "results.json"
-            case _:
-                file_name = f"{run_name}_{args.split}.json" if run_name else f"results_{args.split}.json"
-        res_file = os.path.join("results", args.subset, file_name)
-        acc = collect_result(results, res_file, args.subset)
-        print(f"[SUMMARY] subset={args.subset} accuracy={acc}")
+            match args.split:
+                case "test":
+                    file_name = f"{run_name}.json" if run_name else "results.json"
+                case _:
+                    file_name = f"{run_name}_{args.split}.json" if run_name else f"results_{args.split}.json"
+            res_file = os.path.join("results", subset, file_name)
+            acc = collect_result(results, res_file, subset)
+            print(f"[SUMMARY] subset={subset} accuracy={acc}")
 
     if use_dist:
         dist.barrier()
