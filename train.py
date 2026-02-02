@@ -38,17 +38,13 @@ def _safe_barrier():
         dist.barrier()
 
 
-def _as_list(value: str | list[str]) -> list[str]:
-    return value if isinstance(value, list) else [value]
-
-
 def validate_args(args: argparse.Namespace):
     if not hasattr(args, "dataset") or not hasattr(args, "subset"):
         # Skip validation for multitask helper scripts that don't define dataset/subset.
         return
 
     # Subsets
-    subsets = _as_list(args.subset)
+    subsets = args.subset
     match args.dataset:
         case "GraphQA":
             valid_subsets = GRAPHQA_SUBSETS
@@ -750,9 +746,8 @@ def eval_ddp(
 def main():
     glm_args, sft_args, args = build_args()
     if is_main_process():
-        print(f"Subsets: {', '.join(_as_list(args.subset))}")
-    subsets = _as_list(args.subset)
-    multitask = len(subsets) > 1
+        print(f"Subsets: {', '.join(args.subset)}")
+    multitask = len(args.subset) > 1
     test_ds = None
     test_ds_list = None
 
@@ -763,14 +758,14 @@ def main():
     if multitask:
         train_ds, eval_ds, test_ds_list, num_max_nodes = build_multitask_dataset(
             args.dataset,
-            subsets,
+            args.subset,
             glm_args["lpe_dim"],
             use_degree_emb=glm_args["use_degree_emb"],
             do_eval=args.do_eval,
             load_from_cache_file=False,
         )
     else:
-        subset = subsets[0]
+        subset = args.subset[0]
         match args.dataset:
             case "GraphQA":
                 if args.use_custom_dataset:
@@ -808,7 +803,7 @@ def main():
     # Initialize wandb, setup output directory and date
     out_dir, date_str = setup_run_context(
         args.dataset,
-        subsets,
+        args.subset,
         use_wandb=args.wandb,
         tags=args.tags,
         output_dir=args.output_dir,
@@ -825,9 +820,10 @@ def main():
             print("***** Evaluation *****")
         max_new_tokens_dict = EXT_MAX_NEW_TOKENS if args.use_custom_dataset else MAX_NEW_TOKENS
         if multitask:
-            for subset, subset_test_ds in zip(subsets, test_ds_list):
+            acc_list = []
+            for subset, subset_test_ds in zip(args.subset, test_ds_list):
                 max_new_tokens = max_new_tokens_dict.get(subset, 32)
-                eval_ddp(
+                acc = eval_ddp(
                     model,
                     subset,
                     subset_test_ds,
@@ -836,8 +832,12 @@ def main():
                     args.wandb,
                     wandb_key=f"acc_{subset}",
                 )
+                if acc is not None:
+                    acc_list.append(acc)
+            if args.wandb and acc_list:
+                wandb.log({"test_acc": sum(acc_list) / len(acc_list)})
         else:
-            subset = subsets[0]
+            subset = args.subset[0]
             max_new_tokens = max_new_tokens_dict.get(subset, 32)
             eval_ddp(
                 model,
