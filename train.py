@@ -703,7 +703,6 @@ def main():
     if is_main_process():
         print(f"Subsets: {', '.join(args.subset)}")
     multitask = len(args.subset) > 1
-    test_ds = None
     test_ds_list = None
 
     # Fix seed for reproducibility
@@ -720,6 +719,7 @@ def main():
             use_degree_emb=glm_args["use_degree_emb"],
             do_eval=args.do_eval,
         )
+        test_ds_list = [test_ds] if (args.do_eval and test_ds is not None) else None
     else:
         train_ds, eval_ds, test_ds_list, num_max_nodes = build_multitask_dataset(
             args.dataset,
@@ -730,9 +730,6 @@ def main():
             load_from_cache_file=False,
             seed=args.seed,
         )
-        if not multitask:
-            test_ds = test_ds_list[0] if (args.do_eval and test_ds_list) else None
-            test_ds_list = None
 
     # Update node capacity of GLM if needed
     if num_max_nodes > glm_args["num_max_nodes"]:
@@ -755,39 +752,27 @@ def main():
     model = train_glm(train_ds, eval_ds, out_dir, glm_args, sft_args, args)
 
     # Quick evaluation with 1 trial
-    if args.do_eval and (test_ds_list is not None if multitask else test_ds is not None):
+    if args.do_eval and test_ds_list is not None:
         if is_main_process():
             print("***** Evaluation *****")
         max_new_tokens_dict = EXT_MAX_NEW_TOKENS if args.use_custom_dataset else MAX_NEW_TOKENS
-        if multitask:
-            acc_list = []
-            for subset, subset_test_ds in zip(args.subset, test_ds_list):
-                max_new_tokens = max_new_tokens_dict.get(subset, 32)
-                acc = eval_ddp(
-                    model,
-                    subset,
-                    subset_test_ds,
-                    max_new_tokens,
-                    date_str,
-                    args.wandb,
-                    wandb_key=f"acc_{subset}",
-                )
-                if acc is not None:
-                    acc_list.append(acc)
-            if args.wandb and acc_list:
-                wandb.log({"test_acc": sum(acc_list) / len(acc_list)})
-        else:
-            subset = args.subset[0]
+        acc_list = []
+        for subset, subset_test_ds in zip(args.subset, test_ds_list):
             max_new_tokens = max_new_tokens_dict.get(subset, 32)
-            eval_ddp(
+            wandb_key = "test_acc" if len(args.subset) == 1 else f"acc_{subset}"
+            acc = eval_ddp(
                 model,
                 subset,
-                test_ds,
+                subset_test_ds,
                 max_new_tokens,
                 date_str,
                 args.wandb,
-                wandb_key="test_acc",
+                wandb_key=wandb_key,
             )
+            if acc is not None:
+                acc_list.append(acc)
+        if args.wandb and len(acc_list) > 1:
+            wandb.log({"test_acc": sum(acc_list) / len(acc_list)})
 
     # Remove output dir if needed
     if args.no_save and is_main_process():
