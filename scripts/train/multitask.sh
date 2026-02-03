@@ -20,7 +20,7 @@ for num_gnn_layers in 3 5; do
 			--optim adamw \
 			--lr 5e-3 --weight-decay 1e-2 \
 			--lr-scheduler-type cosine --warmup-ratio 0.05 \
-			--do-eval \
+			--do-eval --num-eval-trials 5 \
 			--wandb --tags multitask
 	done
 done
@@ -43,7 +43,7 @@ for num_gnn_layers in 2 3; do
 			--optim adamw \
 			--lr 5e-3 --weight-decay 1e-2 \
 			--lr-scheduler-type cosine --warmup-ratio 0.05 \
-			--do-eval \
+			--do-eval --num-eval-trials 5 \
 			--wandb --tags multitask
 	done
 done
@@ -65,7 +65,7 @@ for hidden_dim in 32 64; do
 			--optim adamw \
 			--lr 5e-3 --weight-decay 1e-2 \
 			--lr-scheduler-type cosine --warmup-ratio 0.05 \
-			--do-eval \
+			--do-eval --num-eval-trials 5 \
 			--wandb --tags multitask
 	done
 done
