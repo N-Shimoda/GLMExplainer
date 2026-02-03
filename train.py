@@ -362,14 +362,14 @@ def build_custom_dataset(
     return ds_dict["train"], ds_dict["validation"], ds_dict["test"] if do_eval else None, num_max_nodes
 
 
-def build_graphqa_dataset(
+def _build_graphqa_dataset(
     subsets: list[str],
     lpe_dim: int,
     use_degree_emb: bool = False,
     do_eval: bool = False,
     load_from_cache_file: bool = True,
     seed: int = 42,
-) -> tuple[Dataset, Dataset, list[Dataset] | None, int]:
+) -> tuple[Dataset, Dataset, dict[str, Dataset] | None, int]:
     """Build GraphQA datasets for training and evaluation (multi-subset aware)."""
 
     def modify_dataset(example):
@@ -403,31 +403,31 @@ def build_graphqa_dataset(
         load_from_cache_file=load_from_cache_file,
         desc="Preprocessing eval (multitask)",
     )
-    test_ds_list = (
-        [
-            test_raw.map(
+    test_ds_map = (
+        {
+            subset: test_raw.map(
                 modify_dataset,
                 remove_columns=cols,
                 load_from_cache_file=load_from_cache_file,
                 desc=f"Preprocessing test ({subset})",
             )
             for subset, test_raw in zip(subsets, test_parts)
-        ]
+        }
         if do_eval
         else None
     )
     num_max_nodes = 20
-    return train_ds, eval_ds, test_ds_list, num_max_nodes
+    return train_ds, eval_ds, test_ds_map, num_max_nodes
 
 
-def build_motifqa_dataset(
+def _build_motifqa_dataset(
     subsets: list[str],
     lpe_dim: int,
     use_degree_emb: bool = False,
     do_eval: bool = False,
     load_from_cache_file: bool = True,
     seed: int = 42,
-) -> tuple[Dataset, Dataset, list[Dataset] | None, int]:
+) -> tuple[Dataset, Dataset, dict[str, Dataset] | None, int]:
     """Build MotifQA datasets for training and evaluation (multi-subset aware)."""
 
     def modify_dataset(example):
@@ -467,23 +467,23 @@ def build_motifqa_dataset(
         load_from_cache_file=load_from_cache_file,
         desc="Preprocessing eval (multitask)",
     )
-    test_ds_list = (
-        [
-            test_raw.map(
+    test_ds_map = (
+        {
+            subset: test_raw.map(
                 modify_dataset,
                 remove_columns=cols,
                 load_from_cache_file=load_from_cache_file,
                 desc=f"Preprocessing test ({subset})",
             )
             for subset, test_raw in zip(subsets, test_parts)
-        ]
+        }
         if do_eval
         else None
     )
-    return train_ds, eval_ds, test_ds_list, num_max_nodes
+    return train_ds, eval_ds, test_ds_map, num_max_nodes
 
 
-def build_multitask_dataset(
+def build_dataset(
     dataset: str,
     subsets: list[str],
     lpe_dim: int,
@@ -491,7 +491,7 @@ def build_multitask_dataset(
     do_eval: bool = False,
     load_from_cache_file: bool = True,
     seed: int = 42,
-) -> tuple[Dataset, Dataset, list[Dataset] | None, int]:
+) -> tuple[Dataset, Dataset, dict[str, Dataset] | None, int]:
     """Build (possibly single-subset) multitask datasets for training and evaluation.
 
     Parameters
@@ -518,15 +518,15 @@ def build_multitask_dataset(
         Training dataset with `prompt`, `completion`, and `graph` columns.
     eval_ds : Dataset
         Validation dataset with `prompt`, `completion`, and `graph` columns.
-    test_ds_list : list[Dataset] | None
-        List of test datasets aligned with ``subsets`` if ``do_eval`` is True,
+    test_ds_map : dict[str, Dataset] | None
+        Mapping from subset name to test dataset if ``do_eval`` is True,
         otherwise None.
     num_max_nodes : int
         Maximum number of nodes across all graphs in the dataset.
     """
     match dataset:
         case "GraphQA":
-            return build_graphqa_dataset(
+            return _build_graphqa_dataset(
                 subsets,
                 lpe_dim,
                 use_degree_emb=use_degree_emb,
@@ -535,7 +535,7 @@ def build_multitask_dataset(
                 seed=seed,
             )
         case "MotifQA":
-            return build_motifqa_dataset(
+            return _build_motifqa_dataset(
                 subsets,
                 lpe_dim,
                 use_degree_emb=use_degree_emb,
@@ -703,7 +703,7 @@ def main():
     if is_main_process():
         print(f"Subsets: {', '.join(args.subset)}")
     multitask = len(args.subset) > 1
-    test_ds_list = None
+    test_ds_map = None
 
     # Fix seed for reproducibility
     set_seed(args.seed)
@@ -719,9 +719,9 @@ def main():
             use_degree_emb=glm_args["use_degree_emb"],
             do_eval=args.do_eval,
         )
-        test_ds_list = [test_ds] if (args.do_eval and test_ds is not None) else None
+        test_ds_map = {subset: test_ds} if (args.do_eval and test_ds is not None) else None
     else:
-        train_ds, eval_ds, test_ds_list, num_max_nodes = build_multitask_dataset(
+        train_ds, eval_ds, test_ds_map, num_max_nodes = build_dataset(
             args.dataset,
             args.subset,
             glm_args["lpe_dim"],
@@ -752,18 +752,18 @@ def main():
     model = train_glm(train_ds, eval_ds, out_dir, glm_args, sft_args, args)
 
     # Quick evaluation with 1 trial
-    if args.do_eval and test_ds_list is not None:
+    if args.do_eval and test_ds_map is not None:
         if is_main_process():
             print("***** Evaluation *****")
         max_new_tokens_dict = EXT_MAX_NEW_TOKENS if args.use_custom_dataset else MAX_NEW_TOKENS
         acc_list = []
-        for subset, subset_test_ds in zip(args.subset, test_ds_list):
+        for subset in args.subset:
             max_new_tokens = max_new_tokens_dict.get(subset, 32)
             wandb_key = "test_acc" if len(args.subset) == 1 else f"acc_{subset}"
             acc = eval_ddp(
                 model,
                 subset,
-                subset_test_ds,
+                test_ds_map[subset],
                 max_new_tokens,
                 date_str,
                 args.wandb,
