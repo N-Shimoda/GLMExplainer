@@ -665,8 +665,17 @@ def train_glm(
 
 
 def eval_ddp(
-    model, subset: str, test_ds: Dataset, max_new_tokens: int, date_str: str, use_wandb: bool, wandb_key: str
+    model,
+    subset: str,
+    test_ds: Dataset,
+    max_new_tokens: int,
+    date_str: str,
+    use_wandb: bool,
+    wandb_key: str,
+    num_eval_trials: int = 1,
 ):
+    if num_eval_trials > 1:
+        test_ds = concatenate_datasets([test_ds] * num_eval_trials)
     if dist.is_initialized():
         _safe_barrier()
         world_size = dist.get_world_size()
@@ -751,30 +760,30 @@ def main():
     # Training
     model = train_glm(train_ds, eval_ds, out_dir, glm_args, sft_args, args)
 
-    # Quick evaluation with 1 trial
+    # Evaluate the trained model (multiple trials if requested)
     if args.do_eval and test_ds_map is not None:
         if is_main_process():
             print("***** Evaluation *****")
         max_new_tokens_dict = EXT_MAX_NEW_TOKENS if args.use_custom_dataset else MAX_NEW_TOKENS
-        acc_list = []
+        subset_avg_accs = []
         for subset in args.subset:
             max_new_tokens = max_new_tokens_dict.get(subset, 32)
-            wandb_key = "test_acc" if len(args.subset) == 1 else f"acc_{subset}"
             acc = eval_ddp(
                 model,
                 subset,
                 test_ds_map[subset],
                 max_new_tokens,
                 date_str,
-                args.wandb,
-                wandb_key=wandb_key,
+                use_wandb=args.wandb,
+                wandb_key="test_acc" if len(args.subset) == 1 else f"acc_{subset}",
+                num_eval_trials=args.num_eval_trials,
             )
             if acc is not None:
-                acc_list.append(acc)
-        if args.wandb and len(acc_list) > 1:
-            wandb.log({"test_acc": sum(acc_list) / len(acc_list)})
+                subset_avg_accs.append(acc)
+        if args.wandb and len(subset_avg_accs) > 1:
+            wandb.log({"test_acc": sum(subset_avg_accs) / len(subset_avg_accs)})
 
-    # Remove output dir if needed
+    # Remove output dir for no-save mode
     if args.no_save and is_main_process():
         shutil.rmtree(out_dir)
         print(f"[INFO] Removed output directory `{out_dir}` since --no-save is set.")
