@@ -123,6 +123,7 @@ def build_args():
     p.add_argument("--per-device-train-batch-size", type=int, default=2)
     p.add_argument("--per-device-eval-batch-size", type=int, default=4)
     p.add_argument("--gradient-accumulation-steps", type=int, default=4)
+    p.add_argument("--seed", type=int, default=42, help="Random seed for all RNGs and dataset shuffles.")
 
     # Checkpointing
     p.add_argument("--save-intermediate-models", action="store_true", help="Save intermediate models")
@@ -367,6 +368,7 @@ def build_graphqa_dataset(
     use_degree_emb: bool = False,
     do_eval: bool = False,
     load_from_cache_file: bool = True,
+    seed: int = 42,
 ) -> tuple[Dataset, Dataset, list[Dataset] | None, int]:
     """Build GraphQA datasets for training and evaluation (multi-subset aware)."""
 
@@ -387,8 +389,8 @@ def build_graphqa_dataset(
         eval_parts.append(load_dataset("baharef/GraphQA", subset, split="zero_shot_validation"))
         if do_eval:
             test_parts.append(load_dataset("baharef/GraphQA", subset, split="zero_shot_test"))
-    train_raw = concatenate_datasets(train_parts).shuffle(seed=42)
-    eval_raw = concatenate_datasets(eval_parts).shuffle(seed=42)
+    train_raw = concatenate_datasets(train_parts).shuffle(seed=seed)
+    eval_raw = concatenate_datasets(eval_parts).shuffle(seed=seed)
     train_ds = train_raw.map(
         modify_dataset,
         remove_columns=cols,
@@ -424,6 +426,7 @@ def build_motifqa_dataset(
     use_degree_emb: bool = False,
     do_eval: bool = False,
     load_from_cache_file: bool = True,
+    seed: int = 42,
 ) -> tuple[Dataset, Dataset, list[Dataset] | None, int]:
     """Build MotifQA datasets for training and evaluation (multi-subset aware)."""
 
@@ -450,8 +453,8 @@ def build_motifqa_dataset(
             test_raw = load_dataset("naos-ku/motif-qa", subset, split="test")
             test_parts.append(test_raw)
             num_max_nodes = max(num_max_nodes, max(test_raw["nnodes"]))
-    train_raw = concatenate_datasets(train_parts).shuffle(seed=42)
-    eval_raw = concatenate_datasets(eval_parts).shuffle(seed=42)
+    train_raw = concatenate_datasets(train_parts).shuffle(seed=seed)
+    eval_raw = concatenate_datasets(eval_parts).shuffle(seed=seed)
     train_ds = train_raw.map(
         modify_dataset,
         remove_columns=cols,
@@ -487,6 +490,7 @@ def build_multitask_dataset(
     use_degree_emb: bool = False,
     do_eval: bool = False,
     load_from_cache_file: bool = True,
+    seed: int = 42,
 ) -> tuple[Dataset, Dataset, list[Dataset] | None, int]:
     """Build (possibly single-subset) multitask datasets for training and evaluation.
 
@@ -505,6 +509,8 @@ def build_multitask_dataset(
         Whether to prepare the test dataset(s) for evaluation.
     load_from_cache_file : bool, default=True
         Whether to load from cache files if available.
+    seed : int, default=42
+        Random seed used for dataset shuffling.
 
     Returns
     -------
@@ -526,6 +532,7 @@ def build_multitask_dataset(
                 use_degree_emb=use_degree_emb,
                 do_eval=do_eval,
                 load_from_cache_file=load_from_cache_file,
+                seed=seed,
             )
         case "MotifQA":
             return build_motifqa_dataset(
@@ -534,6 +541,7 @@ def build_multitask_dataset(
                 use_degree_emb=use_degree_emb,
                 do_eval=do_eval,
                 load_from_cache_file=load_from_cache_file,
+                seed=seed,
             )
         case _:
             raise NotImplementedError(f"Dataset {dataset} is not supported.")
@@ -699,7 +707,7 @@ def main():
     test_ds_list = None
 
     # Fix seed for reproducibility
-    set_seed(42)
+    set_seed(args.seed)
 
     # Load dataset
     if args.use_custom_dataset:
@@ -720,6 +728,7 @@ def main():
             use_degree_emb=glm_args["use_degree_emb"],
             do_eval=args.do_eval,
             load_from_cache_file=False,
+            seed=args.seed,
         )
         if not multitask:
             test_ds = test_ds_list[0] if (args.do_eval and test_ds_list) else None
