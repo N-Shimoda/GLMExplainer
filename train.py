@@ -674,6 +674,33 @@ def eval_ddp(
     wandb_key: str,
     num_eval_trials: int = 1,
 ):
+    """Evaluate the model on the test dataset in a DDP-aware manner.
+
+    Parameters
+    ----------
+    model : GraphTokenLM
+        The trained model to evaluate.
+    subset : str
+        Subset name for logging and result saving.
+    test_ds : Dataset
+        Test dataset to evaluate on.
+    max_new_tokens : int
+        Maximum number of tokens to generate during evaluation.
+    date_str : str
+        Timestamp string for result file naming.
+    use_wandb : bool
+        Whether to log results to wandb.
+    wandb_key : str
+        Key name for wandb logging.
+    num_eval_trials : int, default=1
+        Number of evaluation trials to run. Results are aggregated over trials.
+
+    Returns
+    -------
+    acc : float or None
+        Accuracy on the test dataset if running on the main process, otherwise None.
+    """
+    # Prepare dataset shard for each rank
     if num_eval_trials > 1:
         test_ds = concatenate_datasets([test_ds] * num_eval_trials)
     if dist.is_initialized():
@@ -698,6 +725,7 @@ def eval_ddp(
     else:
         results = local_results
 
+    # Collect and log results on the main process
     if is_main_process():
         res_file = os.path.join("results", subset, f"{date_str}.json")
         acc = collect_result(results, res_file, subset)
