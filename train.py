@@ -409,9 +409,9 @@ def build_graphqa_dataset(
                 modify_dataset,
                 remove_columns=cols,
                 load_from_cache_file=load_from_cache_file,
-                desc="Preprocessing test (multitask)",
+                desc=f"Preprocessing test ({subset})",
             )
-            for test_raw in test_parts
+            for subset, test_raw in zip(subsets, test_parts)
         ]
         if do_eval
         else None
@@ -473,9 +473,9 @@ def build_motifqa_dataset(
                 modify_dataset,
                 remove_columns=cols,
                 load_from_cache_file=load_from_cache_file,
-                desc="Preprocessing test (multitask)",
+                desc=f"Preprocessing test ({subset})",
             )
-            for test_raw in test_parts
+            for subset, test_raw in zip(subsets, test_parts)
         ]
         if do_eval
         else None
