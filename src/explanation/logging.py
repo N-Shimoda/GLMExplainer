@@ -53,6 +53,8 @@ def write_average_metrics_csv(
         "auroc",
         "auprc",
         "f1",
+        "edge_mask_size",
+        "edge_mask_ent",
         *EDGE_MASK_STABILITY_KEYS,
     ]
 
@@ -72,12 +74,16 @@ def write_average_metrics_csv(
             auroc_sum = stats.get("auroc_sum", 0.0)
             auprc_sum = stats.get("auprc_sum", 0.0)
             f1_sum = stats.get("f1_sum", 0.0)
+            edge_mask_size_sum = stats.get("edge_mask_size_sum", 0.0)
+            edge_mask_ent_sum = stats.get("edge_mask_ent_sum", 0.0)
             row = {
                 "sample_index": sample_idx,
                 "answer_accuracy": answer_acc_sum / count if count > 0 else 0.0,
                 "auroc": auroc_sum / count if count > 0 else 0.0,
                 "auprc": auprc_sum / count if count > 0 else 0.0,
                 "f1": f1_sum / count if count > 0 else 0.0,
+                "edge_mask_size": edge_mask_size_sum / count if count > 0 else 0.0,
+                "edge_mask_ent": edge_mask_ent_sum / count if count > 0 else 0.0,
             }
             stability = per_sample_stability.get(sample_idx, zero_stability)
             for key in EDGE_MASK_STABILITY_KEYS:
@@ -109,6 +115,8 @@ def _compute_sample_average_row(
         "auroc": stats.get("auroc_sum", 0.0) / count,
         "auprc": stats.get("auprc_sum", 0.0) / count,
         "f1": stats.get("f1_sum", 0.0) / count,
+        "edge_mask_size": stats.get("edge_mask_size_sum", 0.0) / count,
+        "edge_mask_ent": stats.get("edge_mask_ent_sum", 0.0) / count,
     }
     mask_list = list(edge_masks) if edge_masks is not None else []
     stability = compute_edge_mask_stability_metrics_per_sample({sample_idx: mask_list}).get(sample_idx, {})

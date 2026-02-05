@@ -45,6 +45,8 @@ AVERAGE_METRIC_FIELDNAMES = [
     "auroc",
     "auprc",
     "f1",
+    "edge_mask_size",
+    "edge_mask_ent",
     *EDGE_MASK_STABILITY_KEYS,
 ]
 
@@ -412,6 +414,7 @@ def explain_sample(
     # Compute explanation accuracy
     gt_edge_mask = _get_gt_explanation(sample)
     pred_edge_mask = explanation.edge_mask.detach().cpu().float()
+    edge_mask_metrics = _compute_edge_mask_metrics(pred_edge_mask)
     auroc, f1 = groundtruth_metrics(pred_edge_mask, gt_edge_mask, metrics=["auroc", "f1_score"])
     auprc = average_precision(pred_edge_mask, gt_edge_mask.int(), task="binary").item()
     exp_accuracy = {"auroc": float(auroc), "auprc": float(auprc), "f1": float(f1)}
@@ -425,6 +428,7 @@ def explain_sample(
             "trial": trial_idx,
             "answer_accuracy": ans_accuracy_val,
             **exp_accuracy,
+            **edge_mask_metrics,
         }
         with open(cfg.log_path, "a", newline="") as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=cfg.fieldnames)
@@ -462,6 +466,19 @@ def explain_sample(
             writer.writerow([src, dst, score])
 
     return metrics_logged, exp_accuracy, ans_accuracy_val, pred_edge_mask
+
+
+def _compute_edge_mask_metrics(edge_mask: torch.Tensor | None) -> dict[str, float]:
+    """Compute edge mask summary metrics (sum and entropy)."""
+    if edge_mask is None or edge_mask.numel() == 0:
+        return {"edge_mask_size": 0.0, "edge_mask_ent": 0.0}
+    mask = edge_mask.float().clamp(min=0.0)
+    total = float(mask.sum().item())
+    if total <= 0.0:
+        return {"edge_mask_size": total, "edge_mask_ent": 0.0}
+    probs = mask / total
+    entropy = float(-(probs * (probs + 1e-12).log()).sum().item())
+    return {"edge_mask_size": total, "edge_mask_ent": entropy}
 
 
 def process_dataset(
@@ -562,6 +579,8 @@ def process_dataset(
             "auroc_sum": 0.0,
             "auprc_sum": 0.0,
             "f1_sum": 0.0,
+            "edge_mask_size_sum": 0.0,
+            "edge_mask_ent_sum": 0.0,
             "count": 0,
         }
     )
@@ -602,6 +621,7 @@ def process_dataset(
             if edge_mask is not None:
                 sample_edge_masks[sample_idx].append(edge_mask)
             if logged:
+                edge_mask_metrics = _compute_edge_mask_metrics(edge_mask)
                 exp_metric_totals["auroc"] += exp_accuracy["auroc"]
                 exp_metric_totals["auprc"] += exp_accuracy["auprc"]
                 exp_metric_totals["f1"] += exp_accuracy["f1"]
@@ -612,6 +632,8 @@ def process_dataset(
                 stats["auroc_sum"] += exp_accuracy["auroc"]
                 stats["auprc_sum"] += exp_accuracy["auprc"]
                 stats["f1_sum"] += exp_accuracy["f1"]
+                stats["edge_mask_size_sum"] += edge_mask_metrics["edge_mask_size"]
+                stats["edge_mask_ent_sum"] += edge_mask_metrics["edge_mask_ent"]
                 stats["count"] += 1
             if progress is not None:
                 if args.wandb:
@@ -741,7 +763,7 @@ def main():
     base_log_path = os.path.join(OUT_DIR, "sample_metrics.csv")
     shard_log_path = base_log_path if world_size == 1 else os.path.join(OUT_DIR, f"metrics_rank{rank}.csv")
 
-    fieldnames = ["sample_index", "trial", "answer_accuracy", "auroc", "auprc", "f1"]
+    fieldnames = ["sample_index", "trial", "answer_accuracy", "auroc", "auprc", "f1", "edge_mask_size", "edge_mask_ent"]
     _write_metrics_header(shard_log_path, fieldnames)
     avg_metrics_base_path = os.path.join(OUT_DIR, "average_metrics.csv")
     avg_metrics_shard_path = (
@@ -820,6 +842,8 @@ def main():
                     "auroc_sum": 0.0,
                     "auprc_sum": 0.0,
                     "f1_sum": 0.0,
+                    "edge_mask_size_sum": 0.0,
+                    "edge_mask_ent_sum": 0.0,
                     "count": 0,
                 }
             )
@@ -840,6 +864,8 @@ def main():
                     acc["auroc_sum"] += stats.get("auroc_sum", 0.0)
                     acc["auprc_sum"] += stats.get("auprc_sum", 0.0)
                     acc["f1_sum"] += stats.get("f1_sum", 0.0)
+                    acc["edge_mask_size_sum"] += stats.get("edge_mask_size_sum", 0.0)
+                    acc["edge_mask_ent_sum"] += stats.get("edge_mask_ent_sum", 0.0)
                     acc["count"] += stats.get("count", 0)
             merged_sample_metrics = {idx: dict(vals) for idx, vals in merged_metrics_accum.items()}
         else:
