@@ -35,6 +35,7 @@ from src.metrics import comp_accuracy
 from src.utils import visualize_motif_explanation
 
 GRAPH_PDF_SUBDIR = "graphs"
+IMPORTANCE_SUBDIR = "importance"
 OUTPUT_TEXTS_FILENAME = "output_texts.jsonl"
 DATASET_FILENAME = "filtered_dataset.jsonl"
 TRIAL_OVERRIDE_COLUMN = "_trial_override"
@@ -430,11 +431,13 @@ def explain_sample(
             writer.writerow(record)
         metrics_logged = True
 
-    # Directories to save figures
+    # Directories to save figures and raw edge importance
     suffix = f"{sample['index']}_{trial_idx}" if cfg.num_trials > 1 else f"{sample['index']}"
     out_dir = os.path.dirname(cfg.log_path)
     graph_dir = os.path.join(out_dir, GRAPH_PDF_SUBDIR, f"graph_{sample['index']}")
+    importance_dir = os.path.join(out_dir, IMPORTANCE_SUBDIR, f"graph_{sample['index']}")
     os.makedirs(graph_dir, exist_ok=True)
+    os.makedirs(importance_dir, exist_ok=True)
 
     # Save visualizations
     graph_path = os.path.join(graph_dir, f"{suffix}.{cfg.file_type}")
@@ -448,6 +451,15 @@ def explain_sample(
         )
     else:
         explanation.visualize_graph(graph_path)
+
+    # Save raw edge importance values with edge index mapping
+    importance_path = os.path.join(importance_dir, f"{suffix}.csv")
+    edge_index = pyg_batch.edge_index.detach().cpu()
+    with open(importance_path, "w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["src", "dst", "edge_mask"])
+        for (src, dst), score in zip(edge_index.t().tolist(), pred_edge_mask.tolist()):
+            writer.writerow([src, dst, score])
 
     return metrics_logged, exp_accuracy, ans_accuracy_val, pred_edge_mask
 
