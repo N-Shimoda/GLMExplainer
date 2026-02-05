@@ -5,6 +5,7 @@ from typing import Literal, Optional
 
 import matplotlib.pyplot as plt
 import pandas as pd
+
 import wandb
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -17,21 +18,24 @@ from tools.writing.wandb_cache import load_cached_runs, save_cached_runs  # noqa
 
 def build_args():
     p = argparse.ArgumentParser()
-    p.add_argument(
-        "--set-y-lim", action="store_true", help="Set y-axis limits based on min/max values across all runs."
-    )
-    p.add_argument(
-        "--test",
-        action="store_true",
-        help="Run a synthetic test of plot_figure() and save directly under plots/edge_size_study.",
-    )
+    p.add_argument("--tags", type=str, nargs="+", default=["jsai", "edge_size"], help="Wandb run tags to filter.")
     p.add_argument(
         "--use-cache",
         action="store_true",
         help="Load cached wandb runs from output dir instead of fetching from remote.",
     )
+    p.add_argument(
+        "--set-y-lim", action="store_true", help="Set y-axis limits based on min/max values across all runs."
+    )
     p.add_argument("--output-dir", type=str, default="plots/edge_size_study")
     p.add_argument("--output-format", type=str, default="pdf", choices=["pdf", "svg"])
+
+    # Debugging
+    p.add_argument(
+        "--test",
+        action="store_true",
+        help="Run a synthetic test of plot_figure() and save directly under plots/edge_size_study.",
+    )
     return p.parse_args()
 
 
@@ -63,16 +67,25 @@ def run_test(args: argparse.Namespace):
     print(f"Test plot saved to {filename}")
 
 
-def get_wandb_runs():
+def _filter_runs_by_tags(runs: list[wandb.apis.public.Run], tags: list[str]) -> list[wandb.apis.public.Run]:
+    if not tags:
+        return runs
+    tag_set = set(tags)
+    return [run for run in runs if tag_set.issubset(set(run.tags or []))]
+
+
+def get_wandb_runs(tags: list[str]):
     """Load wandb runs from MotifQA-Explainer project."""
     api = wandb.Api()
+    filters = {
+        "state": "finished",
+        "config.edge_size": {"$exists": True},
+    }
+    if tags:
+        filters["tags"] = {"$all": tags}
     runs = api.runs(
         "naos-ku/MotifQA-Explainer",
-        filters={
-            "tags": {"$all": ["master", "small"]},
-            "state": "finished",
-            "config.edge_size": {"$exists": True},
-        },
+        filters=filters,
     )
     baselines = [run for run in runs if run.config.get("llr_threshold") == 0]
     ours = [run for run in runs if run.config.get("llr_threshold", 0) > 0]
@@ -223,9 +236,11 @@ def main():
     # Load runs from wandb
     if args.use_cache:
         baselines, ours = load_cached_runs(cache_path)
+        baselines = _filter_runs_by_tags(baselines, args.tags)
+        ours = _filter_runs_by_tags(ours, args.tags)
         print(f"Loaded cached runs from {cache_path}.")
     else:
-        baselines, ours = get_wandb_runs()
+        baselines, ours = get_wandb_runs(args.tags)
         print(f"Loaded {len(baselines)} baselines and {len(ours)} ours runs.")
         save_cached_runs(cache_path, baselines, ours)
         print(f"Saved runs cache to {cache_path}.")
