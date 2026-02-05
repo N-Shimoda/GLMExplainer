@@ -209,6 +209,68 @@ def plot_prob_comparison(
     plt.close()
 
 
+def plot_llr_histograms(
+    llr_by_token: dict[tuple[str, int], list[float]],
+    output_path: str,
+    bins: int = 30,
+    llr_threshold: float = 1.0,
+):
+    """Plot per-token LLR histograms aggregated across samples.
+
+    Parameters
+    ----------
+    llr_by_token : dict[tuple[str, int], list[float]]
+        Mapping from (token_str, token_id) to list of LLR values.
+    output_path : str
+        Path to save the rendered figure.
+    bins : int, optional
+        Number of histogram bins, by default 30.
+    """
+    if not llr_by_token:
+        raise ValueError("No LLR values provided for histogram plot.")
+
+    tokens = list(llr_by_token.keys())
+    num_tokens = len(tokens)
+    ncols = min(3, num_tokens)
+    nrows = math.ceil(num_tokens / ncols)
+    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(4.2 * ncols, 2.8 * nrows))
+    if isinstance(axes, plt.Axes):
+        axes = [axes]
+    else:
+        axes = axes.flatten().tolist()
+
+    for ax, token_key in zip(axes, tokens):
+        token_str, token_id = token_key
+        llrs = llr_by_token[token_key]
+        ratio_over_threshold = 0.0
+        if llrs:
+            ratio_over_threshold = sum(1 for llr in llrs if llr > llr_threshold) / len(llrs)
+        ax.hist(llrs, bins=bins, color="#4c72b0", alpha=0.85)
+        ax.axvline(0.0, color="#d62728", linestyle="--", linewidth=1.0)
+        ax.set_title(
+            f"{token_str} ({token_id})  >{llr_threshold:g}: {ratio_over_threshold:.2f}",
+            fontsize=11,
+        )
+        ax.set_xlabel("LLR", fontsize=10)
+        ax.set_ylabel("Count", fontsize=10)
+        ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.5)
+
+    for ax in axes[len(tokens) :]:
+        ax.axis("off")
+
+    plt.tight_layout()
+
+    suffix = output_path.split(".")[-1].lower()
+    match suffix:
+        case "svg":
+            mpl.rcParams["svg.fonttype"] = "none"
+        case "pdf":
+            mpl.rcParams["pdf.fonttype"] = 42
+
+    plt.savefig(output_path, dpi=200)
+    plt.close()
+
+
 def comp_token_probs(model: GraphTokenLM, tok: AutoTokenizer, sample: dict) -> list[tuple[int, str, float, float]]:
     """Compute token probabilities for the completion tokens given the prompt and graph.
 
@@ -361,6 +423,9 @@ def main():
         num_samples=args.num_samples,
     )
 
+    llr_by_token: dict[tuple[str, int], list[float]] = {}
+    llr_ratio_by_sample: list[float] = []
+
     for sample in tqdm(dataset, desc="Processing samples", disable=args.verbose):
         # Original input
         org_edge_index = sample["graph"]["edge_index"]
@@ -386,6 +451,11 @@ def main():
         base_edge_index = base_sample["graph"]["edge_index"]
         base_token_probs = comp_token_probs(model, tok, base_sample)
         llr_rows, total_llr = comp_log_likelihood_ratio(org_token_probs, base_token_probs)
+        for token_str, token_id, llr in llr_rows:
+            llr_by_token.setdefault((token_str, token_id), []).append(llr)
+        if llr_rows:
+            ratio_over_threshold = sum(1 for _, _, llr in llr_rows if llr > args.llr_threshold) / len(llr_rows)
+            llr_ratio_by_sample.append(ratio_over_threshold)
 
         # Verbose output
         if args.verbose:
@@ -400,6 +470,11 @@ def main():
                 base_prob = base_row[3]
                 print(f"{token_str:<8} {token_id:>6} {org_prob:>10.4g} {base_prob:>10.4g} {llr:>10.4g}")
             print(f"\nTotal LLR: {total_llr:.4g}")
+            if llr_rows:
+                print(
+                    f"Ratio LLR > {args.llr_threshold:g}: "
+                    f"{ratio_over_threshold:.3f} ({ratio_over_threshold * 100:.1f}%)"
+                )
 
         # Plot probabilities
         plot_prob_comparison(
@@ -413,6 +488,19 @@ def main():
             llr_rows=llr_rows,
             llr_threshold=args.llr_threshold,
             output_path=os.path.join(OUT_DIR, f"tok_probs_{sample['index']}.{args.output_format}"),
+        )
+
+    if llr_by_token:
+        plot_llr_histograms(
+            llr_by_token,
+            output_path=os.path.join(OUT_DIR, f"llr_histograms.{args.output_format}"),
+            llr_threshold=args.llr_threshold,
+        )
+    if llr_ratio_by_sample:
+        avg_ratio = sum(llr_ratio_by_sample) / len(llr_ratio_by_sample)
+        print(
+            f"\nAverage ratio LLR > {args.llr_threshold:g} across samples: "
+            f"{avg_ratio:.3f} ({avg_ratio * 100:.1f}%)"
         )
 
 
