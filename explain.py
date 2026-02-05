@@ -60,6 +60,7 @@ class ExplainSampleConfig:
     min_correct_answers: int
     explainer_args: dict[str, float | int]
     llr_threshold: float | None
+    f1_threshold: float
     baseline_graph: str
     dataset_name: str
     subset: str
@@ -201,6 +202,14 @@ def build_args():
         default="complete",
         choices=["complete", "empty"],
         help="Baseline graph type for LLR computation.",
+    )
+
+    # Explanation metrics
+    p.add_argument(
+        "--f1-threshold",
+        type=float,
+        default=0.5,
+        help="Threshold for computing F1 score against ground-truth explanations (default: 0.5)",
     )
 
     # Logging
@@ -415,7 +424,12 @@ def explain_sample(
     gt_edge_mask = _get_gt_explanation(sample)
     pred_edge_mask = explanation.edge_mask.detach().cpu().float()
     edge_mask_metrics = _compute_edge_mask_metrics(pred_edge_mask)
-    auroc, f1 = groundtruth_metrics(pred_edge_mask, gt_edge_mask, metrics=["auroc", "f1_score"])
+    auroc, f1 = groundtruth_metrics(
+        pred_edge_mask,
+        gt_edge_mask,
+        metrics=["auroc", "f1_score"],
+        threshold=cfg.f1_threshold,
+    )
     auprc = average_precision(pred_edge_mask, gt_edge_mask.int(), task="binary").item()
     exp_accuracy = {"auroc": float(auroc), "auprc": float(auprc), "f1": float(f1)}
     ans_accuracy_val = float(ans_accuracy)
@@ -560,6 +574,7 @@ def process_dataset(
         min_correct_answers=args.min_correct_answers,
         explainer_args=explainer_args,
         llr_threshold=args.llr_threshold,
+        f1_threshold=args.f1_threshold,
         baseline_graph=args.baseline_graph,
         dataset_name=args.dataset,
         subset=subset,
