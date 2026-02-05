@@ -10,6 +10,7 @@ for subset in ba_shapes tree_cycle tree_grid_v2 ba_two_motifs; do
 			--model-path masters/multitask \
 			--num-samples 20 \
 			--baseline-graph $baseline_type \
+			--llr-threshold 1.0 \
 			--verbose --output-format svg
 	done
 done
