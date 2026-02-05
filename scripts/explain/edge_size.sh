@@ -13,10 +13,11 @@ for i in "${!subsets[@]}"; do
 			--subset "${subsets[$i]}" --split validation \
 			--model-path masters/multitask \
 			--target-pos-samples \
-			--num-trials 5 \
+			--num-samples 50 --num-trials 5 \
+			--llr-threshold 1.0 \
 			--epoch 200 --lr 0.3 \
 			--edge-size "${edge_size}" --edge-ent 1.0 \
 			--jaccard-k "${jaccard_k_values[$i]}" \
-			--wandb --tags edge_size
+			--wandb --tags jsai edge_size small
 	done
 done
