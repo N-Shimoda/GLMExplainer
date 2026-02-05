@@ -24,6 +24,8 @@ def write_average_metrics_csv(
     output_path: str | Path,
     sample_metrics: Mapping[int, Mapping[str, float]] | None,
     edge_masks: Mapping[int, Sequence[Any]] | None,
+    *,
+    jaccard_k: int = 6,
 ) -> tuple[dict[int, dict[str, float]], dict[str, float]]:
     """Write per-sample averaged metrics and stability scores to a CSV file.
 
@@ -59,7 +61,9 @@ def write_average_metrics_csv(
     ]
 
     per_sample_stability = (
-        compute_edge_mask_stability_metrics_per_sample(edge_masks or {}) if edge_masks is not None else {}
+        compute_edge_mask_stability_metrics_per_sample(edge_masks or {}, jaccard_k=jaccard_k)
+        if edge_masks is not None
+        else {}
     )
     metrics_data = sample_metrics or {}
     zero_stability = {key: 0.0 for key in EDGE_MASK_STABILITY_KEYS}
@@ -102,6 +106,8 @@ def _compute_sample_average_row(
     sample_idx: int,
     stats: dict[str, float] | None,
     edge_masks: Iterable[torch.Tensor] | None,
+    *,
+    jaccard_k: int = 6,
 ) -> dict[str, float] | None:
     """Compute averaged accuracy and stability metrics for a single sample."""
     if not stats:
@@ -119,7 +125,9 @@ def _compute_sample_average_row(
         "edge_mask_ent": stats.get("edge_mask_ent_sum", 0.0) / count,
     }
     mask_list = list(edge_masks) if edge_masks is not None else []
-    stability = compute_edge_mask_stability_metrics_per_sample({sample_idx: mask_list}).get(sample_idx, {})
+    stability = compute_edge_mask_stability_metrics_per_sample({sample_idx: mask_list}, jaccard_k=jaccard_k).get(
+        sample_idx, {}
+    )
     for key in EDGE_MASK_STABILITY_KEYS:
         row[key] = stability.get(key, 0.0)
     return row
@@ -131,11 +139,13 @@ def _record_sample_average_metrics(
     sample_idx: int,
     stats: dict[str, float] | None,
     edge_masks: Iterable[torch.Tensor] | None,
+    *,
+    jaccard_k: int = 6,
 ) -> None:
     """Append a per-sample averaged metrics row to the CSV log if possible."""
     if avg_log_path is None or fieldnames is None:
         return
-    row = _compute_sample_average_row(sample_idx, stats, edge_masks)
+    row = _compute_sample_average_row(sample_idx, stats, edge_masks, jaccard_k=jaccard_k)
     if row is None:
         return
     with open(avg_log_path, "a", newline="") as avg_file:

@@ -211,6 +211,12 @@ def build_args():
         default=0.5,
         help="Threshold for computing F1 score against ground-truth explanations (default: 0.5)",
     )
+    p.add_argument(
+        "--jaccard-k",
+        type=check_non_negative_int,
+        default=6,
+        help="Top-k used for edge-mask Jaccard stability (default: 6)",
+    )
 
     # Logging
     p.add_argument(
@@ -670,6 +676,7 @@ def process_dataset(
                 sample_idx=sample_idx,
                 stats=sample_metrics.get(sample_idx),
                 edge_masks=sample_edge_masks.get(sample_idx, []),
+                jaccard_k=args.jaccard_k,
             )
             finalized_samples.add(sample_idx)
 
@@ -929,7 +936,12 @@ def main():
 
         # Save average metrics per sample
         avg_metrics_path = os.path.join(OUT_DIR, "average_metrics.csv")
-        _, stability_metrics = write_average_metrics_csv(avg_metrics_path, merged_sample_metrics, merged_edge_masks)
+        _, stability_metrics = write_average_metrics_csv(
+            avg_metrics_path,
+            merged_sample_metrics,
+            merged_edge_masks,
+            jaccard_k=args.jaccard_k,
+        )
         print(f"[INFO] Saved average metrics to {avg_metrics_path}")
         if is_distributed:
             for idx in range(world_size):

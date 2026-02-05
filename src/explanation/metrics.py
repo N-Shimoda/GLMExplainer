@@ -163,7 +163,7 @@ def _safe_mean(values: List[float]) -> float:
     return float(sum(values) / len(values)) if values else 0.0
 
 
-def _compute_single_sample_metrics(masks: List[torch.Tensor]) -> Dict[str, float]:
+def _compute_single_sample_metrics(masks: List[torch.Tensor], *, jaccard_k: int = 6) -> Dict[str, float]:
     """Compute edge-mask stability metrics for a single sample.
 
     Parameters
@@ -203,7 +203,7 @@ def _compute_single_sample_metrics(masks: List[torch.Tensor]) -> Dict[str, float
     spearman_scores: List[float] = []
     cosine_scores: List[float] = []
     for i, j in combinations(range(len(masks)), 2):
-        jaccard = _topk_jaccard(masks[i], masks[j])
+        jaccard = _topk_jaccard(masks[i], masks[j], top_k=jaccard_k)
         if jaccard is not None:
             jaccard_scores.append(jaccard)
         spearman = _spearman_rank_correlation(masks[i], masks[j])
@@ -218,7 +218,9 @@ def _compute_single_sample_metrics(masks: List[torch.Tensor]) -> Dict[str, float
 
 
 def compute_edge_mask_stability_metrics_per_sample(
-    sample_edge_masks: Dict[int, List[torch.Tensor]]
+    sample_edge_masks: Dict[int, List[torch.Tensor]],
+    *,
+    jaccard_k: int = 6,
 ) -> Dict[int, Dict[str, float]]:
     """Compute per-sample edge-mask stability metrics.
 
@@ -234,11 +236,15 @@ def compute_edge_mask_stability_metrics_per_sample(
     """
     per_sample: Dict[int, Dict[str, float]] = {}
     for sample_idx, masks in sample_edge_masks.items():
-        per_sample[sample_idx] = _compute_single_sample_metrics(masks)
+        per_sample[sample_idx] = _compute_single_sample_metrics(masks, jaccard_k=jaccard_k)
     return per_sample
 
 
-def compute_edge_mask_stability_metrics(sample_edge_masks: Dict[int, List[torch.Tensor]]) -> Dict[str, float]:
+def compute_edge_mask_stability_metrics(
+    sample_edge_masks: Dict[int, List[torch.Tensor]],
+    *,
+    jaccard_k: int = 6,
+) -> Dict[str, float]:
     """Compute aggregated edge-mask stability metrics over all samples.
 
     Parameters
@@ -251,7 +257,7 @@ def compute_edge_mask_stability_metrics(sample_edge_masks: Dict[int, List[torch.
     dict[str, float]
         Dictionary containing dataset-level averages for each stability metric.
     """
-    per_sample = compute_edge_mask_stability_metrics_per_sample(sample_edge_masks)
+    per_sample = compute_edge_mask_stability_metrics_per_sample(sample_edge_masks, jaccard_k=jaccard_k)
     aggregated = _default_stability_metrics()
     if not per_sample:
         return aggregated
