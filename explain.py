@@ -45,9 +45,9 @@ AVERAGE_METRIC_FIELDNAMES = [
     "auroc",
     "auprc",
     "f1",
+    *EDGE_MASK_STABILITY_KEYS,
     "edge_mask_size",
     "edge_mask_ent",
-    *EDGE_MASK_STABILITY_KEYS,
 ]
 
 
@@ -763,7 +763,16 @@ def main():
     base_log_path = os.path.join(OUT_DIR, "sample_metrics.csv")
     shard_log_path = base_log_path if world_size == 1 else os.path.join(OUT_DIR, f"metrics_rank{rank}.csv")
 
-    fieldnames = ["sample_index", "trial", "answer_accuracy", "auroc", "auprc", "f1", "edge_mask_size", "edge_mask_ent"]
+    fieldnames = [
+        "sample_index",
+        "trial",
+        "answer_accuracy",
+        "auroc",
+        "auprc",
+        "f1",
+        "edge_mask_size",
+        "edge_mask_ent",
+    ]
     _write_metrics_header(shard_log_path, fieldnames)
     avg_metrics_base_path = os.path.join(OUT_DIR, "average_metrics.csv")
     avg_metrics_shard_path = (
