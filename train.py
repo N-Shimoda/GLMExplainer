@@ -701,8 +701,6 @@ def eval_ddp(
         Accuracy on the test dataset if running on the main process, otherwise None.
     """
     # Prepare dataset shard for each rank
-    if num_eval_trials > 1:
-        test_ds = concatenate_datasets([test_ds] * num_eval_trials)
     if dist.is_initialized():
         _safe_barrier()
         world_size = dist.get_world_size()
@@ -716,19 +714,21 @@ def eval_ddp(
     # Evaluate on the shard assigned to this rank.
     if is_main_process():
         print(f"[INFO] max_new_tokens={max_new_tokens}")
-    local_results = eval_model(model, local_test_ds, batch_size=8, max_new_tokens=max_new_tokens)
-
-    if dist.is_initialized():
-        gathered_results = [None] * world_size
-        dist.all_gather_object(gathered_results, local_results)
-        results = [item for sublist in gathered_results for item in sublist] if rank == 0 else None
-    else:
-        results = local_results
+    all_results = [] if is_main_process() else None
+    for _ in range(num_eval_trials):
+        local_results = eval_model(model, local_test_ds, batch_size=8, max_new_tokens=max_new_tokens)
+        if dist.is_initialized():
+            gathered_results = [None] * world_size
+            dist.all_gather_object(gathered_results, local_results)
+            if rank == 0:
+                all_results.extend([item for sublist in gathered_results for item in sublist])
+        else:
+            all_results.extend(local_results)
 
     # Collect and log results on the main process
     if is_main_process():
         res_file = os.path.join("results", subset, f"{date_str}.json")
-        acc = collect_result(results, res_file, subset)
+        acc = collect_result(all_results, res_file, subset)
         if use_wandb and wandb_key:
             wandb.log({wandb_key: acc})
         return acc

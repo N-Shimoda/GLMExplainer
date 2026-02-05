@@ -5,7 +5,7 @@ from math import ceil
 
 import torch
 import torch.distributed as dist
-from datasets import concatenate_datasets, load_dataset
+from datasets import load_dataset
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch_geometric.data import Batch as PygBatch
 from torch_geometric.data import Data as PygData
@@ -307,10 +307,6 @@ def main():
             lpe_dim,
             use_degree_emb=use_degree_emb,
         )
-        repeated_ds = concatenate_datasets([test_ds] * args.num_trials)
-        if use_dist and world_size > 1:
-            start, end = _shard_dataset(len(repeated_ds), rank, world_size)
-            repeated_ds = repeated_ds.select(range(start, end))
 
         # Evaluate the model
         if args.max_new_tokens is not None:
@@ -320,14 +316,22 @@ def main():
         else:
             max_new_tokens_dict = EXT_MAX_NEW_TOKENS if args.use_custom_dataset else MAX_NEW_TOKENS
             max_new_tokens = max_new_tokens_dict.get(subset, 32)
-        results = eval_model(model, repeated_ds, args.batch_size, max_new_tokens)
+        all_results = []
+        for _ in range(args.num_trials):
+            local_ds = test_ds
+            if use_dist and world_size > 1:
+                start, end = _shard_dataset(len(test_ds), rank, world_size)
+                local_ds = test_ds.select(range(start, end))
+            local_results = eval_model(model, local_ds, args.batch_size, max_new_tokens)
 
-        # Save results
-        if use_dist:
-            gathered: list[list[dict]] = [None for _ in range(world_size)]
-            dist.all_gather_object(gathered, results)
-            if is_main:
-                results = [item for sublist in gathered for item in sublist]
+            # Save results
+            if use_dist:
+                gathered: list[list[dict]] = [None for _ in range(world_size)]
+                dist.all_gather_object(gathered, local_results)
+                if is_main:
+                    all_results.extend([item for sublist in gathered for item in sublist])
+            else:
+                all_results.extend(local_results)
 
         if is_main:
             match args.split:
@@ -336,7 +340,7 @@ def main():
                 case _:
                     file_name = f"{run_name}_{args.split}.json" if run_name else f"results_{args.split}.json"
             res_file = os.path.join("results", subset, file_name)
-            acc = collect_result(results, res_file, subset)
+            acc = collect_result(all_results, res_file, subset)
             print(f"[SUMMARY] subset={subset} accuracy={acc}")
 
     if use_dist:
