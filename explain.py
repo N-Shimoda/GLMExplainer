@@ -912,6 +912,8 @@ def main():
         avg_auroc = 0.0
         avg_auprc = 0.0
         avg_f1 = 0.0
+        avg_edge_size = 0.0
+        avg_edge_ent = 0.0
         samples_used_count = 0
         samples_total_count = 0
         samples_used_pct = 0.0
@@ -925,6 +927,11 @@ def main():
             avg_auroc = exp_metric_totals["auroc"] / total_count
             avg_auprc = exp_metric_totals["auprc"] / total_count
             avg_f1 = exp_metric_totals["f1"] / total_count
+            if merged_sample_metrics is not None:
+                total_edge_size = sum(stats.get("edge_mask_size_sum", 0.0) for stats in merged_sample_metrics.values())
+                total_edge_ent = sum(stats.get("edge_mask_ent_sum", 0.0) for stats in merged_sample_metrics.values())
+                avg_edge_size = total_edge_size / total_count
+                avg_edge_ent = total_edge_ent / total_count
             print(
                 "[INFO] Metrics across positive samples: "
                 f"[INFO] AnswerAcc={avg_answer_accuracy:.3f}, "
@@ -958,6 +965,8 @@ def main():
                 "avg_auroc": avg_auroc,
                 "avg_auprc": avg_auprc,
                 "avg_f1": avg_f1,
+                "avg_edge_size": avg_edge_size,
+                "avg_edge_ent": avg_edge_ent,
                 **stability_metrics,
                 **explainer_args,
                 "llr_threshold": args.llr_threshold,
@@ -968,6 +977,8 @@ def main():
             wandb_payload = stability_metrics.copy()
             wandb_payload["samples_used_pct"] = samples_used_pct
             wandb_payload["samples_used_count"] = samples_used_count
+            wandb_payload["avg_edge_size"] = avg_edge_size
+            wandb_payload["avg_edge_ent"] = avg_edge_ent
             if total_count > 0:
                 wandb_payload.update(
                     {

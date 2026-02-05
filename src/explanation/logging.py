@@ -176,6 +176,8 @@ def append_run_history_row(history_path: str | Path, row: Mapping[str, Any]) -> 
         "avg_auroc",
         "avg_auprc",
         "avg_f1",
+        "avg_edge_size",
+        "avg_edge_ent",
         *EDGE_MASK_STABILITY_KEYS,
         "avg_answer_accuracy",
     ]
