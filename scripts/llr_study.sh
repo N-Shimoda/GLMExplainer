@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-for subset in ba_shapes tree_cycle tree_grid ba_two_motifs shortest_path; do
+for subset in ba_shapes tree_cycle tree_grid_v2 ba_two_motifs; do
 	for baseline_type in complete empty random; do
 		echo -e "\nsubset: $subset, baseline: $baseline_type"
 		python tools/llr_study.py \
