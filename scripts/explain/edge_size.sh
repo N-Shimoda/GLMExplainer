@@ -15,6 +15,7 @@ for graph_type in complete empty; do
 				--model-path masters/multitask \
 				--target-pos-samples \
 				--num-samples 50 --num-trials 5 \
+				--num-gen-trials 10 --min-correct-answers 5 \
 				--baseline-graph "${graph_type}" \
 				--llr-threshold 1.0 \
 				--epoch 200 --lr 0.3 \
