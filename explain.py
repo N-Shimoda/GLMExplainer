@@ -10,13 +10,13 @@ from typing import Iterable, Literal
 
 import torch
 import torch.distributed as dist
+import wandb
 from torch_geometric.explain import Explainer, GNNExplainer, groundtruth_metrics
 from torchmetrics.functional import average_precision
 from tqdm import tqdm
 from transformers import AutoTokenizer, GenerationConfig
 from transformers.trainer_utils import set_seed
 
-import wandb
 from eval import MAX_NEW_TOKENS, create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
@@ -926,13 +926,13 @@ def main():
             avg_auprc = exp_metric_totals["auprc"] / total_count
             avg_f1 = exp_metric_totals["f1"] / total_count
             print(
-                "Average explanation accuracy across positive samples: "
-                f"AnswerAcc={avg_answer_accuracy:.3f}, "
+                "[INFO] Metrics across positive samples: "
+                f"[INFO] AnswerAcc={avg_answer_accuracy:.3f}, "
                 f"AUROC={avg_auroc:.3f}, AUPRC={avg_auprc:.3f}, F1={avg_f1:.3f}"
             )
-            print(f"Saved explanation metrics to {base_log_path}")
+            print(f"[INFO] Saved explanation metrics to {base_log_path}")
         else:
-            print("No explanation metrics recorded for positive samples.")
+            print("[WARN] No explanation metrics recorded for positive samples.")
 
         # Save average metrics per sample
         avg_metrics_path = os.path.join(OUT_DIR, "average_metrics.csv")
