@@ -7,7 +7,7 @@ for subset in ba_shapes tree_cycle tree_grid ba_two_motifs shortest_path; do
 		echo -e "\nsubset: $subset, baseline: $baseline_type"
 		python tools/llr_study.py \
 			--subset $subset \
-			--model-path masters/$subset/ \
+			--model-path masters/multitask \
 			--num-samples 20 \
 			--baseline-graph $baseline_type \
 			--verbose --output-format svg
