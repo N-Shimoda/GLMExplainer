@@ -45,10 +45,11 @@ def _deserialize_runs(records):
     ]
 
 
-def save_cached_runs(cache_path: str, baselines, ours):
+def save_cached_runs(cache_path: str, baselines, ours_complete, ours_empty):
     payload = {
         "baselines": _serialize_runs(baselines),
-        "ours": _serialize_runs(ours),
+        "ours_complete": _serialize_runs(ours_complete),
+        "ours_empty": _serialize_runs(ours_empty),
     }
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
     with open(cache_path, "w", encoding="utf-8") as f:
@@ -60,4 +61,8 @@ def load_cached_runs(cache_path: str):
         raise FileNotFoundError(f"Cache not found: {cache_path}")
     with open(cache_path, "r", encoding="utf-8") as f:
         payload = json.load(f)
-    return _deserialize_runs(payload.get("baselines", [])), _deserialize_runs(payload.get("ours", []))
+    return (
+        _deserialize_runs(payload.get("baselines", [])),
+        _deserialize_runs(payload.get("ours_complete", [])),
+        _deserialize_runs(payload.get("ours_empty", [])),
+    )

@@ -5,7 +5,6 @@ from typing import Literal, Optional
 
 import matplotlib.pyplot as plt
 import pandas as pd
-
 import wandb
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -18,7 +17,7 @@ from tools.writing.wandb_cache import load_cached_runs, save_cached_runs  # noqa
 
 def build_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--tags", type=str, nargs="+", default=["jsai", "edge_size"], help="Wandb run tags to filter.")
+    p.add_argument("--tags", type=str, nargs="+", default=["edge_size", "small"], help="Wandb run tags to filter.")
     p.add_argument(
         "--use-cache",
         action="store_true",
@@ -42,11 +41,18 @@ def build_args():
 def run_test(args: argparse.Namespace):
     """Run a synthetic test of plot_figure()"""
     os.makedirs(args.output_dir, exist_ok=True)
-    synthetic_ours = pd.DataFrame(
+    synthetic_complete = pd.DataFrame(
         {
             "edge size": [1, 2, 4, 8, 16],
             "AUROC": [0.61, 0.65, 0.7, 0.73, 0.76],
             "Jaccard": [0.2, 0.24, 0.27, 0.29, 0.31],
+        }
+    )
+    synthetic_empty = pd.DataFrame(
+        {
+            "edge size": [1, 2, 4, 8, 16],
+            "AUROC": [0.6, 0.63, 0.67, 0.7, 0.73],
+            "Jaccard": [0.19, 0.22, 0.25, 0.27, 0.29],
         }
     )
     synthetic_baseline = pd.DataFrame(
@@ -58,7 +64,8 @@ def run_test(args: argparse.Namespace):
     )
     filename = os.path.join(args.output_dir, f"auroc_test.{args.output_format}")
     plot_figure(
-        synthetic_ours,
+        synthetic_complete,
+        synthetic_empty,
         synthetic_baseline,
         y_lim=None,
         metric="auroc",
@@ -89,8 +96,10 @@ def get_wandb_runs(tags: list[str]):
     )
     baselines = [run for run in runs if run.config.get("llr_threshold") == 0]
     ours = [run for run in runs if run.config.get("llr_threshold", 0) > 0]
+    ours_complete = [run for run in ours if run.config.get("baseline_graph") == "complete"]
+    ours_empty = [run for run in ours if run.config.get("baseline_graph") == "empty"]
 
-    return baselines, ours
+    return baselines, ours, ours_complete, ours_empty
 
 
 def get_best_run(
@@ -157,13 +166,14 @@ def create_log_df(runs, subset: str) -> pd.DataFrame:
 
 
 def plot_figure(
-    ours_df: pd.DataFrame,
+    complete_df: pd.DataFrame,
+    empty_df: pd.DataFrame,
     baseline_df: pd.DataFrame,
     y_lim: Optional[tuple[float, float]],
     metric: Literal["auroc", "jaccard"],
     filename: str,
 ):
-    """Plot baseline vs. ours for a selected metric over edge sizes."""
+    """Plot baseline vs. complete/empty for a selected metric over edge sizes."""
     metric_col_map = {
         "auroc": "AUROC",
         "jaccard": "Jaccard",
@@ -184,15 +194,24 @@ def plot_figure(
         d[y_col] = pd.to_numeric(d[y_col], errors="coerce")
         return d.dropna(subset=[x_col, y_col]).sort_values(by=x_col)
 
-    ours_clean = _prepare(ours_df)
+    complete_clean = _prepare(complete_df)
+    empty_clean = _prepare(empty_df)
     baseline_clean = _prepare(baseline_df)
 
     plt.figure()
     plt.plot(
-        ours_clean[x_col],
-        ours_clean[y_col],
-        label="w/ token selection",
+        complete_clean[x_col],
+        complete_clean[y_col],
+        label="complete",
         color="C1" if metric == "auroc" else "C0",
+        linestyle="-",
+        marker="o",
+    )
+    plt.plot(
+        empty_clean[x_col],
+        empty_clean[y_col],
+        label="empty",
+        color="C2" if metric == "auroc" else "C3",
         linestyle="-",
         marker="o",
     )
@@ -235,27 +254,37 @@ def main():
 
     # Load runs from wandb
     if args.use_cache:
-        baselines, ours = load_cached_runs(cache_path)
+        baselines, ours_complete, ours_empty = load_cached_runs(cache_path)
         baselines = _filter_runs_by_tags(baselines, args.tags)
-        ours = _filter_runs_by_tags(ours, args.tags)
+        ours_complete = _filter_runs_by_tags(ours_complete, args.tags)
+        ours_empty = _filter_runs_by_tags(ours_empty, args.tags)
         print(f"Loaded cached runs from {cache_path}.")
     else:
-        baselines, ours = get_wandb_runs(args.tags)
-        print(f"Loaded {len(baselines)} baselines and {len(ours)} ours runs.")
-        save_cached_runs(cache_path, baselines, ours)
+        baselines, ours, ours_complete, ours_empty = get_wandb_runs(args.tags)
+        print(
+            "Loaded "
+            f"{len(baselines)} baselines, {len(ours_complete)} complete, "
+            f"and {len(ours_empty)} empty runs."
+        )
+        save_cached_runs(cache_path, baselines, ours_complete, ours_empty)
         print(f"Saved runs cache to {cache_path}.")
 
     # Report best runs
-    for run_type, runs in [("Baselines", baselines), ("Ours", ours)]:
+    for run_type, runs in [
+        ("Baselines", baselines),
+        ("Complete", ours_complete),
+        ("Empty", ours_empty),
+    ]:
         print(f"\n{run_type} best runs:")
         report_best_runs(runs, metric="avg_auroc")
 
     # Determine y-limits for each metric
     if args.set_y_lim:
+        all_runs = baselines + ours_complete + ours_empty
         y_lim_dict = {
             metric: (
-                min([run.summary[wandb_metric] for run in baselines + ours]),
-                max([run.summary[wandb_metric] for run in baselines + ours]) + 0.0005,
+                min([run.summary[wandb_metric] for run in all_runs]),
+                max([run.summary[wandb_metric] for run in all_runs]) + 0.0005,
             )
             for metric, wandb_metric in metric_mapping.items()
         }
@@ -266,11 +295,13 @@ def main():
     # Create plots
     for subset in MOTIFQA_SUBSETS:
         baseline_df = create_log_df(baselines, subset)
-        ours_df = create_log_df(ours, subset)
+        complete_df = create_log_df(ours_complete, subset)
+        empty_df = create_log_df(ours_empty, subset)
         for metric in metrics:
             filename = os.path.join(args.output_dir, metric, f"{subset}.{args.output_format}")
             plot_figure(
-                ours_df,
+                complete_df,
+                empty_df,
                 baseline_df,
                 y_lim=y_lim_dict[metric] if y_lim_dict else None,
                 metric=metric,
