@@ -46,6 +46,7 @@ def run_test(args: argparse.Namespace):
             "edge size": [1, 2, 4, 8, 16],
             "AUROC": [0.61, 0.65, 0.7, 0.73, 0.76],
             "Jaccard": [0.2, 0.24, 0.27, 0.29, 0.31],
+            "Spearman": [0.3, 0.35, 0.4, 0.43, 0.47],
         }
     )
     synthetic_empty = pd.DataFrame(
@@ -53,6 +54,7 @@ def run_test(args: argparse.Namespace):
             "edge size": [1, 2, 4, 8, 16],
             "AUROC": [0.6, 0.63, 0.67, 0.7, 0.73],
             "Jaccard": [0.19, 0.22, 0.25, 0.27, 0.29],
+            "Spearman": [0.28, 0.32, 0.36, 0.39, 0.42],
         }
     )
     synthetic_baseline = pd.DataFrame(
@@ -60,6 +62,7 @@ def run_test(args: argparse.Namespace):
             "edge size": [1, 2, 4, 8, 16],
             "AUROC": [0.55, 0.58, 0.61, 0.63, 0.64],
             "Jaccard": [0.16, 0.18, 0.2, 0.21, 0.22],
+            "Spearman": [0.22, 0.25, 0.28, 0.3, 0.32],
         }
     )
     filename = os.path.join(args.output_dir, f"auroc_test.{args.output_format}")
@@ -147,7 +150,7 @@ def create_log_df(runs, subset: str) -> pd.DataFrame:
     subset_runs = [run for run in runs if run.config.get("subset") == subset]
 
     # Create dataframe
-    df = pd.DataFrame({"edge size": [], "AUROC": [], "Jaccard": []})
+    df = pd.DataFrame({"edge size": [], "AUROC": [], "Jaccard": [], "Spearman": []})
     for run in subset_runs:
         df = pd.concat(
             [
@@ -157,6 +160,7 @@ def create_log_df(runs, subset: str) -> pd.DataFrame:
                         "edge size": [run.config["edge_size"]],
                         "AUROC": [run.summary["avg_auroc"]],
                         "Jaccard": [run.summary["edge_mask_jaccard"]],
+                        "Spearman": [run.summary["edge_mask_spearman"]],
                     }
                 ),
             ],
@@ -170,13 +174,14 @@ def plot_figure(
     empty_df: pd.DataFrame,
     baseline_df: pd.DataFrame,
     y_lim: Optional[tuple[float, float]],
-    metric: Literal["auroc", "jaccard"],
+    metric: Literal["auroc", "jaccard", "spearman"],
     filename: str,
 ):
     """Plot baseline vs. complete/empty for a selected metric over edge sizes."""
     metric_col_map = {
         "auroc": "AUROC",
         "jaccard": "Jaccard",
+        "spearman": "Spearman",
     }
     if metric not in metric_col_map:
         raise ValueError(f"Unsupported metric '{metric}'. Expected one of {list(metric_col_map)}")
@@ -238,7 +243,11 @@ def plot_figure(
 
 def main():
     args = build_args()
-    metric_mapping = {"auroc": "avg_auroc", "jaccard": "edge_mask_jaccard"}
+    metric_mapping = {
+        "auroc": "avg_auroc",
+        "jaccard": "edge_mask_jaccard",
+        "spearman": "edge_mask_spearman",
+    }
     metrics = list(metric_mapping.keys())
 
     if args.test:
@@ -284,7 +293,7 @@ def main():
         y_lim_dict = {
             metric: (
                 min([run.summary[wandb_metric] for run in all_runs]),
-                max([run.summary[wandb_metric] for run in all_runs]) + 0.0005,
+                max([run.summary[wandb_metric] for run in all_runs]) + 0.005,
             )
             for metric, wandb_metric in metric_mapping.items()
         }
