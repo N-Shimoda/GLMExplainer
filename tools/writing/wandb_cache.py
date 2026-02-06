@@ -7,6 +7,7 @@ from dataclasses import dataclass
 class CachedRun:
     config: dict
     summary: dict
+    tags: list
     name: str
     id: str
 
@@ -26,6 +27,7 @@ def _serialize_runs(runs):
         {
             "config": _jsonify(dict(run.config)),
             "summary": _jsonify(dict(run.summary)),
+            "tags": _jsonify(list(run.tags or [])),
             "name": run.name or "",
             "id": run.id or "",
         }
@@ -38,6 +40,7 @@ def _deserialize_runs(records):
         CachedRun(
             config=record.get("config", {}),
             summary=record.get("summary", {}),
+            tags=record.get("tags", []),
             name=record.get("name", ""),
             id=record.get("id", ""),
         )

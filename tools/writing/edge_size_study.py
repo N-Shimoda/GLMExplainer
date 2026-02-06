@@ -81,7 +81,7 @@ def _filter_runs_by_tags(runs: list[wandb.apis.public.Run], tags: list[str]) -> 
     if not tags:
         return runs
     tag_set = set(tags)
-    return [run for run in runs if tag_set.issubset(set(run.tags or []))]
+    return [run for run in runs if tag_set.issubset(set(getattr(run, "tags", []) or []))]
 
 
 def get_wandb_runs(tags: list[str]):
