@@ -27,7 +27,7 @@ def build_args():
         "--set-y-lim", action="store_true", help="Set y-axis limits based on min/max values across all runs."
     )
     p.add_argument("--output-dir", type=str, default="plots/edge_size_study")
-    p.add_argument("--output-format", type=str, default="pdf", choices=["pdf", "svg"])
+    p.add_argument("--output-format", type=str, default="svg", choices=["svg", "pdf"])
 
     # Debugging
     p.add_argument(
@@ -211,7 +211,7 @@ def plot_figure(
         complete_clean[x_col],
         complete_clean[y_col],
         label="complete",
-        color="C1" if metric == "auroc" else "C0",
+        color="C1",
         linestyle="-",
         marker="o",
     )
@@ -219,7 +219,7 @@ def plot_figure(
         empty_clean[x_col],
         empty_clean[y_col],
         label="empty",
-        color="C2" if metric == "auroc" else "C3",
+        color="C2",
         linestyle="-",
         marker="o",
     )
