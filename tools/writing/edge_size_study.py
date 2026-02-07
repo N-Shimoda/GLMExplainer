@@ -84,7 +84,9 @@ def _filter_runs_by_tags(runs: list[wandb.apis.public.Run], tags: list[str]) -> 
     return [run for run in runs if tag_set.issubset(set(getattr(run, "tags", []) or []))]
 
 
-def get_wandb_runs(tags: list[str]):
+def get_wandb_runs(
+    tags: list[str],
+) -> tuple[list[wandb.apis.public.Run], list[wandb.apis.public.Run], list[wandb.apis.public.Run]]:
     """Load wandb runs from MotifQA-Explainer project."""
     api = wandb.Api()
     filters = {
@@ -102,7 +104,7 @@ def get_wandb_runs(tags: list[str]):
     ours_complete = [run for run in ours if run.config.get("baseline_graph") == "complete"]
     ours_empty = [run for run in ours if run.config.get("baseline_graph") == "empty"]
 
-    return baselines, ours, ours_complete, ours_empty
+    return baselines, ours_complete, ours_empty
 
 
 def get_best_run(
@@ -270,7 +272,7 @@ def main():
         ours_empty = _filter_runs_by_tags(ours_empty, args.tags)
         print(f"Loaded cached runs from {cache_path}.")
     else:
-        baselines, ours, ours_complete, ours_empty = get_wandb_runs(args.tags)
+        baselines, ours_complete, ours_empty = get_wandb_runs(args.tags)
         print(
             "Loaded "
             f"{len(baselines)} baselines, {len(ours_complete)} complete, "
@@ -303,10 +305,14 @@ def main():
         y_lim_dict = None
 
     # Create plots
+    skipped = []
     for subset in MOTIFQA_SUBSETS:
         baseline_df = create_log_df(baselines, subset)
         complete_df = create_log_df(ours_complete, subset)
         empty_df = create_log_df(ours_empty, subset)
+        if baseline_df.empty and complete_df.empty and empty_df.empty:
+            skipped.append(subset)
+            continue
         for metric in metrics:
             filename = os.path.join(args.output_dir, metric, f"{subset}.{args.output_format}")
             plot_figure(
@@ -318,6 +324,8 @@ def main():
                 filename=filename,
             )
     print(f"\nPlots saved to {args.output_dir}")
+    if skipped:
+        print(f"Skipped subsets with no runs: {', '.join(skipped)}")
 
 
 if __name__ == "__main__":
