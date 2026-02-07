@@ -41,6 +41,6 @@ for i in "${!subsets[@]}"; do
 			--epochs 200 --lr "${lr}" \
 			--edge-size "${edge_sizes[$i]}" --edge-ent 1.0 \
 			--jaccard-k "${jaccard_k_values[$i]}" \
-			--wandb --tags epochs small
+			--wandb --tags lr small
 	done
 done
