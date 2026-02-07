@@ -127,12 +127,13 @@ def report_best_runs(runs, metric: Literal["avg_auroc", "edge_mask_jaccard"] = "
         if not subset_runs:
             continue
         best_run = get_best_run(subset_runs, metric)
+        run_name = best_run.name.split("_")[-1] if best_run.name else best_run.id
         rows.append(
             {
                 "subset": subset,
                 "metric": metric,
                 "value": _format_metric(best_run.summary.get(metric)),
-                "run": best_run.name or best_run.id,
+                "run": run_name,
                 "edge_size": best_run.config.get("edge_size", "n/a"),
             }
         )
@@ -142,7 +143,7 @@ def report_best_runs(runs, metric: Literal["avg_auroc", "edge_mask_jaccard"] = "
         return
 
     df = pd.DataFrame(rows)
-    print(df.to_string(index=False))
+    print(df.to_string(index=False, col_space=[10, 10, 7, 10, 8]))
 
 
 def create_log_df(runs, subset: str) -> pd.DataFrame:
