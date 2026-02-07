@@ -32,7 +32,7 @@ run_explain_loop() {
 		--model-path outputs/"${subset}"
 		--target-pos-samples
 		--num-trials 5
-		--epoch "$epoch" --lr "$lr"
+		--epochs "$epoch" --lr "$lr"
 		--edge-size "$edge_size" --edge-ent "$edge_ent"
 		--wandb
 	)

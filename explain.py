@@ -10,13 +10,13 @@ from typing import Iterable, Literal
 
 import torch
 import torch.distributed as dist
+import wandb
 from torch_geometric.explain import Explainer, GNNExplainer, groundtruth_metrics
 from torchmetrics.functional import average_precision
 from tqdm import tqdm
 from transformers import AutoTokenizer, GenerationConfig
 from transformers.trainer_utils import set_seed
 
-import wandb
 from eval import MAX_NEW_TOKENS, create_pyg_batch
 from src.ckpt import _resolve_ckpt_path
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
@@ -35,6 +35,7 @@ from src.metrics import comp_accuracy
 from src.utils import visualize_motif_explanation
 
 GRAPH_PDF_SUBDIR = "graphs"
+IMPORTANCE_SUBDIR = "importance"
 OUTPUT_TEXTS_FILENAME = "output_texts.jsonl"
 DATASET_FILENAME = "filtered_dataset.jsonl"
 TRIAL_OVERRIDE_COLUMN = "_trial_override"
@@ -45,6 +46,8 @@ AVERAGE_METRIC_FIELDNAMES = [
     "auprc",
     "f1",
     *EDGE_MASK_STABILITY_KEYS,
+    "edge_mask_size",
+    "edge_mask_ent",
 ]
 
 
@@ -57,6 +60,7 @@ class ExplainSampleConfig:
     min_correct_answers: int
     explainer_args: dict[str, float | int]
     llr_threshold: float | None
+    f1_threshold: float
     baseline_graph: str
     dataset_name: str
     subset: str
@@ -198,6 +202,20 @@ def build_args():
         default="complete",
         choices=["complete", "empty"],
         help="Baseline graph type for LLR computation.",
+    )
+
+    # Explanation metrics
+    p.add_argument(
+        "--f1-threshold",
+        type=float,
+        default=0.5,
+        help="Threshold for computing F1 score against ground-truth explanations (default: 0.5)",
+    )
+    p.add_argument(
+        "--jaccard-k",
+        type=check_non_negative_int,
+        default=6,
+        help="Top-k used for edge-mask Jaccard stability (default: 6)",
     )
 
     # Logging
@@ -411,7 +429,13 @@ def explain_sample(
     # Compute explanation accuracy
     gt_edge_mask = _get_gt_explanation(sample)
     pred_edge_mask = explanation.edge_mask.detach().cpu().float()
-    auroc, f1 = groundtruth_metrics(pred_edge_mask, gt_edge_mask, metrics=["auroc", "f1_score"])
+    edge_mask_metrics = _compute_edge_mask_metrics(pred_edge_mask)
+    auroc, f1 = groundtruth_metrics(
+        pred_edge_mask,
+        gt_edge_mask,
+        metrics=["auroc", "f1_score"],
+        threshold=cfg.f1_threshold,
+    )
     auprc = average_precision(pred_edge_mask, gt_edge_mask.int(), task="binary").item()
     exp_accuracy = {"auroc": float(auroc), "auprc": float(auprc), "f1": float(f1)}
     ans_accuracy_val = float(ans_accuracy)
@@ -424,17 +448,20 @@ def explain_sample(
             "trial": trial_idx,
             "answer_accuracy": ans_accuracy_val,
             **exp_accuracy,
+            **edge_mask_metrics,
         }
         with open(cfg.log_path, "a", newline="") as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=cfg.fieldnames)
             writer.writerow(record)
         metrics_logged = True
 
-    # Directories to save figures
+    # Directories to save figures and raw edge importance
     suffix = f"{sample['index']}_{trial_idx}" if cfg.num_trials > 1 else f"{sample['index']}"
     out_dir = os.path.dirname(cfg.log_path)
     graph_dir = os.path.join(out_dir, GRAPH_PDF_SUBDIR, f"graph_{sample['index']}")
+    importance_dir = os.path.join(out_dir, IMPORTANCE_SUBDIR, f"graph_{sample['index']}")
     os.makedirs(graph_dir, exist_ok=True)
+    os.makedirs(importance_dir, exist_ok=True)
 
     # Save visualizations
     graph_path = os.path.join(graph_dir, f"{suffix}.{cfg.file_type}")
@@ -449,7 +476,29 @@ def explain_sample(
     else:
         explanation.visualize_graph(graph_path)
 
+    # Save raw edge importance values with edge index mapping
+    importance_path = os.path.join(importance_dir, f"{suffix}.csv")
+    edge_index = pyg_batch.edge_index.detach().cpu()
+    with open(importance_path, "w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["src", "dst", "edge_mask"])
+        for (src, dst), score in zip(edge_index.t().tolist(), pred_edge_mask.tolist()):
+            writer.writerow([src, dst, score])
+
     return metrics_logged, exp_accuracy, ans_accuracy_val, pred_edge_mask
+
+
+def _compute_edge_mask_metrics(edge_mask: torch.Tensor | None) -> dict[str, float]:
+    """Compute edge mask summary metrics (sum and entropy)."""
+    if edge_mask is None or edge_mask.numel() == 0:
+        return {"edge_mask_size": 0.0, "edge_mask_ent": 0.0}
+    mask = edge_mask.float().clamp(min=0.0)
+    total = float(mask.sum().item())
+    if total <= 0.0:
+        return {"edge_mask_size": total, "edge_mask_ent": 0.0}
+    probs = mask / total
+    entropy = float(-(probs * (probs + 1e-12).log()).sum().item())
+    return {"edge_mask_size": total, "edge_mask_ent": entropy}
 
 
 def process_dataset(
@@ -531,6 +580,7 @@ def process_dataset(
         min_correct_answers=args.min_correct_answers,
         explainer_args=explainer_args,
         llr_threshold=args.llr_threshold,
+        f1_threshold=args.f1_threshold,
         baseline_graph=args.baseline_graph,
         dataset_name=args.dataset,
         subset=subset,
@@ -550,6 +600,8 @@ def process_dataset(
             "auroc_sum": 0.0,
             "auprc_sum": 0.0,
             "f1_sum": 0.0,
+            "edge_mask_size_sum": 0.0,
+            "edge_mask_ent_sum": 0.0,
             "count": 0,
         }
     )
@@ -590,6 +642,7 @@ def process_dataset(
             if edge_mask is not None:
                 sample_edge_masks[sample_idx].append(edge_mask)
             if logged:
+                edge_mask_metrics = _compute_edge_mask_metrics(edge_mask)
                 exp_metric_totals["auroc"] += exp_accuracy["auroc"]
                 exp_metric_totals["auprc"] += exp_accuracy["auprc"]
                 exp_metric_totals["f1"] += exp_accuracy["f1"]
@@ -600,6 +653,8 @@ def process_dataset(
                 stats["auroc_sum"] += exp_accuracy["auroc"]
                 stats["auprc_sum"] += exp_accuracy["auprc"]
                 stats["f1_sum"] += exp_accuracy["f1"]
+                stats["edge_mask_size_sum"] += edge_mask_metrics["edge_mask_size"]
+                stats["edge_mask_ent_sum"] += edge_mask_metrics["edge_mask_ent"]
                 stats["count"] += 1
             if progress is not None:
                 if args.wandb:
@@ -621,6 +676,7 @@ def process_dataset(
                 sample_idx=sample_idx,
                 stats=sample_metrics.get(sample_idx),
                 edge_masks=sample_edge_masks.get(sample_idx, []),
+                jaccard_k=args.jaccard_k,
             )
             finalized_samples.add(sample_idx)
 
@@ -729,7 +785,16 @@ def main():
     base_log_path = os.path.join(OUT_DIR, "sample_metrics.csv")
     shard_log_path = base_log_path if world_size == 1 else os.path.join(OUT_DIR, f"metrics_rank{rank}.csv")
 
-    fieldnames = ["sample_index", "trial", "answer_accuracy", "auroc", "auprc", "f1"]
+    fieldnames = [
+        "sample_index",
+        "trial",
+        "answer_accuracy",
+        "auroc",
+        "auprc",
+        "f1",
+        "edge_mask_size",
+        "edge_mask_ent",
+    ]
     _write_metrics_header(shard_log_path, fieldnames)
     avg_metrics_base_path = os.path.join(OUT_DIR, "average_metrics.csv")
     avg_metrics_shard_path = (
@@ -808,6 +873,8 @@ def main():
                     "auroc_sum": 0.0,
                     "auprc_sum": 0.0,
                     "f1_sum": 0.0,
+                    "edge_mask_size_sum": 0.0,
+                    "edge_mask_ent_sum": 0.0,
                     "count": 0,
                 }
             )
@@ -828,6 +895,8 @@ def main():
                     acc["auroc_sum"] += stats.get("auroc_sum", 0.0)
                     acc["auprc_sum"] += stats.get("auprc_sum", 0.0)
                     acc["f1_sum"] += stats.get("f1_sum", 0.0)
+                    acc["edge_mask_size_sum"] += stats.get("edge_mask_size_sum", 0.0)
+                    acc["edge_mask_ent_sum"] += stats.get("edge_mask_ent_sum", 0.0)
                     acc["count"] += stats.get("count", 0)
             merged_sample_metrics = {idx: dict(vals) for idx, vals in merged_metrics_accum.items()}
         else:
@@ -843,6 +912,8 @@ def main():
         avg_auroc = 0.0
         avg_auprc = 0.0
         avg_f1 = 0.0
+        avg_edge_size = 0.0
+        avg_edge_ent = 0.0
         samples_used_count = 0
         samples_total_count = 0
         samples_used_pct = 0.0
@@ -856,18 +927,28 @@ def main():
             avg_auroc = exp_metric_totals["auroc"] / total_count
             avg_auprc = exp_metric_totals["auprc"] / total_count
             avg_f1 = exp_metric_totals["f1"] / total_count
+            if merged_sample_metrics is not None:
+                total_edge_size = sum(stats.get("edge_mask_size_sum", 0.0) for stats in merged_sample_metrics.values())
+                total_edge_ent = sum(stats.get("edge_mask_ent_sum", 0.0) for stats in merged_sample_metrics.values())
+                avg_edge_size = total_edge_size / total_count
+                avg_edge_ent = total_edge_ent / total_count
             print(
-                "Average explanation accuracy across positive samples: "
+                "[INFO] Metrics across positive samples: "
                 f"AnswerAcc={avg_answer_accuracy:.3f}, "
                 f"AUROC={avg_auroc:.3f}, AUPRC={avg_auprc:.3f}, F1={avg_f1:.3f}"
             )
-            print(f"Saved explanation metrics to {base_log_path}")
+            print(f"[INFO] Saved explanation metrics to {base_log_path}")
         else:
-            print("No explanation metrics recorded for positive samples.")
+            print("[WARN] No explanation metrics recorded for positive samples.")
 
         # Save average metrics per sample
         avg_metrics_path = os.path.join(OUT_DIR, "average_metrics.csv")
-        _, stability_metrics = write_average_metrics_csv(avg_metrics_path, merged_sample_metrics, merged_edge_masks)
+        _, stability_metrics = write_average_metrics_csv(
+            avg_metrics_path,
+            merged_sample_metrics,
+            merged_edge_masks,
+            jaccard_k=args.jaccard_k,
+        )
         print(f"[INFO] Saved average metrics to {avg_metrics_path}")
         if is_distributed:
             for idx in range(world_size):
@@ -884,6 +965,8 @@ def main():
                 "avg_auroc": avg_auroc,
                 "avg_auprc": avg_auprc,
                 "avg_f1": avg_f1,
+                "avg_edge_size": avg_edge_size,
+                "avg_edge_ent": avg_edge_ent,
                 **stability_metrics,
                 **explainer_args,
                 "llr_threshold": args.llr_threshold,
@@ -894,6 +977,8 @@ def main():
             wandb_payload = stability_metrics.copy()
             wandb_payload["samples_used_pct"] = samples_used_pct
             wandb_payload["samples_used_count"] = samples_used_count
+            wandb_payload["avg_edge_size"] = avg_edge_size
+            wandb_payload["avg_edge_ent"] = avg_edge_ent
             if total_count > 0:
                 wandb_payload.update(
                     {

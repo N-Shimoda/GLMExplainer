@@ -24,6 +24,8 @@ def write_average_metrics_csv(
     output_path: str | Path,
     sample_metrics: Mapping[int, Mapping[str, float]] | None,
     edge_masks: Mapping[int, Sequence[Any]] | None,
+    *,
+    jaccard_k: int = 6,
 ) -> tuple[dict[int, dict[str, float]], dict[str, float]]:
     """Write per-sample averaged metrics and stability scores to a CSV file.
 
@@ -53,11 +55,15 @@ def write_average_metrics_csv(
         "auroc",
         "auprc",
         "f1",
+        "edge_mask_size",
+        "edge_mask_ent",
         *EDGE_MASK_STABILITY_KEYS,
     ]
 
     per_sample_stability = (
-        compute_edge_mask_stability_metrics_per_sample(edge_masks or {}) if edge_masks is not None else {}
+        compute_edge_mask_stability_metrics_per_sample(edge_masks or {}, jaccard_k=jaccard_k)
+        if edge_masks is not None
+        else {}
     )
     metrics_data = sample_metrics or {}
     zero_stability = {key: 0.0 for key in EDGE_MASK_STABILITY_KEYS}
@@ -72,12 +78,16 @@ def write_average_metrics_csv(
             auroc_sum = stats.get("auroc_sum", 0.0)
             auprc_sum = stats.get("auprc_sum", 0.0)
             f1_sum = stats.get("f1_sum", 0.0)
+            edge_mask_size_sum = stats.get("edge_mask_size_sum", 0.0)
+            edge_mask_ent_sum = stats.get("edge_mask_ent_sum", 0.0)
             row = {
                 "sample_index": sample_idx,
                 "answer_accuracy": answer_acc_sum / count if count > 0 else 0.0,
                 "auroc": auroc_sum / count if count > 0 else 0.0,
                 "auprc": auprc_sum / count if count > 0 else 0.0,
                 "f1": f1_sum / count if count > 0 else 0.0,
+                "edge_mask_size": edge_mask_size_sum / count if count > 0 else 0.0,
+                "edge_mask_ent": edge_mask_ent_sum / count if count > 0 else 0.0,
             }
             stability = per_sample_stability.get(sample_idx, zero_stability)
             for key in EDGE_MASK_STABILITY_KEYS:
@@ -96,6 +106,8 @@ def _compute_sample_average_row(
     sample_idx: int,
     stats: dict[str, float] | None,
     edge_masks: Iterable[torch.Tensor] | None,
+    *,
+    jaccard_k: int = 6,
 ) -> dict[str, float] | None:
     """Compute averaged accuracy and stability metrics for a single sample."""
     if not stats:
@@ -109,9 +121,13 @@ def _compute_sample_average_row(
         "auroc": stats.get("auroc_sum", 0.0) / count,
         "auprc": stats.get("auprc_sum", 0.0) / count,
         "f1": stats.get("f1_sum", 0.0) / count,
+        "edge_mask_size": stats.get("edge_mask_size_sum", 0.0) / count,
+        "edge_mask_ent": stats.get("edge_mask_ent_sum", 0.0) / count,
     }
     mask_list = list(edge_masks) if edge_masks is not None else []
-    stability = compute_edge_mask_stability_metrics_per_sample({sample_idx: mask_list}).get(sample_idx, {})
+    stability = compute_edge_mask_stability_metrics_per_sample({sample_idx: mask_list}, jaccard_k=jaccard_k).get(
+        sample_idx, {}
+    )
     for key in EDGE_MASK_STABILITY_KEYS:
         row[key] = stability.get(key, 0.0)
     return row
@@ -123,11 +139,13 @@ def _record_sample_average_metrics(
     sample_idx: int,
     stats: dict[str, float] | None,
     edge_masks: Iterable[torch.Tensor] | None,
+    *,
+    jaccard_k: int = 6,
 ) -> None:
     """Append a per-sample averaged metrics row to the CSV log if possible."""
     if avg_log_path is None or fieldnames is None:
         return
-    row = _compute_sample_average_row(sample_idx, stats, edge_masks)
+    row = _compute_sample_average_row(sample_idx, stats, edge_masks, jaccard_k=jaccard_k)
     if row is None:
         return
     with open(avg_log_path, "a", newline="") as avg_file:
@@ -158,6 +176,8 @@ def append_run_history_row(history_path: str | Path, row: Mapping[str, Any]) -> 
         "avg_auroc",
         "avg_auprc",
         "avg_f1",
+        "avg_edge_size",
+        "avg_edge_ent",
         *EDGE_MASK_STABILITY_KEYS,
         "avg_answer_accuracy",
     ]
