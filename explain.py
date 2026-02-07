@@ -934,7 +934,7 @@ def main():
                 avg_edge_ent = total_edge_ent / total_count
             print(
                 "[INFO] Metrics across positive samples: "
-                f"[INFO] AnswerAcc={avg_answer_accuracy:.3f}, "
+                f"AnswerAcc={avg_answer_accuracy:.3f}, "
                 f"AUROC={avg_auroc:.3f}, AUPRC={avg_auprc:.3f}, F1={avg_f1:.3f}"
             )
             print(f"[INFO] Saved explanation metrics to {base_log_path}")
