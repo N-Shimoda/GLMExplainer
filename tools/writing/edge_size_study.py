@@ -5,6 +5,7 @@ from typing import Literal, Optional
 
 import matplotlib.pyplot as plt
 import pandas as pd
+
 import wandb
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -17,7 +18,9 @@ from tools.writing.wandb_cache import load_cached_runs, save_cached_runs  # noqa
 
 def build_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--tags", type=str, nargs="+", default=["edge_size", "small"], help="Wandb run tags to filter.")
+    p.add_argument(
+        "--tags", type=str, nargs="+", default=["jsai", "edge_size", "small"], help="Wandb run tags to filter."
+    )
     p.add_argument(
         "--use-cache",
         action="store_true",
@@ -252,6 +255,8 @@ def main():
         "spearman": "edge_mask_spearman",
     }
     metrics = list(metric_mapping.keys())
+
+    print("Filtering wandb runs with tags:", args.tags)
 
     if args.test:
         run_test(args)
