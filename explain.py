@@ -211,12 +211,6 @@ def build_args():
         default=0.5,
         help="Threshold for computing F1 score against ground-truth explanations (default: 0.5)",
     )
-    p.add_argument(
-        "--jaccard-k",
-        type=check_non_negative_int,
-        default=6,
-        help="Top-k used for edge-mask Jaccard stability (default: 6)",
-    )
 
     # Logging
     p.add_argument(
@@ -244,6 +238,16 @@ def build_args():
     # Parse and validate args
     args = p.parse_args()
     validate_args(args)
+
+    jaccard_k_by_subset = {
+        "ba_shapes": 6,
+        "tree_cycle": 6,
+        "tree_grid": 12,
+        "tree_grid_v2": 7,
+        "ba_two_motifs": 5,
+        "shortest_path": 6,
+    }
+    args.jaccard_k = jaccard_k_by_subset.get(args.subset, 6)
 
     # Extract explainer args
     explainer_keys = ["epochs", "lr", "edge_size", "edge_ent"]

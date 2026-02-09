@@ -5,7 +5,6 @@ set -euo pipefail
 subsets=(ba_shapes tree_cycle tree_grid_v2 ba_two_motifs)
 graph_types=(empty empty empty empty)
 edge_sizes=(30 10 10 30)
-jaccard_k_values=(6 6 7 5)
 
 # Epochs
 for i in "${!subsets[@]}"; do
@@ -21,7 +20,6 @@ for i in "${!subsets[@]}"; do
 			--llr-threshold 1.0 \
 			--epochs "${epochs}" --lr 0.3 \
 			--edge-size "${edge_sizes[$i]}" --edge-ent 1.0 \
-			--jaccard-k "${jaccard_k_values[$i]}" \
 			--wandb --tags epochs small
 	done
 done
@@ -40,7 +38,6 @@ for i in "${!subsets[@]}"; do
 			--llr-threshold 1.0 \
 			--epochs 200 --lr "${lr}" \
 			--edge-size "${edge_sizes[$i]}" --edge-ent 1.0 \
-			--jaccard-k "${jaccard_k_values[$i]}" \
 			--wandb --tags lr small
 	done
 done
