@@ -17,7 +17,7 @@ for graph_type in complete empty; do
 				--num-gen-trials 10 --min-correct-answers 5 \
 				--baseline-graph "${graph_type}" \
 				--llr-threshold 1.0 \
-				--epochs 200 --lr 0.3 \
+				--epochs 200 --lr 0.1 \
 				--edge-size "${edge_size}" --edge-ent 1.0 \
 				--wandb --tags jsai edge_size small
 		done
