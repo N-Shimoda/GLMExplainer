@@ -199,7 +199,7 @@ def build_args():
     p.add_argument(
         "--baseline-graph",
         type=str,
-        default="complete",
+        default=None,
         choices=["complete", "empty"],
         help="Baseline graph type for LLR computation.",
     )

@@ -34,3 +34,7 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("`min_correct_answers` must be non-negative.")
     if args.min_correct_answers >= args.num_gen_trials:
         raise ValueError("`min_correct_answers` must be less than `num_gen_trials`.")
+
+    # Relevant token selection
+    if args.llr_threshold is not None and args.baseline_graph is None:
+        raise ValueError("`--baseline-graph` must be set when `--llr-threshold` is provided.")
