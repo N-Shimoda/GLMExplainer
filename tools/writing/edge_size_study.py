@@ -288,7 +288,6 @@ def main():
     args = build_args()
     metric_mapping = {
         "auroc": "avg_auroc",
-        "jaccard": "edge_mask_jaccard",
         "spearman": "edge_mask_spearman",
     }
     metrics = list(metric_mapping.keys())
