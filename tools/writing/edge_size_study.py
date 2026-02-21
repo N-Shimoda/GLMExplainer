@@ -24,7 +24,7 @@ from tools.writing.wandb_cache import load_cached_runs, save_cached_runs  # noqa
 def build_args():
     p = argparse.ArgumentParser()
     p.add_argument(
-        "--tags", type=str, nargs="+", default=["jsai", "edge_size", "small"], help="Wandb run tags to filter."
+        "--tags", type=str, nargs="+", default=["fpai", "edge_size", "small"], help="Wandb run tags to filter."
     )
     p.add_argument(
         "--use-cache",
