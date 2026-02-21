@@ -5,7 +5,6 @@ from typing import Literal, Optional
 
 import matplotlib.pyplot as plt
 import pandas as pd
-
 import wandb
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -102,8 +101,19 @@ def get_wandb_runs(
         "naos-ku/MotifQA-Explainer",
         filters=filters,
     )
-    baselines = [run for run in runs if run.config.get("llr_threshold") == 0]
-    ours = [run for run in runs if run.config.get("llr_threshold", 0) > 0]
+
+    def _get_llr_threshold(run) -> float:
+        """Replace missing or invalid llr_threshold with 0.0 to classify baselines vs. ours."""
+        value = run.config.get("llr_threshold")
+        if value is None:
+            return 0.0
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    baselines = [run for run in runs if _get_llr_threshold(run) == 0]
+    ours = [run for run in runs if _get_llr_threshold(run) > 0]
     ours_complete = [run for run in ours if run.config.get("baseline_graph") == "complete"]
     ours_empty = [run for run in ours if run.config.get("baseline_graph") == "empty"]
 
