@@ -7,17 +7,16 @@ from math import ceil
 import datasets
 import torch
 import torch.distributed as dist
+import wandb
 from datasets import concatenate_datasets, load_dataset
 from datasets.arrow_dataset import Dataset
 from transformers import AutoTokenizer
 from transformers.trainer_utils import set_seed
 from trl import SFTConfig, SFTTrainer
 
-import wandb
 from eval import EXT_MAX_NEW_TOKENS, MAX_NEW_TOKENS, collect_result, eval_model
 from src.collator import GraphQACollator
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
-from src.ds_stats import completion_length_report
 from src.glm import VALID_GRAPH_POOLING, GraphTokenLM, GraphTokenLMConfig
 from src.preprocess import add_graph_column
 
@@ -353,11 +352,6 @@ def build_custom_dataset(
             raise NotImplementedError(f"Custom dataset for {subset} is not implemented.")
 
     ds_dict = ds_dict.map(modify_dataset, remove_columns=ds_dict["train"].column_names, desc="Preprocessing")
-
-    # Aggregate completion lengths and delegate JSON and figure generation to the helper function
-    if is_main_process():
-        completion_length_report(ds_dict, subset, main_process=is_main_process())
-
     num_max_nodes = 20
     return ds_dict["train"], ds_dict["validation"], ds_dict["test"] if do_eval else None, num_max_nodes
 
