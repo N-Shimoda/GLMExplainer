@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+from datetime import datetime
 from typing import Literal, Optional
 
 import matplotlib.pyplot as plt
@@ -164,10 +165,36 @@ def report_best_runs(runs, metric: Literal["avg_auroc", "edge_mask_jaccard"] = "
 def create_log_df(runs, subset: str) -> pd.DataFrame:
     # Filter runs by subset
     subset_runs = [run for run in runs if run.config.get("subset") == subset]
+    latest_runs_by_edge_size: dict[float | str, tuple[datetime, int, object]] = {}
+
+    def _run_timestamp(run) -> datetime:
+        # Prefer updated_at for "latest", then created_at; support cached runs lacking both.
+        for attr in ["updated_at", "created_at"]:
+            value = getattr(run, attr, None)
+            if not value:
+                continue
+            try:
+                return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            except ValueError:
+                continue
+        return datetime.min
+
+    def _edge_size_key(edge_size):
+        try:
+            return float(edge_size)
+        except (TypeError, ValueError):
+            return str(edge_size)
+
+    for index, run in enumerate(subset_runs):
+        edge_size_key = _edge_size_key(run.config.get("edge_size"))
+        run_timestamp = _run_timestamp(run)
+        prev = latest_runs_by_edge_size.get(edge_size_key)
+        if prev is None or (run_timestamp, index) >= (prev[0], prev[1]):
+            latest_runs_by_edge_size[edge_size_key] = (run_timestamp, index, run)
 
     # Create dataframe
     df = pd.DataFrame({"edge size": [], "AUROC": [], "Jaccard": [], "Spearman": []})
-    for run in subset_runs:
+    for _, _, run in latest_runs_by_edge_size.values():
         df = pd.concat(
             [
                 df,
