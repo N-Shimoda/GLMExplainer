@@ -19,7 +19,22 @@ for graph_type in complete empty; do
 				--llr-threshold 1.0 \
 				--epochs 200 --lr 0.1 \
 				--edge-size "${edge_size}" --edge-ent 1.0 \
-				--wandb --tags jsai edge_size small
+				--wandb --tags fpai edge_size small
 		done
+	done
+done
+
+for i in "${!subsets[@]}"; do
+	for edge_size in "${edge_sizes[@]}"; do
+		torchrun --nproc_per_node=2 explain.py \
+			--dataset MotifQA \
+			--subset "${subsets[$i]}" --split validation \
+			--model-path masters/multitask \
+			--target-pos-samples \
+			--num-samples 50 --num-trials 5 \
+			--num-gen-trials 10 --min-correct-answers 5 \
+			--epochs 200 --lr 0.1 \
+			--edge-size "${edge_size}" --edge-ent 1.0 \
+			--wandb --tags fpai edge_size small
 	done
 done
