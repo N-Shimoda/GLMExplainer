@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 
 torchrun --nproc_per_node=2 train.py \
-	--dataset MotifQA --subset ba_shapes \
+	--dataset MotifQA \
+	--subset ba_shapes tree_cycle tree_grid_v2 ba_two_motifs \
 	--use-lora \
 	--lora-r 16 \
 	--lora-alpha 16 \
 	--lora-dropout 0.05 \
 	--lora-target-modules q_proj,k_proj,v_proj,o_proj \
-	--epochs 3 \
+	--epochs 32 \
 	--optim adamw --lr 1e-4 --weight-decay 0.01 \
 	--lr-scheduler-type cosine --warmup-ratio 0.05 \
 	--do-eval --wandb

@@ -7,7 +7,6 @@ from math import ceil
 import datasets
 import torch
 import torch.distributed as dist
-import wandb
 from datasets import concatenate_datasets, load_dataset
 from datasets.arrow_dataset import Dataset
 from peft import LoraConfig, TaskType, get_peft_model
@@ -15,6 +14,7 @@ from transformers import AutoTokenizer
 from transformers.trainer_utils import set_seed
 from trl import SFTConfig, SFTTrainer
 
+import wandb
 from eval import EXT_MAX_NEW_TOKENS, MAX_NEW_TOKENS, collect_result, eval_model
 from src.collator import GraphQACollator
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
@@ -86,7 +86,7 @@ def build_args():
     p.add_argument(
         "--gnn-type",
         type=str,
-        default="GCN",
+        default="GIN",
         choices=["GCN", "GAT", "GIN", "GraphSAGE", "GraphTransformer"],
     )
     p.add_argument("--num-max-nodes", type=int, default=20)
@@ -102,10 +102,10 @@ def build_args():
     p.add_argument("--pos-emb-dim", type=int, default=8)
     p.add_argument("--lpe-dim", type=int, default=8)
     p.add_argument("--use-degree-emb", action="store_true")
-    p.add_argument("--gnn-hidden-dim", type=int, default=256)
-    p.add_argument("--gnn-out-dim", type=int, default=512)
-    p.add_argument("--num-gnn-layers", type=int, default=4)
-    p.add_argument("--num-proj-layers", type=int, default=1)
+    p.add_argument("--gnn-hidden-dim", type=int, default=64)
+    p.add_argument("--gnn-out-dim", type=int, default=64)
+    p.add_argument("--num-gnn-layers", type=int, default=3)
+    p.add_argument("--num-proj-layers", type=int, default=2)
 
     # Training parameters
     p.add_argument("--epochs", type=int, default=3)
