@@ -8,6 +8,7 @@ dependencies:
   - scipy
   - matplotlib
   - openai
+  - rich
   - pytest
   - pip
   - ninja
@@ -24,4 +25,3 @@ dependencies:
     - flash_attn
     - wandb>=0.22.3
     - streamlit
-    

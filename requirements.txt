@@ -8,3 +8,4 @@ peft
 bitsandbytes
 wandb>=0.22.3
 streamlit
+rich

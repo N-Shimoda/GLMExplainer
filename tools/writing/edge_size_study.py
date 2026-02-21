@@ -7,6 +7,11 @@ from typing import Literal, Optional
 import matplotlib.pyplot as plt
 import pandas as pd
 import wandb
+from rich import box
+from rich.console import Console
+from rich.table import Table
+
+console = Console()
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if ROOT_DIR not in sys.path:
@@ -31,6 +36,14 @@ def build_args():
     )
     p.add_argument("--output-dir", type=str, default="plots/edge_size_study")
     p.add_argument("--output-format", type=str, default="svg", choices=["svg", "pdf"])
+
+    p.add_argument(
+        "--table-metric",
+        type=str,
+        default="auroc",
+        choices=["auroc", "spearman"],
+        help="Metric for the printed best-runs table (auroc or spearman).",
+    )
 
     # Debugging
     p.add_argument(
@@ -122,44 +135,99 @@ def get_wandb_runs(
 
 
 def get_best_run(
-    runs: list[wandb.apis.public.Run], metric: Literal["avg_auroc", "edge_mask_jaccard"]
+    runs: list[wandb.apis.public.Run], metric: Literal["avg_auroc", "edge_mask_spearman"]
 ) -> wandb.apis.public.Run:
     """Get the run with the best value for the specified metric."""
     best_run = max(runs, key=lambda run: run.summary.get(metric, float("-inf")))
     return best_run
 
 
-def report_best_runs(runs, metric: Literal["avg_auroc", "edge_mask_jaccard"] = "avg_auroc"):
-    def _format_metric(value):
+def report_best_runs(
+    baselines,
+    ours_complete,
+    ours_empty,
+    metric: Literal["avg_auroc", "edge_mask_spearman"] = "avg_auroc",
+):
+    def _format_metric(value: Optional[float]) -> str:
         if value is None:
             return "n/a"
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return f"{value:.4f}"
-        return str(value)
+        return f"{value:.4f}"
+
+    def _to_float(value) -> Optional[float]:
+        if value is None:
+            return None
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return None
+        # Treat NaN as missing
+        if v != v:
+            return None
+        return v
+
+    def _best_value_for_subset(runs, subset: str):
+        subset_runs = [run for run in runs if run.config.get("subset") == subset]
+        if not subset_runs:
+            return (None, "n/a")
+        best_run = get_best_run(subset_runs, metric)
+        run_name = best_run.name.split("_")[-1] if best_run.name else best_run.id
+        best_val = _to_float(best_run.summary.get(metric))
+        return (best_val, run_name)
 
     rows = []
     for subset in MOTIFQA_SUBSETS:
-        subset_runs = [run for run in runs if run.config.get("subset") == subset]
-        if not subset_runs:
+        b_val, b_run = _best_value_for_subset(baselines, subset)
+        c_val, c_run = _best_value_for_subset(ours_complete, subset)
+        e_val, e_run = _best_value_for_subset(ours_empty, subset)
+
+        # If all are missing, skip the row entirely
+        if b_val is None and c_val is None and e_val is None:
             continue
-        best_run = get_best_run(subset_runs, metric)
-        run_name = best_run.name.split("_")[-1] if best_run.name else best_run.id
+
         rows.append(
             {
                 "subset": subset,
-                "metric": metric,
-                "value": _format_metric(best_run.summary.get(metric)),
-                "run": run_name,
-                "edge_size": best_run.config.get("edge_size", "n/a"),
+                "baseline_val": b_val,
+                "complete_val": c_val,
+                "empty_val": e_val,
+                "baseline_run": b_run,
+                "complete_run": c_run,
+                "empty_run": e_run,
             }
         )
 
     if not rows:
-        print("No runs found for the specified subsets.")
+        console.print("[yellow]No runs found for the specified subsets.[/yellow]")
         return
 
-    df = pd.DataFrame(rows)
-    print(df.to_string(index=False, col_space=[10, 10, 7, 10, 8]))
+    table = Table(title=f"Best runs ({metric})", box=box.SIMPLE_HEAD)
+    table.add_column("subset", style="bold")
+    table.add_column("baseline", justify="right")
+    table.add_column("complete", justify="right")
+    table.add_column("empty", justify="right")
+
+    for r in rows:
+        nums = [r["baseline_val"], r["complete_val"], r["empty_val"]]
+        present = [n for n in nums if n is not None]
+        max_val = max(present) if present else None
+
+        def _highlight_if_max(num: Optional[float], run_name: str) -> str:
+            """Format the metric value and highlight if it's the max among the three."""
+            if num is None:
+                return "n/a"
+            value_str = _format_metric(num)
+            if max_val is not None and abs(num - max_val) < 1e-12:
+                value_str = f"[bold green]{value_str}[/bold green]"
+            return f"{value_str} ({run_name})"
+
+        table.add_row(
+            str(r["subset"]),
+            _highlight_if_max(r["baseline_val"], r["baseline_run"]),
+            _highlight_if_max(r["complete_val"], r["complete_run"]),
+            _highlight_if_max(r["empty_val"], r["empty_run"]),
+        )
+
+    console.print(table)
 
 
 def create_log_df(runs, subset: str) -> pd.DataFrame:
@@ -322,14 +390,10 @@ def main():
         save_cached_runs(cache_path, baselines, ours_complete, ours_empty)
         print(f"Saved runs cache to {cache_path}.")
 
-    # Report best runs
-    for run_type, runs in [
-        ("Baselines", baselines),
-        ("Complete", ours_complete),
-        ("Empty", ours_empty),
-    ]:
-        print(f"\n{run_type} best runs:")
-        report_best_runs(runs, metric="avg_auroc")
+    # Report best runs (single table)
+    print("\nBest runs:")
+    table_metric = metric_mapping[args.table_metric]
+    report_best_runs(baselines, ours_complete, ours_empty, metric=table_metric)
 
     # Determine y-limits for each metric
     if args.set_y_lim:
