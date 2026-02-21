@@ -17,7 +17,9 @@ from tools.writing.wandb_cache import load_cached_runs, save_cached_runs  # noqa
 
 def build_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--tags", type=str, nargs="+", default=["edge_size", "small"], help="Wandb run tags to filter.")
+    p.add_argument(
+        "--tags", type=str, nargs="+", default=["jsai", "edge_size", "small"], help="Wandb run tags to filter."
+    )
     p.add_argument(
         "--use-cache",
         action="store_true",
@@ -99,8 +101,19 @@ def get_wandb_runs(
         "naos-ku/MotifQA-Explainer",
         filters=filters,
     )
-    baselines = [run for run in runs if run.config.get("llr_threshold") == 0]
-    ours = [run for run in runs if run.config.get("llr_threshold", 0) > 0]
+
+    def _get_llr_threshold(run) -> float:
+        """Replace missing or invalid llr_threshold with 0.0 to classify baselines vs. ours."""
+        value = run.config.get("llr_threshold")
+        if value is None:
+            return 0.0
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    baselines = [run for run in runs if _get_llr_threshold(run) == 0]
+    ours = [run for run in runs if _get_llr_threshold(run) > 0]
     ours_complete = [run for run in ours if run.config.get("baseline_graph") == "complete"]
     ours_empty = [run for run in ours if run.config.get("baseline_graph") == "empty"]
 
@@ -252,6 +265,8 @@ def main():
         "spearman": "edge_mask_spearman",
     }
     metrics = list(metric_mapping.keys())
+
+    print("Filtering wandb runs with tags:", args.tags)
 
     if args.test:
         run_test(args)
