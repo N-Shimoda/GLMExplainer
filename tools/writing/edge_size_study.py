@@ -31,9 +31,6 @@ def build_args():
         action="store_true",
         help="Load cached wandb runs from output dir instead of fetching from remote.",
     )
-    p.add_argument(
-        "--set-y-lim", action="store_true", help="Set y-axis limits based on min/max values across all runs."
-    )
     p.add_argument("--output-dir", type=str, default="plots/edge_size_study")
     p.add_argument("--output-format", type=str, default="svg", choices=["svg", "pdf"])
 
@@ -83,7 +80,6 @@ def run_test(args: argparse.Namespace):
         synthetic_complete,
         synthetic_empty,
         synthetic_baseline,
-        y_lim=None,
         metric="auroc",
         filename=filename,
     )
@@ -274,7 +270,6 @@ def plot_figure(
     complete_df: pd.DataFrame,
     empty_df: pd.DataFrame,
     baseline_df: pd.DataFrame,
-    y_lim: Optional[tuple[float, float]],
     metric: Literal["auroc", "spearman"],
     filename: str,
 ):
@@ -334,7 +329,6 @@ def plot_figure(
     plt.xlabel(r"$\lambda_\mathrm{size}$", fontsize=16)
     plt.ylabel(y_col, fontsize=14)
     plt.tick_params(axis="both", which="major", labelsize=12)
-    plt.ylim(y_lim)
     plt.legend(fontsize=14)
 
     plt.tight_layout()
@@ -384,20 +378,6 @@ def main():
     table_metric = metric_mapping[args.table_metric]
     report_best_runs(baselines, ours_complete, ours_empty, metric=table_metric)
 
-    # Determine y-limits for each metric
-    if args.set_y_lim:
-        all_runs = baselines + ours_complete + ours_empty
-        y_lim_dict = {
-            metric: (
-                min([run.summary[wandb_metric] for run in all_runs]),
-                max([run.summary[wandb_metric] for run in all_runs]) + 0.005,
-            )
-            for metric, wandb_metric in metric_mapping.items()
-        }
-        print(y_lim_dict)
-    else:
-        y_lim_dict = None
-
     # Create plots
     skipped = []
     for subset in MOTIFQA_SUBSETS:
@@ -413,7 +393,6 @@ def main():
                 complete_df,
                 empty_df,
                 baseline_df,
-                y_lim=y_lim_dict[metric] if y_lim_dict else None,
                 metric=metric,
                 filename=filename,
             )
