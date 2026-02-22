@@ -1,43 +1,17 @@
 # GraphToken
 
-Reproductive experiment of Perozzi et al., ["Let Your Graph Do the Talking: Encoding Structured Data for LLMs"](https://arxiv.org/abs/2402.05862) (arXiv, Feb. 2024).
+## Setup Environment
 
-## Train GraphToken model
+### For Device with NVIDIA GPUs
 
-```shell
-torchrun --nproc_per_node=2 train.py --subset "${subset}" \
-    --base_model "Qwen/Qwen3-4B-Base" \
-    --node_feat_dim 8 \
-    --gnn_hidden_dim 256 --gnn_out_dim 512 --num_gnn_layers 4 \
-    --epochs 3 --lr 0.01 \
-    --do_eval --wandb
-```
-
-Choice of the subsets are "node_count", "edge_count", "cycle_check", "triangle_counting", and "maximum_flow".
-
-## Apply explainer
-
-Single GPU:
-
-```shell
-python explain.py --model-path MODEL_PATH --subset SUBSET
-```
-
-Multi-GPU with `torchrun` (shards the dataset across ranks and merges metrics automatically):
-
-```shell
-CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 explain.py \
-    --model-path MODEL_PATH \
-    --subset SUBSET
-```
-
-## Environment setup
-
-```shell
+```bash
 conda env create -f environment.yml
 ```
 
-## Files & Directories
+### Others (e.g., Apple Silicon)
 
-- `fine-tuning`: Codes for fine-tuning `Qwen3-4B-Instruct-2507` on Graph-level tasks of GraphQA dataset.
-- `notebook`: Sample codes from Hugging Face.
+```bash
+conda create -n graphtoken python=3.12 scipy matplotlib pytest pip ninja openai
+conda activate graphtoken
+pip install -r requirements.txt
+```

@@ -17,11 +17,12 @@ dependencies:
     - torch_geometric>=2.7.0
     - torchmetrics
     - torchinfo
-    - transformers
+    - transformers>=4.57,<4.58
     - datasets
     - trl
     - peft
     - bitsandbytes
     - flash_attn
+    - huggingface-hub<1.0
     - wandb>=0.22.3
     - streamlit
