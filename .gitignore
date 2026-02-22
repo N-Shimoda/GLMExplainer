@@ -4,14 +4,12 @@ __pycache__/
 # dev
 .vscode/
 
-# GraphToken
+# Weights of GraphToken
 outputs/
 masters/
-results/
-fig/
 
 # Hugging Face export
-GraphTokenLM-HF/
+GraphTokenLM/
 
 # Fine-tuning
 fine-tuning/qwen3-4b-*/
@@ -27,5 +25,5 @@ plots/llr_study/
 plots/edge_size_study/
 
 # logs
-logs/
 wandb/
+results/
