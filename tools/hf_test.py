@@ -5,27 +5,22 @@ from torchinfo import summary
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
-def _parse_torch_dtype(dtype_str: str):
-    dtype_map = {
-        "auto": "auto",
-        "float16": torch.float16,
-        "bfloat16": torch.bfloat16,
-        "float32": torch.float32,
-    }
-    if dtype_str not in dtype_map:
-        raise ValueError(f"Unsupported torch dtype: {dtype_str}. " "Choose from: auto, float16, bfloat16, float32.")
-    return dtype_map[dtype_str]
-
-
-def load_hf_model(torch_dtype: str = "auto"):
+def load_hf_model(torch_dtype: str):
     """Examine if the Hugging Face export of GraphTokenLM can be loaded without errors."""
     repo_id = "naos-ku/GraphTokenLM"
+    dtype_map = {
+        "auto": "auto",
+        "fp16": torch.float16,
+        "bf16": torch.bfloat16,
+        "fp32": torch.float32,
+    }
     model = AutoModelForCausalLM.from_pretrained(
         repo_id,
+        revision="main",
         trust_remote_code=True,
-        dtype=_parse_torch_dtype(torch_dtype),
+        dtype=dtype_map[torch_dtype],
     )
-    tok = AutoTokenizer.from_pretrained(repo_id, trust_remote_code=True)
+    tok = AutoTokenizer.from_pretrained(repo_id, revision="main", trust_remote_code=True)
     return model, tok
 
 
@@ -35,7 +30,7 @@ if __name__ == "__main__":
         "--torch-dtype",
         type=str,
         default="auto",
-        choices=["auto", "float16", "bfloat16", "float32"],
+        choices=["auto", "fp16", "bf16", "fp32"],
         help="Torch dtype used when loading model weights.",
     )
     args = parser.parse_args()
