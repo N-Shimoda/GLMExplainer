@@ -1,6 +1,7 @@
 import argparse
 
 import torch
+from torchinfo import summary
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
@@ -39,5 +40,6 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     model, tok = load_hf_model(torch_dtype=args.torch_dtype)
-    print(model)
-    print(tok)
+    print("\nModel:")
+    summary(model)
+    print("\nTokenizer:\n", tok)
