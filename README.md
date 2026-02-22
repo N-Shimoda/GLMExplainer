@@ -2,7 +2,7 @@
 
 ## Setup Environment
 
-### For Device with NVIDIA GPUs
+### Devices with CUDA (e.g., NVIDIA GPUs)
 
 ```bash
 conda env create -f environment.yml
