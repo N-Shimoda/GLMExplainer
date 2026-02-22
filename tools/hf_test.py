@@ -19,6 +19,7 @@ def load_hf_model(torch_dtype: str):
         revision="main",
         trust_remote_code=True,
         dtype=dtype_map[torch_dtype],
+        load_llm_weights=False,  # Don't load LLM weights from original HF repo.
     )
     tok = AutoTokenizer.from_pretrained(repo_id, revision="main", trust_remote_code=True)
     return model, tok
