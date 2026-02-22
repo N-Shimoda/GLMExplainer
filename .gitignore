@@ -9,7 +9,9 @@ outputs/
 masters/
 results/
 fig/
-ds_debug/
+
+# Hugging Face export
+GraphTokenLM-HF/
 
 # Fine-tuning
 fine-tuning/qwen3-4b-*/
@@ -17,7 +19,7 @@ fine-tuning/wandb/
 fine-tuning/examples/
 fine-tuning/models/
 
-# GNNExplainer
+# Explanations
 explanations/
 
 # Figures
