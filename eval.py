@@ -12,7 +12,7 @@ from torch_geometric.data import Data as PygData
 from tqdm import tqdm
 from transformers import AutoTokenizer, GenerationConfig, set_seed
 
-from src.ckpt import _resolve_ckpt_path
+from src.ckpt import _resolve_model_path
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 from src.glm import GraphTokenLM
 from src.metrics import comp_accuracy
@@ -61,6 +61,8 @@ def build_args():
     p.add_argument("--model-path", type=str, required=True)
     p.add_argument("--model-index", type=int, default=-1, help="Which trained model version to use.")
     p.add_argument("--ckpt-index", type=int, default=-1, help="Which checkpoint version to use.")
+    p.add_argument("--bf16", action="store_true", default=False, help="Load model weights in bfloat16 precision.")
+    p.add_argument("--fp16", action="store_true", default=False, help="Load model weights in float16 precision.")
 
     # Evaluation settings
     p.add_argument("--num-trials", type=int, default=1)
@@ -74,6 +76,7 @@ def build_args():
 
 
 def _validate_args(args: argparse.Namespace):
+    # Dataset and subset checks
     valid_subsets = GRAPHQA_SUBSETS if args.dataset == "GraphQA" else MOTIFQA_SUBSETS
     invalid = [subset for subset in args.subset if subset not in valid_subsets]
     if invalid:
@@ -81,17 +84,22 @@ def _validate_args(args: argparse.Namespace):
     if args.use_custom_dataset and args.dataset != "GraphQA":
         raise ValueError("--use-custom-dataset is only supported with GraphQA dataset.")
 
+    # Precision checks
+    if args.bf16 and args.fp16:
+        raise ValueError("Cannot specify both --bf16 and --fp16. Please choose one precision mode.")
 
-def load_model_for_eval(
-    model_path: str, *, load_llm_weights: bool = False, device: torch.device | None = None
-) -> GraphTokenLM:
+
+def load_model_for_eval(model_path: str, local_rank: int, bf16: bool = False, fp16: bool = False) -> GraphTokenLM:
     """Load GraphTokenLM onto a single device (DDP handles data-parallel)."""
-    model = GraphTokenLM.from_pretrained(model_path, load_llm_weights=load_llm_weights)
-    if device is not None:
-        return model.to(device)
+    dtype = torch.bfloat16 if bf16 else torch.float16 if fp16 else torch.float32
+    model = GraphTokenLM.from_pretrained(model_path, load_llm_weights=False, trust_remote_code=True, dtype=dtype)
     if torch.cuda.is_available():
-        return model.to("cuda:0")
-    return model
+        device = torch.device(f"cuda:{local_rank}")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+    return model.to(device)
 
 
 def _unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
@@ -287,11 +295,10 @@ def main():
     args = build_args()
 
     # Load pre-trained model
-    ckpt_path, run_name = _resolve_ckpt_path(args.model_path, args.model_index, args.ckpt_index)
+    ckpt_path, run_name = _resolve_model_path(args.model_path, args.model_index, args.ckpt_index)
     if is_main:
         print(f"Checkpoint: {ckpt_path}")
-    device = torch.device(f"cuda:{local_rank}") if torch.cuda.is_available() else torch.device("cpu")
-    model = load_model_for_eval(ckpt_path, load_llm_weights=False, device=device)
+    model = load_model_for_eval(ckpt_path, local_rank, bf16=args.bf16, fp16=args.fp16)
     if use_dist:
         model = DDP(model, device_ids=[local_rank] if torch.cuda.is_available() else None)
     base_model = _unwrap_model(model)

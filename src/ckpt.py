@@ -114,3 +114,15 @@ def _resolve_ckpt_path(model_path: str, model_index: int = -1, ckpt_index: int =
             return model_path, run_name
         case _:
             raise RuntimeError(f"Unrecognized directory type for path '{model_path}'.")
+
+
+def _resolve_model_path(model_path: str, model_index: int = -1, ckpt_index: int = -1) -> Tuple[str, str]:
+    if os.path.exists(model_path):
+        return _resolve_ckpt_path(model_path, model_index=model_index, ckpt_index=ckpt_index)
+    else:
+        # Assume it's a Hugging Face Hub identifier
+        run_name = "hf_" + model_path.replace("/", "_").replace("\\", "_")
+        return model_path, run_name
+
+
+__all__ = ["_resolve_model_path", "_resolve_ckpt_path"]
