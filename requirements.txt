@@ -10,4 +10,3 @@ bitsandbytes
 huggingface-hub<1.0
 wandb>=0.22.3
 streamlit
-rich
