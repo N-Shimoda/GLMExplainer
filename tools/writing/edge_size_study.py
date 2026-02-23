@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 import sys
 from datetime import datetime
@@ -154,7 +155,7 @@ def report_best_runs(
         except (TypeError, ValueError):
             return None
         # Treat NaN as missing
-        if v != v:
+        if math.isnan(v):
             return None
         return v
 
