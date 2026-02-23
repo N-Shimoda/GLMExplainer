@@ -8,6 +8,7 @@ dependencies:
   - scipy
   - matplotlib
   - openai
+  - rich
   - pytest
   - pip
   - ninja
