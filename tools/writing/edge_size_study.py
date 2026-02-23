@@ -1,11 +1,18 @@
 import argparse
+import math
 import os
 import sys
+from datetime import datetime
 from typing import Literal, Optional
 
 import matplotlib.pyplot as plt
 import pandas as pd
 import wandb
+from rich import box
+from rich.console import Console
+from rich.table import Table
+
+console = Console()
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if ROOT_DIR not in sys.path:
@@ -18,18 +25,23 @@ from tools.writing.wandb_cache import load_cached_runs, save_cached_runs  # noqa
 def build_args():
     p = argparse.ArgumentParser()
     p.add_argument(
-        "--tags", type=str, nargs="+", default=["jsai", "edge_size", "small"], help="Wandb run tags to filter."
+        "--tags", type=str, nargs="+", default=["fpai", "edge_size", "small"], help="Wandb run tags to filter."
     )
     p.add_argument(
         "--use-cache",
         action="store_true",
         help="Load cached wandb runs from output dir instead of fetching from remote.",
     )
-    p.add_argument(
-        "--set-y-lim", action="store_true", help="Set y-axis limits based on min/max values across all runs."
-    )
     p.add_argument("--output-dir", type=str, default="plots/edge_size_study")
     p.add_argument("--output-format", type=str, default="svg", choices=["svg", "pdf"])
+
+    p.add_argument(
+        "--table-metric",
+        type=str,
+        default="auroc",
+        choices=["auroc", "spearman"],
+        help="Metric for the printed best-runs table (auroc or spearman).",
+    )
 
     # Debugging
     p.add_argument(
@@ -47,7 +59,6 @@ def run_test(args: argparse.Namespace):
         {
             "edge size": [1, 2, 4, 8, 16],
             "AUROC": [0.61, 0.65, 0.7, 0.73, 0.76],
-            "Jaccard": [0.2, 0.24, 0.27, 0.29, 0.31],
             "Spearman": [0.3, 0.35, 0.4, 0.43, 0.47],
         }
     )
@@ -55,7 +66,6 @@ def run_test(args: argparse.Namespace):
         {
             "edge size": [1, 2, 4, 8, 16],
             "AUROC": [0.6, 0.63, 0.67, 0.7, 0.73],
-            "Jaccard": [0.19, 0.22, 0.25, 0.27, 0.29],
             "Spearman": [0.28, 0.32, 0.36, 0.39, 0.42],
         }
     )
@@ -63,7 +73,6 @@ def run_test(args: argparse.Namespace):
         {
             "edge size": [1, 2, 4, 8, 16],
             "AUROC": [0.55, 0.58, 0.61, 0.63, 0.64],
-            "Jaccard": [0.16, 0.18, 0.2, 0.21, 0.22],
             "Spearman": [0.22, 0.25, 0.28, 0.3, 0.32],
         }
     )
@@ -72,7 +81,6 @@ def run_test(args: argparse.Namespace):
         synthetic_complete,
         synthetic_empty,
         synthetic_baseline,
-        y_lim=None,
         metric="auroc",
         filename=filename,
     )
@@ -121,82 +129,154 @@ def get_wandb_runs(
 
 
 def get_best_run(
-    runs: list[wandb.apis.public.Run], metric: Literal["avg_auroc", "edge_mask_jaccard"]
+    runs: list[wandb.apis.public.Run], metric: Literal["avg_auroc", "edge_mask_spearman"]
 ) -> wandb.apis.public.Run:
     """Get the run with the best value for the specified metric."""
     best_run = max(runs, key=lambda run: run.summary.get(metric, float("-inf")))
     return best_run
 
 
-def report_best_runs(runs, metric: Literal["avg_auroc", "edge_mask_jaccard"] = "avg_auroc"):
-    def _format_metric(value):
+def report_best_runs(
+    baselines,
+    ours_complete,
+    ours_empty,
+    metric: Literal["avg_auroc", "edge_mask_spearman"] = "avg_auroc",
+):
+    def _format_metric(value: Optional[float]) -> str:
         if value is None:
             return "n/a"
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return f"{value:.4f}"
-        return str(value)
+        return f"{value:.4f}"
+
+    def _to_float(value) -> Optional[float]:
+        if value is None:
+            return None
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return None
+        # Treat NaN as missing
+        if math.isnan(v):
+            return None
+        return v
+
+    def _best_value_for_subset(runs, subset: str):
+        subset_runs = [run for run in runs if run.config.get("subset") == subset]
+        if not subset_runs:
+            return (None, "n/a")
+        best_run = get_best_run(subset_runs, metric)
+        run_name = best_run.name.split("_")[-1] if best_run.name else best_run.id
+        best_val = _to_float(best_run.summary.get(metric))
+        return (best_val, run_name)
 
     rows = []
     for subset in MOTIFQA_SUBSETS:
-        subset_runs = [run for run in runs if run.config.get("subset") == subset]
-        if not subset_runs:
+        b_val, b_run = _best_value_for_subset(baselines, subset)
+        c_val, c_run = _best_value_for_subset(ours_complete, subset)
+        e_val, e_run = _best_value_for_subset(ours_empty, subset)
+
+        # If all are missing, skip the row entirely
+        if b_val is None and c_val is None and e_val is None:
             continue
-        best_run = get_best_run(subset_runs, metric)
-        run_name = best_run.name.split("_")[-1] if best_run.name else best_run.id
+
         rows.append(
             {
                 "subset": subset,
-                "metric": metric,
-                "value": _format_metric(best_run.summary.get(metric)),
-                "run": run_name,
-                "edge_size": best_run.config.get("edge_size", "n/a"),
+                "baseline_val": b_val,
+                "complete_val": c_val,
+                "empty_val": e_val,
+                "baseline_run": b_run,
+                "complete_run": c_run,
+                "empty_run": e_run,
             }
         )
 
     if not rows:
-        print("No runs found for the specified subsets.")
+        console.print("[yellow]No runs found for the specified subsets.[/yellow]")
         return
 
-    df = pd.DataFrame(rows)
-    print(df.to_string(index=False, col_space=[10, 10, 7, 10, 8]))
+    table = Table(title=f"Best runs ({metric})", box=box.SIMPLE_HEAD)
+    table.add_column("subset", style="bold")
+    table.add_column("baseline", justify="right")
+    table.add_column("complete", justify="right")
+    table.add_column("empty", justify="right")
+
+    def _highlight_if_max(num: Optional[float], run_name: str, max_val: Optional[float]) -> str:
+        """Format the metric value and highlight if it's the max among the three."""
+        if num is None:
+            return "n/a"
+        value_str = _format_metric(num)
+        if max_val is not None and abs(num - max_val) < 1e-12:
+            value_str = f"[bold green]{value_str}[/bold green]"
+        return f"{value_str} ({run_name})"
+
+    for r in rows:
+        nums = [r["baseline_val"], r["complete_val"], r["empty_val"]]
+        present = [n for n in nums if n is not None]
+        max_val = max(present) if present else None
+
+        table.add_row(
+            str(r["subset"]),
+            _highlight_if_max(r["baseline_val"], r["baseline_run"], max_val),
+            _highlight_if_max(r["complete_val"], r["complete_run"], max_val),
+            _highlight_if_max(r["empty_val"], r["empty_run"], max_val),
+        )
+
+    console.print(table)
 
 
 def create_log_df(runs, subset: str) -> pd.DataFrame:
     # Filter runs by subset
     subset_runs = [run for run in runs if run.config.get("subset") == subset]
+    latest_runs_by_edge_size: dict[float | str, tuple[datetime, int, object]] = {}
+
+    def _run_timestamp(run) -> datetime:
+        # Prefer updated_at for "latest", then created_at; support cached runs lacking both.
+        for attr in ["updated_at", "created_at"]:
+            value = getattr(run, attr, None)
+            if not value:
+                continue
+            try:
+                return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            except ValueError:
+                continue
+        return datetime.min
+
+    def _edge_size_key(edge_size):
+        try:
+            return float(edge_size)
+        except (TypeError, ValueError):
+            return str(edge_size)
+
+    for index, run in enumerate(subset_runs):
+        edge_size_key = _edge_size_key(run.config.get("edge_size"))
+        run_timestamp = _run_timestamp(run)
+        prev = latest_runs_by_edge_size.get(edge_size_key)
+        if prev is None or (run_timestamp, index) >= (prev[0], prev[1]):
+            latest_runs_by_edge_size[edge_size_key] = (run_timestamp, index, run)
 
     # Create dataframe
-    df = pd.DataFrame({"edge size": [], "AUROC": [], "Jaccard": [], "Spearman": []})
-    for run in subset_runs:
-        df = pd.concat(
-            [
-                df,
-                pd.DataFrame(
-                    {
-                        "edge size": [run.config["edge_size"]],
-                        "AUROC": [run.summary["avg_auroc"]],
-                        "Jaccard": [run.summary["edge_mask_jaccard"]],
-                        "Spearman": [run.summary["edge_mask_spearman"]],
-                    }
-                ),
-            ],
-            ignore_index=True,
+    rows = []
+    for _, _, run in latest_runs_by_edge_size.values():
+        rows.append(
+            {
+                "edge size": run.config.get("edge_size"),
+                "AUROC": run.summary.get("avg_auroc"),
+                "Spearman": run.summary.get("edge_mask_spearman"),
+            }
         )
-    return df
+    return pd.DataFrame(rows, columns=["edge size", "AUROC", "Spearman"])
 
 
 def plot_figure(
     complete_df: pd.DataFrame,
     empty_df: pd.DataFrame,
     baseline_df: pd.DataFrame,
-    y_lim: Optional[tuple[float, float]],
-    metric: Literal["auroc", "jaccard", "spearman"],
+    metric: Literal["auroc", "spearman"],
     filename: str,
 ):
     """Plot baseline vs. complete/empty for a selected metric over edge sizes."""
     metric_col_map = {
         "auroc": "AUROC",
-        "jaccard": "Jaccard",
         "spearman": "Spearman",
     }
     if metric not in metric_col_map:
@@ -250,7 +330,6 @@ def plot_figure(
     plt.xlabel(r"$\lambda_\mathrm{size}$", fontsize=16)
     plt.ylabel(y_col, fontsize=14)
     plt.tick_params(axis="both", which="major", labelsize=12)
-    plt.ylim(y_lim)
     plt.legend(fontsize=14)
 
     plt.tight_layout()
@@ -261,7 +340,6 @@ def main():
     args = build_args()
     metric_mapping = {
         "auroc": "avg_auroc",
-        "jaccard": "edge_mask_jaccard",
         "spearman": "edge_mask_spearman",
     }
     metrics = list(metric_mapping.keys())
@@ -296,28 +374,10 @@ def main():
         save_cached_runs(cache_path, baselines, ours_complete, ours_empty)
         print(f"Saved runs cache to {cache_path}.")
 
-    # Report best runs
-    for run_type, runs in [
-        ("Baselines", baselines),
-        ("Complete", ours_complete),
-        ("Empty", ours_empty),
-    ]:
-        print(f"\n{run_type} best runs:")
-        report_best_runs(runs, metric="avg_auroc")
-
-    # Determine y-limits for each metric
-    if args.set_y_lim:
-        all_runs = baselines + ours_complete + ours_empty
-        y_lim_dict = {
-            metric: (
-                min([run.summary[wandb_metric] for run in all_runs]),
-                max([run.summary[wandb_metric] for run in all_runs]) + 0.005,
-            )
-            for metric, wandb_metric in metric_mapping.items()
-        }
-        print(y_lim_dict)
-    else:
-        y_lim_dict = None
+    # Report best runs (single table)
+    print("\nBest runs:")
+    table_metric = metric_mapping[args.table_metric]
+    report_best_runs(baselines, ours_complete, ours_empty, metric=table_metric)
 
     # Create plots
     skipped = []
@@ -334,7 +394,6 @@ def main():
                 complete_df,
                 empty_df,
                 baseline_df,
-                y_lim=y_lim_dict[metric] if y_lim_dict else None,
                 metric=metric,
                 filename=filename,
             )

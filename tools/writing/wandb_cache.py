@@ -10,6 +10,8 @@ class CachedRun:
     tags: list
     name: str
     id: str
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 def _jsonify(value):
@@ -30,6 +32,8 @@ def _serialize_runs(runs):
             "tags": _jsonify(list(run.tags or [])),
             "name": run.name or "",
             "id": run.id or "",
+            "created_at": getattr(run, "created_at", None),
+            "updated_at": getattr(run, "updated_at", None),
         }
         for run in runs
     ]
@@ -43,6 +47,8 @@ def _deserialize_runs(records):
             tags=record.get("tags", []),
             name=record.get("name", ""),
             id=record.get("id", ""),
+            created_at=record.get("created_at"),
+            updated_at=record.get("updated_at"),
         )
         for record in records
     ]
