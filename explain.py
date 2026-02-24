@@ -750,6 +750,9 @@ def main():
             _cleanup_distributed()
         return
 
+    # Keep the intended maximum sample count for final usage-rate reporting.
+    num_samples = args.num_samples if args.num_samples is not None else len(dataset)
+
     # Duplicate a sample for multiple trials if len(dataset) == 1
     if args.num_trials > 1 and len(dataset) == 1:
         duplicate_indices = [0] * args.num_trials
@@ -919,13 +922,11 @@ def main():
         avg_edge_size = 0.0
         avg_edge_ent = 0.0
         samples_used_count = 0
-        samples_total_count = 0
         samples_used_pct = 0.0
         if merged_sample_metrics is not None:
-            samples_total_count = len(merged_sample_metrics)
             samples_used_count = sum(1 for stats in merged_sample_metrics.values() if stats.get("count", 0) > 0)
-            if samples_total_count > 0:
-                samples_used_pct = (samples_used_count / samples_total_count) * 100.0
+            if num_samples > 0:
+                samples_used_pct = (samples_used_count / num_samples) * 100.0
         if total_count > 0:
             avg_answer_accuracy = total_answer_accuracy / total_count
             avg_auroc = exp_metric_totals["auroc"] / total_count
@@ -981,6 +982,7 @@ def main():
             wandb_payload = stability_metrics.copy()
             wandb_payload["samples_used_pct"] = samples_used_pct
             wandb_payload["samples_used_count"] = samples_used_count
+            wandb_payload["num_samples"] = num_samples
             wandb_payload["avg_edge_size"] = avg_edge_size
             wandb_payload["avg_edge_ent"] = avg_edge_ent
             if total_count > 0:
