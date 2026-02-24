@@ -4,7 +4,7 @@
 
 ### Devices with CUDA (_reccomended_)
 
-For devices with CUDA compatible GPUs, we recommend using the `environment.yml` file to build an environment.
+For devices with CUDA compatible GPUs, we recommend using the `environment.yml` to build an environment.
 This file includes the version index of PyTorch to ensure the reproducibility.
 
 ```bash
@@ -26,7 +26,7 @@ pip install -r requirements.txt
 > [!TIP]
 > Using a suitable hyperparameters in GNNExplainer achieves better explanation accuracy in our method.
 
-In PyG implementation, hyperparams of GNNExplainer are `edge_size`, `edge_ent`, `lr`, and `epochs`.
+When using GNNExplainer for computing edge importance, the optimization process has four hyperparameters: `edge_size`, `edge_ent`, `lr`, and `epochs`.
 
 ### Procedure
 
@@ -38,9 +38,14 @@ In PyG implementation, hyperparams of GNNExplainer are `edge_size`, `edge_ent`, 
 
    You can summarize the results in a table by running `tools/writing/edge_size_study.py` when using W&B logging.
 
-1. For each optimal `edge_size` setting, find the best `lr` and `epochs`.
+1. For each optimal `edge_size` setting, find the best `lr`.
 
    ```bash
    bash scripts/explain/lr.sh
+   ```
+
+1. Finally, find the best `epochs` setting for each `edge_size` and `lr` combination.
+
+   ```bash
    bash scripts/explain/epochs.sh
    ```
