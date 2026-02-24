@@ -54,21 +54,43 @@ def build_args():
         required=True,
         help="One or more subsets to evaluate.",
     )
-    p.add_argument("--split", choices=["train", "validation", "test"], default="test")
-    p.add_argument("--use-custom-dataset", action="store_true", default=False)
+    p.add_argument(
+        "--split",
+        choices=["train", "validation", "test"],
+        default="test",
+        help="Which data split to evaluate on. (default: test)",
+    )
+    p.add_argument(
+        "--use-custom-dataset",
+        action="store_true",
+        default=False,
+        help="Whether to use the custom dataset with extended completion length (only for GraphQA).",
+    )
 
     # Model selection
-    p.add_argument("--model-path", type=str, required=True)
-    p.add_argument("--model-index", type=int, default=-1, help="Which trained model version to use.")
-    p.add_argument("--ckpt-index", type=int, default=-1, help="Which checkpoint version to use.")
+    p.add_argument(
+        "--model-path",
+        type=str,
+        required=True,
+        help="Hugging Face model path or local path to load the pre-trained model from.",
+    )
+    p.add_argument(
+        "--model-index", type=int, default=-1, help="Which trained model version to use. (default: -1 (latest))"
+    )
+    p.add_argument(
+        "--ckpt-index", type=int, default=-1, help="Which checkpoint version to use. (default: -1 (latest))"
+    )
     p.add_argument("--bf16", action="store_true", default=False, help="Load model weights in bfloat16 precision.")
     p.add_argument("--fp16", action="store_true", default=False, help="Load model weights in float16 precision.")
 
     # Evaluation settings
-    p.add_argument("--num-trials", type=int, default=1)
-    p.add_argument("--batch-size", type=int, default=4)
-    p.add_argument("--max-new-tokens", type=int)
+    p.add_argument("--num-trials", type=int, default=1, help="Number of evaluation trials to run (default: 1).")
+    p.add_argument(
+        "--per-device-batch-size", type=int, default=4, help="Batch size per device for evaluation (default: 4)."
+    )
+    p.add_argument("--max-new-tokens", type=int, default=None, help="Explicitly set max_new_tokens for generation.")
 
+    # Parse and validate arguments
     args = p.parse_args()
     _validate_args(args)
 
@@ -199,7 +221,7 @@ def build_dataset(
 
 
 @torch.no_grad()
-def eval_model(model: GraphTokenLM, test_ds, batch_size: int, max_new_tokens: int) -> list[dict[str, str]]:
+def eval_model(model: GraphTokenLM, test_ds, per_device_batch_size: int, max_new_tokens: int) -> list[dict[str, str]]:
     """Evaluates the model on the test dataset and returns the prediction results.
 
     Parameters
@@ -208,8 +230,8 @@ def eval_model(model: GraphTokenLM, test_ds, batch_size: int, max_new_tokens: in
         The pre-trained GraphTokenLM model to be evaluated.
     test_ds : Dataset
         The test dataset containing prompts and graph data.
-    batch_size : int
-        The batch size for evaluation.
+    per_device_batch_size : int
+        The per-device batch size for evaluation.
     max_new_tokens : int
         The maximum number of new tokens to generate.
 
@@ -231,11 +253,11 @@ def eval_model(model: GraphTokenLM, test_ds, batch_size: int, max_new_tokens: in
     )
 
     results = []
-    num_batches = ceil(len(test_ds) / batch_size)
+    num_batches = ceil(len(test_ds) / per_device_batch_size)
     model_device = _infer_model_device(model)
 
     for i in tqdm(range(num_batches)):
-        batch = test_ds[i * batch_size : (i + 1) * batch_size]
+        batch = test_ds[i * per_device_batch_size : (i + 1) * per_device_batch_size]
         pyg_batch = create_pyg_batch(batch["graph"], model_device)
         batch["graph"] = pyg_batch
 
@@ -329,7 +351,7 @@ def main():
             if use_dist and world_size > 1:
                 start, end = _shard_dataset(len(test_ds), rank, world_size)
                 local_ds = test_ds.select(range(start, end))
-            local_results = eval_model(model, local_ds, args.batch_size, max_new_tokens)
+            local_results = eval_model(model, local_ds, args.per_device_batch_size, max_new_tokens)
 
             # Save results
             if use_dist:
