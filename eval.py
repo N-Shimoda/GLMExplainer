@@ -11,7 +11,12 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch_geometric.data import Batch as PygBatch
 from torch_geometric.data import Data as PygData
 from tqdm import tqdm
-from transformers import AutoTokenizer, GenerationConfig, set_seed
+from transformers import (
+    AutoTokenizer,
+    GenerationConfig,
+    PreTrainedTokenizerBase,
+    set_seed,
+)
 
 from src.ckpt import _resolve_model_path
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
@@ -112,17 +117,30 @@ def _validate_args(args: argparse.Namespace):
         raise ValueError("Cannot specify both --bf16 and --fp16. Please choose one precision mode.")
 
 
-def load_model_for_eval(model_path: str, local_rank: int, bf16: bool = False, fp16: bool = False) -> GraphTokenLM:
-    """Load GraphTokenLM onto a single device (DDP handles data-parallel)."""
+def load_model_for_eval(
+    model_path: str,
+    local_rank: int,
+    use_dist: bool = False,
+    bf16: bool = False,
+    fp16: bool = False,
+) -> GraphTokenLM | DDP:
+    """Load GraphTokenLM onto a device and wrap with DDP when distributed eval is enabled."""
+    # Load the model with the specified precision
     dtype = torch.bfloat16 if bf16 else torch.float16 if fp16 else torch.float32
     model = GraphTokenLM.from_pretrained(model_path, load_llm_weights=False, trust_remote_code=True, dtype=dtype)
-    if torch.cuda.is_available():
-        device = torch.device(f"cuda:{local_rank}")
-    elif torch.backends.mps.is_available():
-        device = torch.device("mps")
-    else:
-        device = torch.device("cpu")
-    return model.to(device)
+
+    # Move model to the appropriate device
+    device = (
+        torch.device(f"cuda:{local_rank}")
+        if torch.cuda.is_available()
+        else torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+    )
+    model = model.to(device)
+
+    # Wrap with DDP if using distributed evaluation (only on CUDA)
+    if use_dist:
+        model = DDP(model, device_ids=[local_rank] if torch.cuda.is_available() else None)
+    return model
 
 
 def _unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
@@ -225,6 +243,7 @@ def build_dataset(
 def eval_model(
     model: GraphTokenLM,
     test_ds,
+    tokenizer: PreTrainedTokenizerBase,
     per_device_batch_size: int,
     max_new_tokens: int,
     pbar: Optional[tqdm] = None,
@@ -238,6 +257,8 @@ def eval_model(
         The pre-trained GraphTokenLM model to be evaluated.
     test_ds : Dataset
         The test dataset containing prompts and graph data.
+    tokenizer : PreTrainedTokenizerBase
+        Tokenizer used to prepare inputs and decode outputs.
     per_device_batch_size : int
         The per-device batch size for evaluation.
     max_new_tokens : int
@@ -254,8 +275,6 @@ def eval_model(
     """
     model.eval()
     base_model = _unwrap_model(model)
-    tokenizer = AutoTokenizer.from_pretrained(base_model.config.base_model, trust_remote_code=True)
-    tokenizer.padding_side = "left"
 
     gen_cfg = GenerationConfig(
         max_new_tokens=max_new_tokens,
@@ -333,14 +352,14 @@ def main():
     set_seed(42 + rank)
     args = build_args()
 
-    # Load pre-trained model
+    # Load pre-trained model and tokenizer
     ckpt_path, run_name = _resolve_model_path(args.model_path, args.model_index, args.ckpt_index)
     if is_main:
         print(f"Checkpoint: {ckpt_path}")
-    model = load_model_for_eval(ckpt_path, local_rank, bf16=args.bf16, fp16=args.fp16)
-    if use_dist:
-        model = DDP(model, device_ids=[local_rank] if torch.cuda.is_available() else None)
+    model = load_model_for_eval(ckpt_path, local_rank, use_dist=use_dist, bf16=args.bf16, fp16=args.fp16)
     base_model = _unwrap_model(model)
+    tok = AutoTokenizer.from_pretrained(base_model.config.base_model, trust_remote_code=True)
+    tok.padding_side = "left"
 
     for subset in args.subset:
         # Load dataset
@@ -379,6 +398,7 @@ def main():
             local_results = eval_model(
                 model,
                 local_ds,
+                tok,
                 args.per_device_batch_size,
                 max_new_tokens,
                 pbar=subset_pbar if is_main else None,
