@@ -121,7 +121,7 @@ def _resolve_model_path(model_path: str, model_index: int = -1, ckpt_index: int 
         return _resolve_ckpt_path(model_path, model_index=model_index, ckpt_index=ckpt_index)
     else:
         # Assume it's a Hugging Face Hub identifier
-        run_name = "hf_" + model_path.replace("/", "_").replace("\\", "_")
+        run_name = model_path.replace("/", "_").replace("\\", "_")
         return model_path, run_name
 
 
