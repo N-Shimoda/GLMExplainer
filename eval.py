@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 from math import ceil
+from typing import Optional
 
 import torch
 import torch.distributed as dist
@@ -10,9 +11,14 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch_geometric.data import Batch as PygBatch
 from torch_geometric.data import Data as PygData
 from tqdm import tqdm
-from transformers import AutoTokenizer, GenerationConfig, set_seed
+from transformers import (
+    AutoTokenizer,
+    GenerationConfig,
+    PreTrainedTokenizerBase,
+    set_seed,
+)
 
-from src.ckpt import _resolve_ckpt_path
+from src.ckpt import _resolve_model_path
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 from src.glm import GraphTokenLM
 from src.metrics import comp_accuracy
@@ -54,19 +60,43 @@ def build_args():
         required=True,
         help="One or more subsets to evaluate.",
     )
-    p.add_argument("--split", choices=["train", "validation", "test"], default="test")
-    p.add_argument("--use-custom-dataset", action="store_true", default=False)
+    p.add_argument(
+        "--split",
+        choices=["train", "validation", "test"],
+        default="test",
+        help="Which data split to evaluate on. (default: test)",
+    )
+    p.add_argument(
+        "--use-custom-dataset",
+        action="store_true",
+        default=False,
+        help="Whether to use the custom dataset with extended completion length (only for GraphQA).",
+    )
 
     # Model selection
-    p.add_argument("--model-path", type=str, required=True)
-    p.add_argument("--model-index", type=int, default=-1, help="Which trained model version to use.")
-    p.add_argument("--ckpt-index", type=int, default=-1, help="Which checkpoint version to use.")
+    p.add_argument(
+        "--model-path",
+        type=str,
+        required=True,
+        help="Hugging Face model path or local path to load the pre-trained model from.",
+    )
+    p.add_argument(
+        "--model-index", type=int, default=-1, help="Which trained model version to use. (default: -1 (latest))"
+    )
+    p.add_argument(
+        "--ckpt-index", type=int, default=-1, help="Which checkpoint version to use. (default: -1 (latest))"
+    )
+    p.add_argument("--bf16", action="store_true", default=False, help="Load model weights in bfloat16 precision.")
+    p.add_argument("--fp16", action="store_true", default=False, help="Load model weights in float16 precision.")
 
     # Evaluation settings
-    p.add_argument("--num-trials", type=int, default=1)
-    p.add_argument("--batch-size", type=int, default=4)
-    p.add_argument("--max-new-tokens", type=int)
+    p.add_argument("--num-trials", type=int, default=1, help="Number of evaluation trials to run (default: 1).")
+    p.add_argument(
+        "--per-device-batch-size", type=int, default=4, help="Batch size per device for evaluation (default: 4)."
+    )
+    p.add_argument("--max-new-tokens", type=int, default=None, help="Explicitly set max_new_tokens for generation.")
 
+    # Parse and validate arguments
     args = p.parse_args()
     _validate_args(args)
 
@@ -74,6 +104,7 @@ def build_args():
 
 
 def _validate_args(args: argparse.Namespace):
+    # Dataset and subset checks
     valid_subsets = GRAPHQA_SUBSETS if args.dataset == "GraphQA" else MOTIFQA_SUBSETS
     invalid = [subset for subset in args.subset if subset not in valid_subsets]
     if invalid:
@@ -81,16 +112,34 @@ def _validate_args(args: argparse.Namespace):
     if args.use_custom_dataset and args.dataset != "GraphQA":
         raise ValueError("--use-custom-dataset is only supported with GraphQA dataset.")
 
+    # Precision checks
+    if args.bf16 and args.fp16:
+        raise ValueError("Cannot specify both --bf16 and --fp16. Please choose one precision mode.")
+
 
 def load_model_for_eval(
-    model_path: str, *, load_llm_weights: bool = False, device: torch.device | None = None
-) -> GraphTokenLM:
-    """Load GraphTokenLM onto a single device (DDP handles data-parallel)."""
-    model = GraphTokenLM.from_pretrained(model_path, load_llm_weights=load_llm_weights)
-    if device is not None:
-        return model.to(device)
-    if torch.cuda.is_available():
-        return model.to("cuda:0")
+    model_path: str,
+    local_rank: int,
+    use_dist: bool = False,
+    bf16: bool = False,
+    fp16: bool = False,
+) -> GraphTokenLM | DDP:
+    """Load GraphTokenLM onto a device and wrap with DDP when distributed eval is enabled."""
+    # Load the model with the specified precision
+    dtype = torch.bfloat16 if bf16 else torch.float16 if fp16 else torch.float32
+    model = GraphTokenLM.from_pretrained(model_path, load_llm_weights=False, trust_remote_code=True, dtype=dtype)
+
+    # Move model to the appropriate device
+    device = (
+        torch.device(f"cuda:{local_rank}")
+        if torch.cuda.is_available()
+        else torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+    )
+    model = model.to(device)
+
+    # Wrap with DDP if using distributed evaluation (only on CUDA)
+    if use_dist:
+        model = DDP(model, device_ids=[local_rank] if torch.cuda.is_available() else None)
     return model
 
 
@@ -191,7 +240,15 @@ def build_dataset(
 
 
 @torch.no_grad()
-def eval_model(model: GraphTokenLM, test_ds, batch_size: int, max_new_tokens: int) -> list[dict[str, str]]:
+def eval_model(
+    model: GraphTokenLM,
+    test_ds,
+    tokenizer: PreTrainedTokenizerBase,
+    per_device_batch_size: int,
+    max_new_tokens: int,
+    pbar: Optional[tqdm] = None,
+    show_progress: bool = True,
+) -> list[dict[str, str]]:
     """Evaluates the model on the test dataset and returns the prediction results.
 
     Parameters
@@ -200,10 +257,16 @@ def eval_model(model: GraphTokenLM, test_ds, batch_size: int, max_new_tokens: in
         The pre-trained GraphTokenLM model to be evaluated.
     test_ds : Dataset
         The test dataset containing prompts and graph data.
-    batch_size : int
-        The batch size for evaluation.
+    tokenizer : PreTrainedTokenizerBase
+        Tokenizer used to prepare inputs and decode outputs.
+    per_device_batch_size : int
+        The per-device batch size for evaluation.
     max_new_tokens : int
         The maximum number of new tokens to generate.
+    pbar : Optional[tqdm]
+        Optional externally-managed progress bar to update per batch.
+    show_progress : bool
+        Whether to show an internal progress bar when ``pbar`` is not provided.
 
     Returns
     -------
@@ -212,8 +275,6 @@ def eval_model(model: GraphTokenLM, test_ds, batch_size: int, max_new_tokens: in
     """
     model.eval()
     base_model = _unwrap_model(model)
-    tokenizer = AutoTokenizer.from_pretrained(base_model.config.base_model, trust_remote_code=True)
-    tokenizer.padding_side = "left"
 
     gen_cfg = GenerationConfig(
         max_new_tokens=max_new_tokens,
@@ -223,11 +284,14 @@ def eval_model(model: GraphTokenLM, test_ds, batch_size: int, max_new_tokens: in
     )
 
     results = []
-    num_batches = ceil(len(test_ds) / batch_size)
+    num_batches = ceil(len(test_ds) / per_device_batch_size)
     model_device = _infer_model_device(model)
 
-    for i in tqdm(range(num_batches)):
-        batch = test_ds[i * batch_size : (i + 1) * batch_size]
+    iterator = range(num_batches)
+    if pbar is None:
+        iterator = tqdm(iterator, disable=not show_progress)
+    for i in iterator:
+        batch = test_ds[i * per_device_batch_size : (i + 1) * per_device_batch_size]
         pyg_batch = create_pyg_batch(batch["graph"], model_device)
         batch["graph"] = pyg_batch
 
@@ -244,6 +308,8 @@ def eval_model(model: GraphTokenLM, test_ds, batch_size: int, max_new_tokens: in
             for i, pred in enumerate(decoded)
         ]
         results.extend(res_dict_li)
+        if pbar is not None:
+            pbar.update(1)
 
     return results
 
@@ -286,29 +352,26 @@ def main():
     set_seed(42 + rank)
     args = build_args()
 
-    # Load pre-trained model
-    ckpt_path, run_name = _resolve_ckpt_path(args.model_path, args.model_index, args.ckpt_index)
+    # Load pre-trained model and tokenizer
+    ckpt_path, run_name = _resolve_model_path(args.model_path, args.model_index, args.ckpt_index)
     if is_main:
         print(f"Checkpoint: {ckpt_path}")
-    device = torch.device(f"cuda:{local_rank}") if torch.cuda.is_available() else torch.device("cpu")
-    model = load_model_for_eval(ckpt_path, load_llm_weights=False, device=device)
-    if use_dist:
-        model = DDP(model, device_ids=[local_rank] if torch.cuda.is_available() else None)
+    model = load_model_for_eval(ckpt_path, local_rank, use_dist=use_dist, bf16=args.bf16, fp16=args.fp16)
     base_model = _unwrap_model(model)
+    tok = AutoTokenizer.from_pretrained(base_model.config.base_model, trust_remote_code=True)
+    tok.padding_side = "left"
 
-    lpe_dim = getattr(base_model.config, "lpe_dim", base_model.config.node_feat_dim)
-    use_degree_emb = getattr(base_model.config, "use_degree_emb", False)
     for subset in args.subset:
         # Load dataset
         test_ds = build_dataset(
             args.dataset,
             subset,
             args.split,
-            lpe_dim,
-            use_degree_emb=use_degree_emb,
+            lpe_dim=getattr(base_model.config, "lpe_dim", base_model.config.node_feat_dim),
+            use_degree_emb=getattr(base_model.config, "use_degree_emb", False),
         )
 
-        # Evaluate the model
+        # Define max_new_tokens
         if args.max_new_tokens is not None:
             max_new_tokens = args.max_new_tokens
             if is_main:
@@ -316,13 +379,31 @@ def main():
         else:
             max_new_tokens_dict = EXT_MAX_NEW_TOKENS if args.use_custom_dataset else MAX_NEW_TOKENS
             max_new_tokens = max_new_tokens_dict.get(subset, 32)
+
+        # Prepare progress bar
+        local_len = len(test_ds)
+        if use_dist and world_size > 1:
+            start, end = _shard_dataset(len(test_ds), rank, world_size)
+            local_len = max(0, end - start)
+        total_local_batches = ceil(local_len / args.per_device_batch_size) if local_len > 0 else 0
+        subset_pbar = tqdm(total=total_local_batches * args.num_trials, desc=subset, disable=not is_main)
+
+        # Run evaluation trials
         all_results = []
         for _ in range(args.num_trials):
             local_ds = test_ds
             if use_dist and world_size > 1:
                 start, end = _shard_dataset(len(test_ds), rank, world_size)
                 local_ds = test_ds.select(range(start, end))
-            local_results = eval_model(model, local_ds, args.batch_size, max_new_tokens)
+            local_results = eval_model(
+                model,
+                local_ds,
+                tok,
+                args.per_device_batch_size,
+                max_new_tokens,
+                pbar=subset_pbar if is_main else None,
+                show_progress=False,
+            )
 
             # Save results
             if use_dist:
@@ -332,6 +413,7 @@ def main():
                     all_results.extend([item for sublist in gathered for item in sublist])
             else:
                 all_results.extend(local_results)
+        subset_pbar.close()
 
         if is_main:
             match args.split:
