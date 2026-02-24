@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 from math import ceil
+from typing import Optional
 
 import torch
 import torch.distributed as dist
@@ -221,7 +222,14 @@ def build_dataset(
 
 
 @torch.no_grad()
-def eval_model(model: GraphTokenLM, test_ds, per_device_batch_size: int, max_new_tokens: int) -> list[dict[str, str]]:
+def eval_model(
+    model: GraphTokenLM,
+    test_ds,
+    per_device_batch_size: int,
+    max_new_tokens: int,
+    pbar: Optional[tqdm] = None,
+    show_progress: bool = True,
+) -> list[dict[str, str]]:
     """Evaluates the model on the test dataset and returns the prediction results.
 
     Parameters
@@ -234,6 +242,10 @@ def eval_model(model: GraphTokenLM, test_ds, per_device_batch_size: int, max_new
         The per-device batch size for evaluation.
     max_new_tokens : int
         The maximum number of new tokens to generate.
+    pbar : Optional[tqdm]
+        Optional externally-managed progress bar to update per batch.
+    show_progress : bool
+        Whether to show an internal progress bar when ``pbar`` is not provided.
 
     Returns
     -------
@@ -256,7 +268,10 @@ def eval_model(model: GraphTokenLM, test_ds, per_device_batch_size: int, max_new
     num_batches = ceil(len(test_ds) / per_device_batch_size)
     model_device = _infer_model_device(model)
 
-    for i in tqdm(range(num_batches)):
+    iterator = range(num_batches)
+    if pbar is None:
+        iterator = tqdm(iterator, disable=not show_progress)
+    for i in iterator:
         batch = test_ds[i * per_device_batch_size : (i + 1) * per_device_batch_size]
         pyg_batch = create_pyg_batch(batch["graph"], model_device)
         batch["graph"] = pyg_batch
@@ -274,6 +289,8 @@ def eval_model(model: GraphTokenLM, test_ds, per_device_batch_size: int, max_new
             for i, pred in enumerate(decoded)
         ]
         results.extend(res_dict_li)
+        if pbar is not None:
+            pbar.update(1)
 
     return results
 
@@ -325,19 +342,17 @@ def main():
         model = DDP(model, device_ids=[local_rank] if torch.cuda.is_available() else None)
     base_model = _unwrap_model(model)
 
-    lpe_dim = getattr(base_model.config, "lpe_dim", base_model.config.node_feat_dim)
-    use_degree_emb = getattr(base_model.config, "use_degree_emb", False)
     for subset in args.subset:
         # Load dataset
         test_ds = build_dataset(
             args.dataset,
             subset,
             args.split,
-            lpe_dim,
-            use_degree_emb=use_degree_emb,
+            lpe_dim=getattr(base_model.config, "lpe_dim", base_model.config.node_feat_dim),
+            use_degree_emb=getattr(base_model.config, "use_degree_emb", False),
         )
 
-        # Evaluate the model
+        # Define max_new_tokens
         if args.max_new_tokens is not None:
             max_new_tokens = args.max_new_tokens
             if is_main:
@@ -345,13 +360,30 @@ def main():
         else:
             max_new_tokens_dict = EXT_MAX_NEW_TOKENS if args.use_custom_dataset else MAX_NEW_TOKENS
             max_new_tokens = max_new_tokens_dict.get(subset, 32)
+
+        # Prepare progress bar
+        local_len = len(test_ds)
+        if use_dist and world_size > 1:
+            start, end = _shard_dataset(len(test_ds), rank, world_size)
+            local_len = max(0, end - start)
+        total_local_batches = ceil(local_len / args.per_device_batch_size) if local_len > 0 else 0
+        subset_pbar = tqdm(total=total_local_batches * args.num_trials, desc=subset, disable=not is_main)
+
+        # Run evaluation trials
         all_results = []
         for _ in range(args.num_trials):
             local_ds = test_ds
             if use_dist and world_size > 1:
                 start, end = _shard_dataset(len(test_ds), rank, world_size)
                 local_ds = test_ds.select(range(start, end))
-            local_results = eval_model(model, local_ds, args.per_device_batch_size, max_new_tokens)
+            local_results = eval_model(
+                model,
+                local_ds,
+                args.per_device_batch_size,
+                max_new_tokens,
+                pbar=subset_pbar if is_main else None,
+                show_progress=False,
+            )
 
             # Save results
             if use_dist:
@@ -361,6 +393,7 @@ def main():
                     all_results.extend([item for sublist in gathered for item in sublist])
             else:
                 all_results.extend(local_results)
+        subset_pbar.close()
 
         if is_main:
             match args.split:
