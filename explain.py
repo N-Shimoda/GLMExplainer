@@ -18,7 +18,7 @@ from transformers import AutoTokenizer, GenerationConfig
 from transformers.trainer_utils import set_seed
 
 from eval import MAX_NEW_TOKENS, create_pyg_batch
-from src.ckpt import _resolve_ckpt_path
+from src.ckpt import _resolve_model_path
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 from src.explanation.args import check_non_negative_int, validate_args
 from src.explanation.logging import (
@@ -261,7 +261,7 @@ def build_args():
 def load_model(
     model_path: str, device: torch.device | str, verbose: bool = True
 ) -> tuple[GraphTokenLM, AutoTokenizer]:
-    """Loads the GraphTokenLM model and tokenizer from the specified checkpoint path.
+    """Loads the GraphTokenLM model and tokenizer from a local checkpoint or HF Hub model.
 
     Parameters
     ----------
@@ -281,18 +281,18 @@ def load_model(
     ckpt_path : str
         Resolved checkpoint path from which the model was loaded.
     """
-    # Resolve checkpoint path
-    ckpt_path, run_name = _resolve_ckpt_path(model_path)
+    # Resolve local checkpoint path or HF Hub identifier
+    resolved_model_path, run_name = _resolve_model_path(model_path)
 
     # Load model onto the specified device
-    model = GraphTokenLM.from_pretrained(ckpt_path, load_llm_weights=False)
+    model = GraphTokenLM.from_pretrained(resolved_model_path, load_llm_weights=False)
     model.to(torch.device(device))
     if verbose:
-        print(f"Loaded model from {ckpt_path} (run name: {run_name})")
+        print(f"Loaded model from {resolved_model_path} (run name: {run_name})")
 
     # Load pre-trained tokenizer
     tokenizer = AutoTokenizer.from_pretrained(model.config.llm_name, trust_remote_code=True)
-    return model, tokenizer, ckpt_path
+    return model, tokenizer, resolved_model_path
 
 
 def _get_gt_explanation(sample: dict[str, str]) -> torch.Tensor:
