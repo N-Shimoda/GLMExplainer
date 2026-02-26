@@ -48,7 +48,7 @@ torchrun --nproc_per_node=NUM_GPUS train.py \
 
 The above setting utilizes `SFTTrainer` to train the weights of GNN encoder and projection layers,
 while keeping the pre-trained language model frozen.
-If needed, one can apply parameter efficient fine-tuning using LoRA to LLM weights by setting `--use-lora` flag.
+If needed, one can apply parameter efficient fine-tuning using LoRA to LLM by setting `--use-lora` flag.
 To find out more details, please refer to `python train.py --help`.
 
 ### Evaluation
@@ -62,25 +62,25 @@ torchrun --nproc_per_node=2 eval.py \
 	--num-trials 5 --per-device-batch-size 5
 ```
 
-By specifying multiple subset names, this script evaluates the model and reports accuracy for each subset.
+By specifying multiple subset names, this script reports the answer accuracy per subset.
 
-### Public checkpoint
+### Hugging Face Model
 
 Our best model trained on MotifQA dataset is available as [naos-ku/GraphTokenLM](https://huggingface.co/naos-ku/GraphTokenLM) on Hugging Face Hub.
-This model can be loaded without cloning this repository by using `AutoModelForCausalLM`.
+This model can be loaded by using `AutoModelForCausalLM`.
 
 ```python
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 model = AutoModelForCausalLM.from_pretrained(
-	repo_id,
+	"naos-ku/GraphTokenLM",
 	trust_remote_code=True,
 	load_llm_weights=False,  # skip loading LLM weights from original HF repo (Qwen/Qwen3-4B-Base).
 )
-tokenizer = AutoTokenizer.from_pretrained(repo_id, trust_remote_code=True)
+tokenizer = AutoTokenizer.from_pretrained("naos-ku/GraphTokenLM", trust_remote_code=True)
 ```
 
-## Applying proposed method
+## Explain model outputs
 
 In order to apply our explanation method to a trained GraphToken model, run `explain.py` with following arguments.
 
@@ -98,7 +98,7 @@ torchrun --nproc_per_node=2 explain.py \
 ## Search of Optimal Hyperparameters
 
 > [!TIP]
-> Using a suitable hyperparameters in GNNExplainer achieves better explanation accuracy in our method.
+> Using a suitable hyperparameters in GNNExplainer achieves a better explanation accuracy in our method.
 
 ### Hyperparameters in GNNExplainer
 
