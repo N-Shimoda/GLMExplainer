@@ -4,8 +4,8 @@
 
 ### Devices with CUDA (_reccomended_)
 
-For devices with CUDA compatible GPUs, we recommend using the `environment.yml` to build an environment.
-This file includes the version index of PyTorch to ensure the reproducibility.
+For devices with CUDA compatible GPUs, we recommend using `environment.yml` to build an environment.
+This file includes the version index of PyTorch to ensure the reproducibility, and `flash_attn` library for fine-tuning efficiency.
 
 ```bash
 conda env create -f environment.yml
@@ -23,19 +23,16 @@ pip install -r requirements.txt
 
 ## Construction of GraphToken model
 
-This repository provides the PyTorch implementation of GraphToken (`src/glm.py`) and scripts for training and evaluation.
+This repository provides the PyTorch implementation of GraphToken and scripts for training and evaluation.
 
-### GraphToken
+### GraphToken (`src/glm.py`)
 
 GraphToken is a pioneering Graph-Language Model (GLM) method proposed by Perozzi et al. (2024) that encodes graph-structured data into a soft-prompt vectors to be consumed by a pre-trained language model.
 
-### Training
+### Training of GraphToken (`train.py`)
 
-To train a GraphToken model, run `train.py` in the following format.
-
-This script utilizes `SFTTrainer` to train the weights of GNN encoder and projection layers,
-while keeping the pre-trained language model frozen.
-You can find other hyperparameters by running `python train.py --help`.
+To train a GraphToken model on graph QA datasets, run `train.py` in the following format.
+The supported datasets include our [MotifQA](https://huggingface.co/datasets/naos-ku/motif-qa) and Fatemi et al.'s [GraphQA](https://huggingface.co/datasets/baharef/GraphQA) datasets.
 
 ```bash
 torchrun --nproc_per_node=NUM_GPUS train.py \
@@ -52,9 +49,14 @@ torchrun --nproc_per_node=NUM_GPUS train.py \
    --wandb
 ```
 
-Our best model trained on [MotifQA dataset](https://huggingface.co/datasets/naos-ku/motif-qa) is available as [`naos-ku/GraphTokenLM`](https://huggingface.co/naos-ku/GraphTokenLM) on Hugging Face Hub.
+This script utilizes `SFTTrainer` to train the weights of GNN encoder and projection layers,
+while keeping the pre-trained language model frozen.
+If needed, fine-tuning of the language model is applicable by setting `--use-lora` flag.
+You can find out details of the other hyperparameters by running `python train.py --help`.
 
-### Evaluation
+Our best model on [MotifQA dataset](https://huggingface.co/datasets/naos-ku/motif-qa) is available as [`naos-ku/GraphTokenLM`](https://huggingface.co/naos-ku/GraphTokenLM) on Hugging Face Hub.
+
+### Evaluation (`eval.py`)
 
 To evaluate the model, please run `eval.py` in the following format.
 
