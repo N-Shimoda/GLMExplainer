@@ -83,7 +83,15 @@ torchrun --nproc_per_node=2 explain.py \
 > [!TIP]
 > Using a suitable hyperparameters in GNNExplainer achieves better explanation accuracy in our method.
 
+### Hyperparameters in GNNExplainer
+
 When using GNNExplainer for computing edge importance, the optimization process has four hyperparameters: `edge_size`, `edge_ent`, `lr`, and `epochs`.
+
+For details, please refer to the original paper of GNNExplainer[^1] and the PyTorch Geometric documentation[^2].
+
+[^1]: https://papers.nips.cc/paper_files/paper/2019/hash/d80b7040b773199015de6d3b4293c8ff-Abstract.html
+
+[^2]: https://pytorch-geometric.readthedocs.io/en/2.7.0/generated/torch_geometric.explain.algorithm.GNNExplainer.html
 
 ### Procedure
 
