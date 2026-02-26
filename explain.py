@@ -406,7 +406,7 @@ def explain_sample(
     correct_count = sum(correct_mask)
     if correct_count <= cfg.min_correct_answers:
         print(
-            f"[WARN] Sample[index={sample['index']}] has {correct_count} correct answers "
+            f"[WARN] Sample[index={sample['index']}, trial={trial_idx}] has {correct_count} correct answers "
             f"(threshold: >{cfg.min_correct_answers}); skipping explanation."
         )
         exp_accuracy = {"auroc": 0.0, "auprc": 0.0, "f1": 0.0}
