@@ -4,8 +4,9 @@ set -euo pipefail
 
 subsets=(ba_shapes tree_cycle ba_two_motifs)
 graph_types=(complete empty complete)
-edge_sizes=(3 10 10 30)
-lr=(500 50 500)
+epochs=(500 50 500)
+lrs=(0.03 0.1 0.1)
+edge_sizes=(3 10 30)
 
 # Learning Rate
 for i in "${!subsets[@]}"; do
@@ -18,7 +19,7 @@ for i in "${!subsets[@]}"; do
 		--num-gen-trials 10 --min-correct-answers 5 \
 		--baseline-graph "${graph_types[$i]}" \
 		--llr-threshold 1.0 \
-		--epochs 200 --lr "${lr[$i]}" \
+		--epochs "${epochs[$i]}" --lr "${lrs[$i]}" \
 		--edge-size "${edge_sizes[$i]}" --edge-ent 1.0 \
-		--wandb --tags fpai lr small
+		--wandb --tags fpai epochs small
 done
