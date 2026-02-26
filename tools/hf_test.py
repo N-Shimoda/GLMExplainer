@@ -16,12 +16,11 @@ def load_hf_model(torch_dtype: str):
     }
     model = AutoModelForCausalLM.from_pretrained(
         repo_id,
-        revision="main",
         trust_remote_code=True,
         dtype=dtype_map[torch_dtype],
-        load_llm_weights=False,  # Don't load LLM weights from original HF repo.
+        load_llm_weights=False,  # skip loading LLM weights from original HF repo (Qwen/Qwen3-4B-Base).
     )
-    tok = AutoTokenizer.from_pretrained(repo_id, revision="main", trust_remote_code=True)
+    tok = AutoTokenizer.from_pretrained(repo_id, trust_remote_code=True)
     return model, tok
 
 
