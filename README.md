@@ -130,4 +130,3 @@ For details, please refer to the original paper of GNNExplainer[^1] and the PyTo
    ```bash
    bash scripts/explain/epochs.sh
    ```
-````
