@@ -25,6 +25,10 @@ pip install -r requirements.txt
 
 This repository provides the PyTorch implementation of GraphToken (`src/glm.py`) and scripts for training and evaluation.
 
+### GraphToken
+
+GraphToken is a pioneering Graph-Language Model (GLM) method proposed by Perozzi et al. (2024) that encodes graph-structured data into a soft-prompt vectors to be consumed by a pre-trained language model.
+
 ### Training
 
 To train a GraphToken model, run `train.py` in the following format.
@@ -48,11 +52,11 @@ torchrun --nproc_per_node=NUM_GPUS train.py \
    --wandb
 ```
 
-Our best model is available as [naos-ku/GraphTokenLM](https://huggingface.co/naos-ku/GraphTokenLM) on Hugging Face Hub.
+Our best model trained on [MotifQA dataset](https://huggingface.co/datasets/naos-ku/motif-qa) is available as [`naos-ku/GraphTokenLM`](https://huggingface.co/naos-ku/GraphTokenLM) on Hugging Face Hub.
 
 ### Evaluation
 
-The evaluation of the model can be performed by running `eval.py` in the following format.
+To evaluate the model, please run `eval.py` in the following format.
 
 ```bash
 torchrun --nproc_per_node=2 eval.py \
@@ -65,7 +69,7 @@ By specifying multiple subset names, this script evaluates the model and reports
 
 ## Applying proposed method
 
-In order to apply our explanation method to the trained GraphToken model, run `explain.py` with following arguments.
+In order to apply our explanation method to a trained GraphToken model, run `explain.py` with following arguments.
 
 ```bash
 torchrun --nproc_per_node=2 explain.py \
