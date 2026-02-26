@@ -21,18 +21,15 @@ conda activate graphtoken
 pip install -r requirements.txt
 ```
 
-## Construction of GraphToken model
+## GraphToken model
 
-This repository provides the PyTorch implementation of GraphToken and scripts for training and evaluation.
+> [!NOTE]
+> **GraphToken** is a pioneering Graph-Language Model (GLM) method proposed by Perozzi et al. (2024) that encodes graph-structured data into a soft-prompt vectors to be consumed by a pre-trained language model.
 
-### GraphToken (`src/glm.py`)
-
-GraphToken is a pioneering Graph-Language Model (GLM) method proposed by Perozzi et al. (2024) that encodes graph-structured data into a soft-prompt vectors to be consumed by a pre-trained language model.
-
-### Training of GraphToken (`train.py`)
+### Training
 
 To train a GraphToken model on graph QA datasets, run `train.py` in the following format.
-The supported datasets include our [MotifQA](https://huggingface.co/datasets/naos-ku/motif-qa) and Fatemi et al.'s [GraphQA](https://huggingface.co/datasets/baharef/GraphQA) datasets.
+The supported datasets include our [MotifQA](https://huggingface.co/datasets/naos-ku/motif-qa) and Fatemi et al. (2024)'s [GraphQA](https://huggingface.co/datasets/baharef/GraphQA) datasets.
 
 ```bash
 torchrun --nproc_per_node=NUM_GPUS train.py \
@@ -49,25 +46,39 @@ torchrun --nproc_per_node=NUM_GPUS train.py \
    --wandb
 ```
 
-This script utilizes `SFTTrainer` to train the weights of GNN encoder and projection layers,
+The above setting utilizes `SFTTrainer` to train the weights of GNN encoder and projection layers,
 while keeping the pre-trained language model frozen.
-If needed, fine-tuning of the language model is applicable by setting `--use-lora` flag.
-You can find out details of the other hyperparameters by running `python train.py --help`.
+If needed, one can apply parameter efficient fine-tuning using LoRA to LLM weights by setting `--use-lora` flag.
+To find out more details, please refer to `python train.py --help`.
 
-Our best model on [MotifQA dataset](https://huggingface.co/datasets/naos-ku/motif-qa) is available as [`naos-ku/GraphTokenLM`](https://huggingface.co/naos-ku/GraphTokenLM) on Hugging Face Hub.
-
-### Evaluation (`eval.py`)
+### Evaluation
 
 To evaluate the model, please run `eval.py` in the following format.
 
 ```bash
 torchrun --nproc_per_node=2 eval.py \
 	--dataset MotifQA --subset ba_shapes tree_cycle \
-	--model-path naos-ku/GraphTokenLM \
+	--model-path "naos-ku/GraphTokenLM" \
 	--num-trials 5 --per-device-batch-size 5
 ```
 
 By specifying multiple subset names, this script evaluates the model and reports accuracy for each subset.
+
+### Public checkpoint
+
+Our best model trained on MotifQA dataset is available as [naos-ku/GraphTokenLM](https://huggingface.co/naos-ku/GraphTokenLM) on Hugging Face Hub.
+This model can be loaded without cloning this repository by using `AutoModelForCausalLM`.
+
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+model = AutoModelForCausalLM.from_pretrained(
+	repo_id,
+	trust_remote_code=True,
+	load_llm_weights=False,  # skip loading LLM weights from original HF repo (Qwen/Qwen3-4B-Base).
+)
+tokenizer = AutoTokenizer.from_pretrained(repo_id, trust_remote_code=True)
+```
 
 ## Applying proposed method
 
