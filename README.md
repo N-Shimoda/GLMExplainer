@@ -46,10 +46,9 @@ torchrun --nproc_per_node=NUM_GPUS train.py \
    --wandb
 ```
 
-The above setting utilizes `SFTTrainer` to train the weights of GNN encoder and projection layers,
-while keeping the pre-trained language model frozen.
-If needed, one can apply parameter efficient fine-tuning using LoRA to LLM by setting `--use-lora` flag.
-To find out more details, please refer to `python train.py --help`.
+The above setting trains GNN encoder and projection layers, while keeping the pre-trained language model frozen.
+If needed, one can apply parameter efficient fine-tuning (LoRA) to LLM by setting `--use-lora` flag.
+To find more details, please refer to `python train.py --help`.
 
 ### Evaluation
 
@@ -62,12 +61,12 @@ torchrun --nproc_per_node=2 eval.py \
 	--num-trials 5 --per-device-batch-size 5
 ```
 
-By specifying multiple subset names, this script reports the answer accuracy per subset.
+By specifying multiple subsets, this script reports the answer accuracy per subset.
 
 ### Hugging Face Model
 
 Our best model trained on MotifQA dataset is available as [naos-ku/GraphTokenLM](https://huggingface.co/naos-ku/GraphTokenLM) on Hugging Face Hub.
-This model can be loaded by using `AutoModelForCausalLM`.
+This model can be loaded with `AutoModelForCausalLM`.
 
 ```python
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -118,9 +117,7 @@ For details, please refer to the original paper of GNNExplainer[^1] and the PyTo
    bash scripts/explain/edge_size.sh
    ```
 
-````
-
-You can summarize the results in a table by running `tools/writing/edge_size_study.py` when using W&B logging.
+	You can summarize the results in a table by running `tools/writing/edge_size_study.py` when using W&B logging.
 
 1. For each optimal `edge_size` setting, find the best `lr`.
 
@@ -133,4 +130,3 @@ You can summarize the results in a table by running `tools/writing/edge_size_stu
    ```bash
    bash scripts/explain/epochs.sh
    ```
-````
