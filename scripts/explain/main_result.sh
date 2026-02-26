@@ -1,24 +1,22 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
-cd /home/naoki/github/GraphToken
 
-subsets=(ba_shapes tree_cycle tree_grid ba_two_motifs shortest_path)
-edge_sizes=(10 30 300 30 30)
-llr_thresholds=(1.0 1.0 1.0 1.0 0.1)
+subsets=(ba_shapes tree_cycle tree_grid_v2 ba_two_motifs)
+graph_types=(complete empty empty complete)
+epochs=(400 100 200 500)
+lrs=(0.03 0.1 0.03 0.1)
+edge_sizes=(3 10 10 30)
 
 for i in "${!subsets[@]}"; do
-	subset="${subsets[$i]}"
-	edge_size="${edge_sizes[$i]}"
-	thresh="${llr_thresholds[$i]}"
-
-	/home/naoki/anaconda3/condabin/conda run -n graphtoken --no-capture-output \
-		torchrun --nproc_per_node=2 explain.py \
-		--dataset MotifQA --subset "$subset" \
-		--model-path "masters/$subset" \
+	torchrun --nproc_per_node=2 explain.py \
+		--dataset MotifQA --subset "${subsets[$i]}" \
+		--model-path naos-ku/GraphTokenLM \
 		--target-pos-samples --num-trials 5 \
-		--llr-threshold "$thresh" \
-		--epochs 200 --lr 0.3 \
-		--edge-size "$edge_size" --edge-ent 1.0 \
-		--wandb --tags master full
+		--num-gen-trials 10 --min-correct-answers 5 \
+		--baseline-graph "${graph_types[$i]}" \
+		--llr-threshold 1.0 \
+		--epochs "${epochs[$i]}" --lr "${lrs[$i]}" \
+		--edge-size "${edge_sizes[$i]}" --edge-ent 1.0 \
+		--wandb --tags fpai full
 done
