@@ -133,7 +133,8 @@ def build_args():
         "--subset",
         type=str,
         choices=MOTIFQA_SUBSETS + GRAPHQA_SUBSETS,
-        help="Dataset subset to use. Only applicable for GraphQA.",
+        required="ba_shapes",
+        help="Dataset subset to explain. Only one subset can be processed at a time. (default: ba_shapes)",
     )
     p.add_argument(
         "--split",
@@ -156,7 +157,7 @@ def build_args():
         "--target-value",
         type=check_non_negative_int,
         default=None,
-        help="Targeted answer value to explain (default: None)",
+        help="Filter dataset by only using the samples with specified target value as completion. (default: None)",
     )
     p.add_argument(
         "--sample-idx",
@@ -164,6 +165,8 @@ def build_args():
         default=None,
         help="Specify the index of the sample to explain (default: None)",
     )
+
+    # Settings for explanation trials and generation
     p.add_argument(
         "--num-trials", type=int, default=1, help="Number of trials for explaining each sample (default: 1)"
     )
@@ -175,12 +178,13 @@ def build_args():
         type=check_non_negative_int,
         default=0,
         help=(
-            "Minimum number of correct generations required (exclusive) before running the explainer. "
-            "Explanations run only if correct_count > min_correct_answers (default: 0)."
+            "Minimum number of correct generations required before running the explainer. "
+            "Explanations run only if correct_count > min_correct_answers "
+            "(default: 0, i.e., explain all samples)."
         ),
     )
 
-    # Hyper-parameters for GNNExplainer
+    # Hyperparameters for GNNExplainer
     p.add_argument("--edge-size", type=float, default=0.005, help="GNNExplainer edge size parameter (default: 0.005)")
     p.add_argument("--edge-ent", type=float, default=1.0, help="GNNExplainer edge entropy parameter (default: 1.0)")
     p.add_argument("--epochs", type=int, default=200, help="GNNExplainer optimization epochs (default: 200)")
@@ -192,8 +196,8 @@ def build_args():
         type=float,
         default=None,
         help=(
-            "Log-likelihood ratio threshold for selecting relevant tokens. "
-            "Only tokens with LLR above this value will be included in the explanation."
+            "Log-likelihood ratio (LLR) threshold for selecting relevant tokens from the generated sequence. "
+            "Only the tokens with LLR above this value will be considered in the explanation."
         ),
     )
     p.add_argument(
@@ -226,7 +230,7 @@ def build_args():
     p.add_argument(
         "--wandb",
         action="store_true",
-        help="Log per-sample explanation metrics to Weights & Biases.",
+        help="Log summary of explanation metrics to Weights & Biases.",
     )
     p.add_argument(
         "--tags",
@@ -239,6 +243,7 @@ def build_args():
     args = p.parse_args()
     validate_args(args)
 
+    # Set default Jaccard k values based on subset
     jaccard_k_by_subset = {
         "ba_shapes": 6,
         "tree_cycle": 6,
