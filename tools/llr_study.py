@@ -72,9 +72,20 @@ def parse_args():
         default=1.0,
         help="Absolute LLR threshold to highlight token labels (default: 1.0).",
     )
+    p.add_argument(
+        "--mute-g-prefix",
+        action="store_true",
+        help="If set, hide leading 'Ġ' markers in displayed token strings.",
+    )
     p.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility (default: 42).")
 
     return p.parse_args()
+
+
+def format_token_for_display(token_str: str, mute_g_prefix: bool = False) -> str:
+    if not mute_g_prefix:
+        return token_str
+    return token_str.lstrip("Ġ")
 
 
 def _build_nx_graph(edge_index: torch.Tensor, num_nodes: int) -> nx.Graph:
@@ -96,6 +107,7 @@ def plot_prob_comparison(
     node_labels: Optional[list[int]] = None,
     llr_rows: Optional[list[tuple[str, int, float]]] = None,
     llr_threshold: float = 1.0,
+    mute_g_prefix: bool = False,
     output_path: str = "plots/token_prob_comparison.png",
 ):
     """Plot token probability comparison with original and baseline graphs.
@@ -128,6 +140,7 @@ def plot_prob_comparison(
         raise ValueError("Token probability lists must be the same length.")
 
     tokens = []
+    display_tokens = []
     org_probs = []
     base_probs = []
     for org_row, base_row in zip(org_token_probs, base_token_probs):
@@ -136,6 +149,7 @@ def plot_prob_comparison(
         if org_id != base_id or org_token != base_token:
             raise ValueError("Token sequences do not match between runs.")
         tokens.append(org_token)
+        display_tokens.append(format_token_for_display(org_token, mute_g_prefix=mute_g_prefix))
         org_probs.append(org_prob)
         base_probs.append(base_prob)
     if llr_rows is None:
@@ -185,7 +199,7 @@ def plot_prob_comparison(
     ax_prob.plot(xs, org_probs, marker="o", linewidth=1.5, label="Original graph")
     ax_prob.plot(xs, base_probs, marker="x", linewidth=1.5, label=f"{baseline_graph.capitalize()} graph")
     ax_prob.set_xticks(xs)
-    ax_prob.set_xticklabels(tokens, rotation=40, ha="right", fontsize=15)
+    ax_prob.set_xticklabels(display_tokens, rotation=40, ha="right", fontsize=15)
     ax_prob.tick_params(axis="y", labelsize=14)
     ax_prob.set_ylabel("Probability", fontsize=14)
     ax_prob.set_title("Token Probability Comparison", fontsize=15)
@@ -214,6 +228,7 @@ def plot_llr_histograms(
     output_path: str,
     bins: int = 30,
     llr_threshold: float = 1.0,
+    mute_g_prefix: bool = False,
 ):
     """Plot per-token LLR histograms aggregated across samples.
 
@@ -241,6 +256,7 @@ def plot_llr_histograms(
 
     for ax, token_key in zip(axes, tokens):
         token_str, token_id = token_key
+        display_token = format_token_for_display(token_str, mute_g_prefix=mute_g_prefix)
         llrs = llr_by_token[token_key]
         ratio_over_threshold = 0.0
         if llrs:
@@ -249,7 +265,7 @@ def plot_llr_histograms(
         ax.hist(llrs, bins=bins, color="#4c72b0", alpha=0.85)
         ax.axvline(0.0, color="#d62728", linestyle="--", linewidth=1.0)
         ax.set_title(
-            f"{token_str} ({token_id})  >{llr_threshold:g}: {pct_over_threshold:.1f}%",
+            f"{display_token} ({token_id})  >{llr_threshold:g}: {pct_over_threshold:.1f}%",
             fontsize=11,
         )
         ax.set_xlabel("LLR", fontsize=10)
@@ -469,7 +485,8 @@ def main():
             for (token_str, token_id, llr), org_row, base_row in zip(llr_rows, org_token_probs, base_token_probs):
                 org_prob = org_row[3]
                 base_prob = base_row[3]
-                print(f"{token_str:<8} {token_id:>6} {org_prob:>10.4g} {base_prob:>10.4g} {llr:>10.4g}")
+                display_token = format_token_for_display(token_str, mute_g_prefix=args.mute_g_prefix)
+                print(f"{display_token:<8} {token_id:>6} {org_prob:>10.4g} {base_prob:>10.4g} {llr:>10.4g}")
             print(f"\nTotal LLR: {total_llr:.4g}")
             if llr_rows:
                 print(
@@ -488,6 +505,7 @@ def main():
             node_labels=sample["nodes"],
             llr_rows=llr_rows,
             llr_threshold=args.llr_threshold,
+            mute_g_prefix=args.mute_g_prefix,
             output_path=os.path.join(OUT_DIR, f"tok_probs_{sample['index']}.{args.output_format}"),
         )
 
@@ -496,6 +514,7 @@ def main():
             llr_by_token,
             output_path=os.path.join(OUT_DIR, f"llr_histograms.{args.output_format}"),
             llr_threshold=args.llr_threshold,
+            mute_g_prefix=args.mute_g_prefix,
         )
     if llr_ratio_by_sample:
         avg_ratio = sum(llr_ratio_by_sample) / len(llr_ratio_by_sample)
