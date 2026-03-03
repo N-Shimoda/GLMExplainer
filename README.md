@@ -97,7 +97,7 @@ torchrun --nproc_per_node=2 explain.py \
 ## Search of Optimal Hyperparameters
 
 > [!TIP]
-> Using a suitable hyperparameters in GNNExplainer achieves a better explanation accuracy in our method.
+> Using a suitable hyperparameter configuration in GNNExplainer achieves a better explanation accuracy in our method.
 
 ### Hyperparameters in GNNExplainer
 
