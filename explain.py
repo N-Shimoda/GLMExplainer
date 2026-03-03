@@ -180,7 +180,7 @@ def build_args():
         help=(
             "Minimum number of correct generations required before running the explainer. "
             "Explanations run only if correct_count > min_correct_answers "
-            "(default: 0, i.e., explain all samples)."
+            "(default: 0, i.e., explanations run only for samples with at least one correct generation)."
         ),
     )
 
