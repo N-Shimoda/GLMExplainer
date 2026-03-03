@@ -112,20 +112,6 @@ and the [PyTorch Geometric documentation](https://pytorch-geometric.readthedocs.
 1. First, find the best `edge_size` setting for each MotifQA subset.
 
    ```bash
-   bash scripts/explain/edge_size.sh
+   bash scripts/params/edge_size.sh
    python tools/writing/edge_size_study.py
-   ```
-
-	You can summarize the results in a table by running `/writing/edge_size_study.py` when using W&B logging.
-
-1. For each optimal `edge_size` setting, find the best `lr`.
-
-   ```bash
-   bash scripts/explain/lr.sh
-   ```
-
-1. Finally, find the best `epochs` setting for each `edge_size` and `lr` combination.
-
-   ```bash
-   bash scripts/explain/epochs.sh
    ```
