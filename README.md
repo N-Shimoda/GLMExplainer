@@ -2,7 +2,7 @@
 
 ## Setup Environment
 
-### Devices with CUDA (_reccomended_)
+### Devices with CUDA (_recommended_)
 
 For devices with CUDA compatible GPUs, we recommend using `environment.yml` to build an environment.
 This file includes the version index of PyTorch to ensure the reproducibility, and `flash_attn` library for fine-tuning efficiency.
