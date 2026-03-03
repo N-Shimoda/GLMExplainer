@@ -9,8 +9,8 @@ dependencies:
   - matplotlib
   - openai
   - rich
-  - pytest
   - pip
+  - pytest
   - ninja
   - pip:
     - --extra-index-url https://download.pytorch.org/whl/cu124

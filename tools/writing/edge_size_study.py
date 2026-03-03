@@ -162,17 +162,19 @@ def report_best_runs(
     def _best_value_for_subset(runs, subset: str):
         subset_runs = [run for run in runs if run.config.get("subset") == subset]
         if not subset_runs:
-            return (None, "n/a")
+            return (None, "n/a", "n/a")
         best_run = get_best_run(subset_runs, metric)
         run_name = best_run.name.split("_")[-1] if best_run.name else best_run.id
         best_val = _to_float(best_run.summary.get(metric))
-        return (best_val, run_name)
+        edge_size = best_run.config.get("edge_size")
+        edge_size_str = str(edge_size) if edge_size is not None else "n/a"
+        return (best_val, run_name, edge_size_str)
 
     rows = []
     for subset in MOTIFQA_SUBSETS:
-        b_val, b_run = _best_value_for_subset(baselines, subset)
-        c_val, c_run = _best_value_for_subset(ours_complete, subset)
-        e_val, e_run = _best_value_for_subset(ours_empty, subset)
+        b_val, b_run, b_edge = _best_value_for_subset(baselines, subset)
+        c_val, c_run, c_edge = _best_value_for_subset(ours_complete, subset)
+        e_val, e_run, e_edge = _best_value_for_subset(ours_empty, subset)
 
         # If all are missing, skip the row entirely
         if b_val is None and c_val is None and e_val is None:
@@ -187,6 +189,9 @@ def report_best_runs(
                 "baseline_run": b_run,
                 "complete_run": c_run,
                 "empty_run": e_run,
+                "baseline_edge": b_edge,
+                "complete_edge": c_edge,
+                "empty_edge": e_edge,
             }
         )
 
@@ -200,14 +205,16 @@ def report_best_runs(
     table.add_column("complete", justify="right")
     table.add_column("empty", justify="right")
 
-    def _highlight_if_max(num: Optional[float], run_name: str, max_val: Optional[float]) -> str:
+    def _highlight_if_max(
+        num: Optional[float], run_name: str, edge_size: str, max_val: Optional[float]
+    ) -> str:
         """Format the metric value and highlight if it's the max among the three."""
         if num is None:
             return "n/a"
         value_str = _format_metric(num)
         if max_val is not None and abs(num - max_val) < 1e-12:
             value_str = f"[bold green]{value_str}[/bold green]"
-        return f"{value_str} ({run_name})"
+        return f"{value_str} ({run_name}, edge={edge_size})"
 
     for r in rows:
         nums = [r["baseline_val"], r["complete_val"], r["empty_val"]]
@@ -216,9 +223,9 @@ def report_best_runs(
 
         table.add_row(
             str(r["subset"]),
-            _highlight_if_max(r["baseline_val"], r["baseline_run"], max_val),
-            _highlight_if_max(r["complete_val"], r["complete_run"], max_val),
-            _highlight_if_max(r["empty_val"], r["empty_run"], max_val),
+            _highlight_if_max(r["baseline_val"], r["baseline_run"], r["baseline_edge"], max_val),
+            _highlight_if_max(r["complete_val"], r["complete_run"], r["complete_edge"], max_val),
+            _highlight_if_max(r["empty_val"], r["empty_run"], r["empty_edge"], max_val),
         )
 
     console.print(table)

@@ -20,7 +20,7 @@ date_str=$(date +"%Y-%m-%d %H:%M:%S")
 echo
 echo "[INFO] Step 1/2: Exporting model and config to ./${export_dir} ..."
 export CUDA_VISIBLE_DEVICES=""
-python tools/export_to_hf.py \
+python tools/hf/export_to_hf.py \
 	--ckpt-path masters/multitask \
 	--export-dir ${export_dir}
 cp src/glm.py ${export_dir}/glm.py

@@ -133,7 +133,8 @@ def build_args():
         "--subset",
         type=str,
         choices=MOTIFQA_SUBSETS + GRAPHQA_SUBSETS,
-        help="Dataset subset to use. Only applicable for GraphQA.",
+        required=True,
+        help="Dataset subset to explain. Only one subset can be processed at a time. (default: ba_shapes)",
     )
     p.add_argument(
         "--split",
@@ -156,7 +157,7 @@ def build_args():
         "--target-value",
         type=check_non_negative_int,
         default=None,
-        help="Targeted answer value to explain (default: None)",
+        help="Filter dataset by only using the samples with specified target value as completion. (default: None)",
     )
     p.add_argument(
         "--sample-idx",
@@ -164,6 +165,8 @@ def build_args():
         default=None,
         help="Specify the index of the sample to explain (default: None)",
     )
+
+    # Settings for explanation trials and generation
     p.add_argument(
         "--num-trials", type=int, default=1, help="Number of trials for explaining each sample (default: 1)"
     )
@@ -175,12 +178,13 @@ def build_args():
         type=check_non_negative_int,
         default=0,
         help=(
-            "Minimum number of correct generations required (exclusive) before running the explainer. "
-            "Explanations run only if correct_count > min_correct_answers (default: 0)."
+            "Minimum number of correct generations required before running the explainer. "
+            "Explanations run only if correct_count > min_correct_answers "
+            "(default: 0, i.e., explanations run only for samples with at least one correct generation)."
         ),
     )
 
-    # Hyper-parameters for GNNExplainer
+    # Hyperparameters for GNNExplainer
     p.add_argument("--edge-size", type=float, default=0.005, help="GNNExplainer edge size parameter (default: 0.005)")
     p.add_argument("--edge-ent", type=float, default=1.0, help="GNNExplainer edge entropy parameter (default: 1.0)")
     p.add_argument("--epochs", type=int, default=200, help="GNNExplainer optimization epochs (default: 200)")
@@ -192,8 +196,8 @@ def build_args():
         type=float,
         default=None,
         help=(
-            "Log-likelihood ratio threshold for selecting relevant tokens. "
-            "Only tokens with LLR above this value will be included in the explanation."
+            "Log-likelihood ratio (LLR) threshold for selecting relevant tokens from the generated sequence. "
+            "Only the tokens with LLR above this value will be considered in the explanation."
         ),
     )
     p.add_argument(
@@ -226,7 +230,7 @@ def build_args():
     p.add_argument(
         "--wandb",
         action="store_true",
-        help="Log per-sample explanation metrics to Weights & Biases.",
+        help="Log summary of explanation metrics to Weights & Biases.",
     )
     p.add_argument(
         "--tags",
@@ -239,6 +243,7 @@ def build_args():
     args = p.parse_args()
     validate_args(args)
 
+    # Set default Jaccard k values based on subset
     jaccard_k_by_subset = {
         "ba_shapes": 6,
         "tree_cycle": 6,
@@ -401,7 +406,7 @@ def explain_sample(
     correct_count = sum(correct_mask)
     if correct_count <= cfg.min_correct_answers:
         print(
-            f"[WARN] Sample[index={sample['index']}] has {correct_count} correct answers "
+            f"[WARN] Sample[index={sample['index']}, trial={trial_idx}] has {correct_count} correct answers "
             f"(threshold: >{cfg.min_correct_answers}); skipping explanation."
         )
         exp_accuracy = {"auroc": 0.0, "auprc": 0.0, "f1": 0.0}
@@ -750,6 +755,9 @@ def main():
             _cleanup_distributed()
         return
 
+    # Keep the intended maximum sample count for final usage-rate reporting.
+    num_samples = args.num_samples if args.num_samples is not None else len(dataset)
+
     # Duplicate a sample for multiple trials if len(dataset) == 1
     if args.num_trials > 1 and len(dataset) == 1:
         duplicate_indices = [0] * args.num_trials
@@ -919,13 +927,11 @@ def main():
         avg_edge_size = 0.0
         avg_edge_ent = 0.0
         samples_used_count = 0
-        samples_total_count = 0
         samples_used_pct = 0.0
         if merged_sample_metrics is not None:
-            samples_total_count = len(merged_sample_metrics)
             samples_used_count = sum(1 for stats in merged_sample_metrics.values() if stats.get("count", 0) > 0)
-            if samples_total_count > 0:
-                samples_used_pct = (samples_used_count / samples_total_count) * 100.0
+            if num_samples > 0:
+                samples_used_pct = (samples_used_count / num_samples) * 100.0
         if total_count > 0:
             avg_answer_accuracy = total_answer_accuracy / total_count
             avg_auroc = exp_metric_totals["auroc"] / total_count
@@ -981,6 +987,7 @@ def main():
             wandb_payload = stability_metrics.copy()
             wandb_payload["samples_used_pct"] = samples_used_pct
             wandb_payload["samples_used_count"] = samples_used_count
+            wandb_payload["num_samples"] = num_samples
             wandb_payload["avg_edge_size"] = avg_edge_size
             wandb_payload["avg_edge_ent"] = avg_edge_ent
             if total_count > 0:
