@@ -103,8 +103,8 @@ torchrun --nproc_per_node=2 explain.py \
 
 When using GNNExplainer for computing edge importance, the optimization process has four hyperparameters: `edge_size`, `edge_ent`, `lr`, and `epochs`.
 
-For details, please refer to 
-the [original paper of GNNExplainer](https://papers.nips.cc/paper_files/paper/2019/hash/d80b7040b773199015de6d3b4293c8ff-Abstract.html) 
+For details, please refer to
+the [original paper of GNNExplainer](https://papers.nips.cc/paper_files/paper/2019/hash/d80b7040b773199015de6d3b4293c8ff-Abstract.html)
 and the [PyTorch Geometric documentation](https://pytorch-geometric.readthedocs.io/en/2.7.0/generated/torch_geometric.explain.algorithm.GNNExplainer.html).
 
 ### Procedure
@@ -114,4 +114,18 @@ and the [PyTorch Geometric documentation](https://pytorch-geometric.readthedocs.
    ```bash
    bash scripts/params/edge_size.sh
    python tools/writing/edge_size_study.py
+   ```
+
+   You can summarize the results in a table by running `/writing/edge_size_study.py` when using W&B logging.
+
+1. For each optimal `edge_size` setting, find the best `lr`.
+
+   ```bash
+   bash scripts/explain/lr.sh
+   ```
+
+1. Finally, find the best `epochs` setting for each `edge_size` and `lr` combination.
+
+   ```bash
+   bash scripts/explain/epochs.sh
    ```
