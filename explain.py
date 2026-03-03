@@ -133,7 +133,7 @@ def build_args():
         "--subset",
         type=str,
         choices=MOTIFQA_SUBSETS + GRAPHQA_SUBSETS,
-        required="ba_shapes",
+        required=True,
         help="Dataset subset to explain. Only one subset can be processed at a time. (default: ba_shapes)",
     )
     p.add_argument(
