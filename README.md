@@ -121,11 +121,11 @@ and the [PyTorch Geometric documentation](https://pytorch-geometric.readthedocs.
 1. For each optimal `edge_size` setting, find the best `lr`.
 
    ```bash
-   bash scripts/explain/lr.sh
+   bash scripts/params/lr.sh
    ```
 
 1. Finally, find the best `epochs` setting for each `edge_size` and `lr` combination.
 
    ```bash
-   bash scripts/explain/epochs.sh
+   bash scripts/params/epochs.sh
    ```
