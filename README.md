@@ -99,7 +99,7 @@ torchrun --nproc_per_node=2 explain.py \
 > [!TIP]
 > Using a suitable hyperparameter configuration in GNNExplainer achieves a better explanation accuracy in our method.
 
-### Hyperparameters in GNNExplainer
+### Hyperparameters
 
 When using GNNExplainer for computing edge importance, the optimization process has four hyperparameters: `edge_size`, `edge_ent`, `lr`, and `epochs`.
 
