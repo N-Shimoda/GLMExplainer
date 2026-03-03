@@ -65,8 +65,14 @@ By specifying multiple subsets, this script reports the answer accuracy per subs
 
 ### Hugging Face Model
 
-Our best model trained on MotifQA dataset is available as [naos-ku/GraphTokenLM](https://huggingface.co/naos-ku/GraphTokenLM) on Hugging Face Hub.
-This model can be loaded with `AutoModelForCausalLM`.
+Our model trained on MotifQA dataset is available as [naos-ku/GraphTokenLM](https://huggingface.co/naos-ku/GraphTokenLM) on Hugging Face Hub.
+The architecture of the model is as follows:
+
+- **Pre-trained LLM**: [Qwen/Qwen3-4B-Base](https://huggingface.co/Qwen/Qwen3-4B-Base)
+- **GNN encoder**: 3-layer GIN with hidden dimension of 64.
+- **Projection layers**: 2-layer MLP that maps 64-dim GNN output to 2560-dim GraphToken vectors.
+
+You can load this model with `AutoModelForCausalLM`.
 
 ```python
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -74,7 +80,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 model = AutoModelForCausalLM.from_pretrained(
 	"naos-ku/GraphTokenLM",
 	trust_remote_code=True,
-	load_llm_weights=False,  # skip loading LLM weights from original HF repo (Qwen/Qwen3-4B-Base).
+	load_llm_weights=False,
+    # skip loading LLM weights from original HF repo (Qwen/Qwen3-4B-Base)
 )
 tokenizer = AutoTokenizer.from_pretrained("naos-ku/GraphTokenLM", trust_remote_code=True)
 ```
@@ -104,8 +111,8 @@ torchrun --nproc_per_node=2 explain.py \
 When using GNNExplainer for computing edge importance, the optimization process has four hyperparameters: `edge_size`, `edge_ent`, `lr`, and `epochs`.
 
 For details, please refer to
-the [original paper of GNNExplainer](https://papers.nips.cc/paper_files/paper/2019/hash/d80b7040b773199015de6d3b4293c8ff-Abstract.html)
-and the [PyTorch Geometric documentation](https://pytorch-geometric.readthedocs.io/en/2.7.0/generated/torch_geometric.explain.algorithm.GNNExplainer.html).
+the [original paper](https://papers.nips.cc/paper_files/paper/2019/hash/d80b7040b773199015de6d3b4293c8ff-Abstract.html) of GNNExplainer
+and the PyTorch Geometric [documentation](https://pytorch-geometric.readthedocs.io/en/2.7.0/generated/torch_geometric.explain.algorithm.GNNExplainer.html).
 
 ### Procedure
 
