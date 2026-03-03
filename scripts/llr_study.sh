@@ -7,7 +7,7 @@ for subset in ba_shapes tree_cycle tree_grid_v2 ba_two_motifs; do
 		echo -e "\nsubset: $subset, baseline: $baseline_type"
 		python tools/llr_study.py \
 			--subset $subset \
-			--model-path masters/multitask \
+			--model-path "naos-ku/GraphTokenLM" \
 			--num-samples 20 \
 			--baseline-graph $baseline_type \
 			--llr-threshold 1.0 \

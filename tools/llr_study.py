@@ -18,7 +18,7 @@ if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 from eval import create_pyg_batch  # noqa: E402
-from src.ckpt import _resolve_ckpt_path  # noqa: E402
+from src.ckpt import _resolve_model_path  # noqa: E402
 from src.constants import MOTIFQA_SUBSETS  # noqa: E402
 from src.explanation.args import check_non_negative_int  # noqa: E402
 from src.explanation.preprocess import build_dataset, filter_dataset  # noqa: E402
@@ -245,10 +245,11 @@ def plot_llr_histograms(
         ratio_over_threshold = 0.0
         if llrs:
             ratio_over_threshold = sum(1 for llr in llrs if llr > llr_threshold) / len(llrs)
+        pct_over_threshold = ratio_over_threshold * 100
         ax.hist(llrs, bins=bins, color="#4c72b0", alpha=0.85)
         ax.axvline(0.0, color="#d62728", linestyle="--", linewidth=1.0)
         ax.set_title(
-            f"{token_str} ({token_id})  >{llr_threshold:g}: {ratio_over_threshold:.2f}",
+            f"{token_str} ({token_id})  >{llr_threshold:g}: {pct_over_threshold:.1f}%",
             fontsize=11,
         )
         ax.set_xlabel("LLR", fontsize=10)
@@ -403,7 +404,7 @@ def main():
     os.makedirs(OUT_DIR, exist_ok=True)
 
     # Load model and tokenizer
-    ckpt_path, _ = _resolve_ckpt_path(args.model_path, ckpt_index=args.ckpt_index)
+    ckpt_path, _ = _resolve_model_path(args.model_path, ckpt_index=args.ckpt_index)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = GraphTokenLM.from_pretrained(ckpt_path)
     model = model.to(device)
@@ -473,7 +474,7 @@ def main():
             if llr_rows:
                 print(
                     f"Ratio LLR > {args.llr_threshold:g}: "
-                    f"{ratio_over_threshold:.3f} ({ratio_over_threshold * 100:.1f}%)"
+                    f"{ratio_over_threshold * 100:.1f}%"
                 )
 
         # Plot probabilities
@@ -500,7 +501,7 @@ def main():
         avg_ratio = sum(llr_ratio_by_sample) / len(llr_ratio_by_sample)
         print(
             f"\nAverage ratio LLR > {args.llr_threshold:g} across samples: "
-            f"{avg_ratio:.3f} ({avg_ratio * 100:.1f}%)"
+            f"{avg_ratio * 100:.1f}%"
         )
 
 
