@@ -206,7 +206,6 @@ def add_graph_column(
 
 
 if __name__ == "__main__":
-
     # User-provided text
     text1 = (
         "In an undirected graph, (i,j) means that node i and node j are "

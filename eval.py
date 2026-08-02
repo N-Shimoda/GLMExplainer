@@ -132,7 +132,9 @@ def load_model_for_eval(
     device = (
         torch.device(f"cuda:{local_rank}")
         if torch.cuda.is_available()
-        else torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+        else torch.device("mps")
+        if torch.backends.mps.is_available()
+        else torch.device("cpu")
     )
     model = model.to(device)
 

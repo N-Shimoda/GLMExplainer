@@ -125,7 +125,6 @@ class GraphTokenLMConfig(PretrainedConfig):
 
 
 class GNNEncoder(nn.Module):
-
     def __init__(
         self,
         in_dim: int,
@@ -215,7 +214,6 @@ def _normalize_graph_pooling(graph_pooling: list[str]) -> list[str]:
 
 
 class DomainProjector(nn.Module):
-
     def __init__(
         self,
         gnn_out_dim,

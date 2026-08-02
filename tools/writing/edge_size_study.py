@@ -205,9 +205,7 @@ def report_best_runs(
     table.add_column("complete", justify="right")
     table.add_column("empty", justify="right")
 
-    def _highlight_if_max(
-        num: float | None, run_name: str, edge_size: str, max_val: float | None
-    ) -> str:
+    def _highlight_if_max(num: float | None, run_name: str, edge_size: str, max_val: float | None) -> str:
         """Format the metric value and highlight if it's the max among the three."""
         if num is None:
             return "n/a"
@@ -375,11 +373,7 @@ def main():
         print(f"Loaded cached runs from {cache_path}.")
     else:
         baselines, ours_complete, ours_empty = get_wandb_runs(args.tags)
-        print(
-            "Loaded "
-            f"{len(baselines)} baselines, {len(ours_complete)} complete, "
-            f"and {len(ours_empty)} empty runs."
-        )
+        print(f"Loaded {len(baselines)} baselines, {len(ours_complete)} complete, and {len(ours_empty)} empty runs.")
         save_cached_runs(cache_path, baselines, ours_complete, ours_empty)
         print(f"Saved runs cache to {cache_path}.")
 

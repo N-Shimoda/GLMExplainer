@@ -123,9 +123,7 @@ class GraphQACollator:
         assert self.tokenizer is not None, "tokenizer is required to tokenize texts"
 
         pad_token_id = (
-            self.tokenizer.pad_token_id
-            if self.tokenizer.pad_token_id is not None
-            else self.tokenizer.eos_token_id
+            self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id
         )
         if pad_token_id is None:
             raise ValueError("Tokenizer must define either pad_token_id or eos_token_id")

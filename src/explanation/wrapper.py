@@ -219,7 +219,7 @@ class GLMWrapper(torch.nn.Module):
             raise ValueError("No generated output available. Please run `set_generated_ids` first.")
         if baseline_graph_type not in VALID_BASELINE_GRAPH_TYPES:
             raise ValueError(
-                f"Invalid baseline_graph_type: {baseline_graph_type}. " f"Must be one of {VALID_BASELINE_GRAPH_TYPES}."
+                f"Invalid baseline_graph_type: {baseline_graph_type}. Must be one of {VALID_BASELINE_GRAPH_TYPES}."
             )
         # Compute original token probabilities
         org_token_probs = self.comp_token_probs(

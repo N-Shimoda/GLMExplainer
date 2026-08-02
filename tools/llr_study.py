@@ -489,10 +489,7 @@ def main():
                 print(f"{display_token:<8} {token_id:>6} {org_prob:>10.4g} {base_prob:>10.4g} {llr:>10.4g}")
             print(f"\nTotal LLR: {total_llr:.4g}")
             if llr_rows:
-                print(
-                    f"Ratio LLR > {args.llr_threshold:g}: "
-                    f"{ratio_over_threshold * 100:.1f}%"
-                )
+                print(f"Ratio LLR > {args.llr_threshold:g}: {ratio_over_threshold * 100:.1f}%")
 
         # Plot probabilities
         plot_prob_comparison(
@@ -518,10 +515,7 @@ def main():
         )
     if llr_ratio_by_sample:
         avg_ratio = sum(llr_ratio_by_sample) / len(llr_ratio_by_sample)
-        print(
-            f"\nAverage ratio LLR > {args.llr_threshold:g} across samples: "
-            f"{avg_ratio * 100:.1f}%"
-        )
+        print(f"\nAverage ratio LLR > {args.llr_threshold:g} across samples: {avg_ratio * 100:.1f}%")
 
 
 if __name__ == "__main__":

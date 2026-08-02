@@ -141,9 +141,9 @@ This model can be loaded with `AutoModelForCausalLM`.
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 model = AutoModelForCausalLM.from_pretrained(
-	"naos-ku/GraphTokenLM",
-	trust_remote_code=True,
-	load_llm_weights=False,  # skip loading LLM weights from original HF repo (Qwen/Qwen3-4B-Base).
+    "naos-ku/GraphTokenLM",
+    trust_remote_code=True,
+    load_llm_weights=False,  # skip loading LLM weights from original HF repo (Qwen/Qwen3-4B-Base).
 )
 tokenizer = AutoTokenizer.from_pretrained("naos-ku/GraphTokenLM", trust_remote_code=True)
 ```
