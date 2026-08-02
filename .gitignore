@@ -1,6 +1,9 @@
 # Python
 __pycache__/
 
+# uv (uv.lock is tracked on purpose)
+.venv/
+
 # dev
 .vscode/
 

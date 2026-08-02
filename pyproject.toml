@@ -1,0 +1,66 @@
+[project]
+name = "graphtoken"
+version = "0.1.0"
+description = "GraphToken: encoding graph-structured data as soft prompts for pre-trained language models"
+readme = "README.md"
+requires-python = "==3.12.*"
+dependencies = [
+    "scipy",
+    "matplotlib",
+    "openai",
+    "rich",
+    "torch_geometric>=2.7.0",
+    "torchmetrics",
+    "torchinfo",
+    "transformers>=4.57,<4.58",
+    "datasets",
+    "trl",
+    "peft",
+    "bitsandbytes",
+    "huggingface-hub<1.0",
+    "wandb>=0.22.3",
+    "streamlit",
+]
+
+# `cpu` and `cuda` are mutually exclusive: they select which PyTorch build to
+# install. See `[tool.uv.sources]` below.
+[project.optional-dependencies]
+cpu = ["torch>=2.9.0"]
+cuda = [
+    "torch>=2.9.0",
+    # flash_attn is only published for Linux and is built from source.
+    "flash-attn>=2.8.0; sys_platform == 'linux'",
+]
+
+[dependency-groups]
+dev = ["pytest"]
+# Build-time requirements of flash_attn. Because build isolation is disabled
+# for that package (see `no-build-isolation-package`), they must be present in
+# the environment itself rather than in an ephemeral build environment.
+build = ["setuptools", "wheel", "packaging", "psutil", "ninja"]
+
+[tool.uv]
+# This repository is a collection of scripts, not an installable package.
+package = false
+# flash_attn imports torch in its setup.py, so it cannot be built in isolation.
+no-build-isolation-package = ["flash-attn"]
+conflicts = [[{ extra = "cpu" }, { extra = "cuda" }]]
+
+# `explicit = true` keeps these indexes from being consulted for anything other
+# than the packages mapped to them in `[tool.uv.sources]`, and prevents a silent
+# fallback to PyPI when a requested version is missing from the index.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cuda", extra = "cuda" },
+]
