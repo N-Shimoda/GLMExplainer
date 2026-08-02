@@ -33,11 +33,20 @@ cuda = [
 ]
 
 [dependency-groups]
-dev = ["pytest"]
+# ruff is also invoked by the VS Code extension (charliermarsh.ruff) and by the
+# Claude Code hook, so the version is pinned to keep all three in agreement.
+dev = ["pytest", "ruff==0.16.1"]
 # Build-time requirements of flash_attn. Because build isolation is disabled
 # for that package (see `no-build-isolation-package`), they must be present in
 # the environment itself rather than in an ephemeral build environment.
 build = ["setuptools", "wheel", "packaging", "psutil", "ninja"]
+
+# `target-version` is inferred from `requires-python`.
+# `select` is deliberately left unset: setting it would narrow ruff's broad
+# default rule set. Start from the defaults and add noisy rules to `ignore`
+# as they show up.
+[tool.ruff.lint]
+ignore = []
 
 [tool.uv]
 # This repository is a collection of scripts, not an installable package.
