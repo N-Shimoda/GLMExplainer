@@ -86,6 +86,10 @@ class ConfigPage:
         shown = ", ".join(names[:limit])
         return shown if len(names) <= limit else f"{shown}, ... (+{len(names) - limit})"
 
+    def unknown_subsets(self, path: Path) -> list[str]:
+        """Return the subdirectory names of a path that are not known subsets."""
+        return [name for name in self.list_dir_names(path) if name not in KNOWN_SUBSETS]
+
     def describe_status(self, path: Path) -> str:
         """Return a one-line badge describing whether a path is usable.
 
@@ -99,7 +103,7 @@ class ConfigPage:
         names = self.list_dir_names(path)
         if not names:
             return ":orange-badge[:material/warning: Empty] No subset directory found."
-        unknown = [name for name in names if name not in KNOWN_SUBSETS]
+        unknown = self.unknown_subsets(path)
         if unknown:
             return f":orange-badge[:material/warning: Unknown] Not a subset name: {self.summarize_names(unknown)}"
         return f":green-badge[:material/check: Ready] {len(names)} subset(s): {', '.join(names)}"
@@ -147,12 +151,14 @@ class ConfigPage:
         else:
             st.markdown(self.describe_status(candidate))
 
+        unknown = self.unknown_subsets(candidate)
         save_col, reset_col, _ = st.columns([1, 1, 2])
         if save_col.button(
             "Save",
             type="primary",
             width="stretch",
-            disabled=not candidate.is_dir() or not raw.strip(),
+            disabled=not candidate.is_dir() or not raw.strip() or bool(unknown),
+            help="Every subdirectory has to be a subset name." if unknown else None,
         ):
             self.apply_directory(raw)
             st.rerun()
@@ -166,18 +172,33 @@ class ConfigPage:
 
         self.show_recent()
 
+    @staticmethod
+    def fill_input(entry: str) -> None:
+        """Put a recent directory into the input so its status can be read before saving.
+
+        Written from a callback, which runs before the input widget is
+        instantiated again; assigning to the key after that would be rejected.
+        """
+        st.session_state[INPUT_KEY] = entry
+
     def show_recent(self) -> None:
         recent = [entry for entry in get_recent_dirs() if entry != get_raw_base_dir()]
         if not recent:
             return
         st.divider()
         st.markdown("##### Recent directories")
+        st.caption("Picking one fills the field above; press Save to apply it.")
         for entry in recent:
             path_col, button_col = st.columns([5, 1], vertical_alignment="center")
             path_col.code(entry, language="bash", wrap_lines=True)
-            if button_col.button("Use", key=f"use_{entry}", width="stretch"):
-                self.apply_directory(entry)
-                st.rerun()
+            button_col.button(
+                "Use",
+                key=f"use_{entry}",
+                width="stretch",
+                disabled=entry == st.session_state.get(INPUT_KEY),
+                on_click=self.fill_input,
+                args=(entry,),
+            )
 
     def run(self) -> None:
         self.show_current()
