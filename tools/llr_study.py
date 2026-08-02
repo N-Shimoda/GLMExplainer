@@ -2,7 +2,7 @@ import argparse
 import math
 import os
 import sys
-from typing import Literal, Optional
+from typing import Literal
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -104,8 +104,8 @@ def plot_prob_comparison(
     base_edge_index: torch.Tensor,
     baseline_graph: Literal["complete", "empty", "random"],
     num_nodes: int,
-    node_labels: Optional[list[int]] = None,
-    llr_rows: Optional[list[tuple[str, int, float]]] = None,
+    node_labels: list[int] | None = None,
+    llr_rows: list[tuple[str, int, float]] | None = None,
     llr_threshold: float = 1.0,
     mute_g_prefix: bool = False,
     output_path: str = "plots/token_prob_comparison.png",
@@ -248,7 +248,7 @@ def plot_llr_histograms(
     num_tokens = len(tokens)
     ncols = min(3, num_tokens)
     nrows = math.ceil(num_tokens / ncols)
-    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(4.2 * ncols, 2.8 * nrows))
+    _fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(4.2 * ncols, 2.8 * nrows))
     if isinstance(axes, plt.Axes):
         axes = [axes]
     else:
@@ -426,7 +426,7 @@ def main():
     model = model.to(device)
     model.eval()
     tok = AutoTokenizer.from_pretrained(model.config.llm_name, trust_remote_code=True)
-    print("Loaded model from {}".format(ckpt_path))
+    print(f"Loaded model from {ckpt_path}")
 
     # Prepare dataset sample
     lpe_dim = getattr(model.config, "lpe_dim", model.config.node_feat_dim)
@@ -489,10 +489,7 @@ def main():
                 print(f"{display_token:<8} {token_id:>6} {org_prob:>10.4g} {base_prob:>10.4g} {llr:>10.4g}")
             print(f"\nTotal LLR: {total_llr:.4g}")
             if llr_rows:
-                print(
-                    f"Ratio LLR > {args.llr_threshold:g}: "
-                    f"{ratio_over_threshold * 100:.1f}%"
-                )
+                print(f"Ratio LLR > {args.llr_threshold:g}: {ratio_over_threshold * 100:.1f}%")
 
         # Plot probabilities
         plot_prob_comparison(
@@ -518,10 +515,7 @@ def main():
         )
     if llr_ratio_by_sample:
         avg_ratio = sum(llr_ratio_by_sample) / len(llr_ratio_by_sample)
-        print(
-            f"\nAverage ratio LLR > {args.llr_threshold:g} across samples: "
-            f"{avg_ratio * 100:.1f}%"
-        )
+        print(f"\nAverage ratio LLR > {args.llr_threshold:g} across samples: {avg_ratio * 100:.1f}%")
 
 
 if __name__ == "__main__":

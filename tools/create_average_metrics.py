@@ -12,7 +12,6 @@ import csv
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -42,12 +41,12 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _load_sample_metrics(csv_path: Path) -> Dict[int, Dict[str, float]]:
+def _load_sample_metrics(csv_path: Path) -> dict[int, dict[str, float]]:
     if not csv_path.exists():
         raise FileNotFoundError(f"Input CSV not found: {csv_path}")
 
     required_fields = {"sample_index", "answer_accuracy", "auroc", "auprc", "f1"}
-    aggregates: Dict[int, Dict[str, float]] = defaultdict(
+    aggregates: dict[int, dict[str, float]] = defaultdict(
         lambda: {
             "answer_accuracy_sum": 0.0,
             "auroc_sum": 0.0,
@@ -74,7 +73,7 @@ def _load_sample_metrics(csv_path: Path) -> Dict[int, Dict[str, float]]:
     return {idx: dict(values) for idx, values in aggregates.items()}
 
 
-def _compute_overall_averages(metrics: Dict[int, Dict[str, float]]) -> dict[str, float]:
+def _compute_overall_averages(metrics: dict[int, dict[str, float]]) -> dict[str, float]:
     total_count = 0
     totals = {
         "answer_accuracy_sum": 0.0,
@@ -105,7 +104,7 @@ def _compute_overall_averages(metrics: Dict[int, Dict[str, float]]) -> dict[str,
     return averages
 
 
-def _compute_samplewise_averages(metrics: Dict[int, Dict[str, float]]) -> dict[str, float]:
+def _compute_samplewise_averages(metrics: dict[int, dict[str, float]]) -> dict[str, float]:
     sample_totals = {
         "answer_accuracy": 0.0,
         "auroc": 0.0,

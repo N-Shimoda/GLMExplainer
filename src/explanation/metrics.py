@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import math
 from itertools import combinations
-from typing import Dict, List
 
 import torch
 import torch.nn.functional as F
@@ -15,7 +14,7 @@ EDGE_MASK_STABILITY_KEYS = (
 )
 
 
-def _default_stability_metrics() -> Dict[str, float]:
+def _default_stability_metrics() -> dict[str, float]:
     """Return a zero-initialized stability metrics dictionary.
 
     Returns
@@ -147,7 +146,7 @@ def _cosine_similarity(mask_a: torch.Tensor, mask_b: torch.Tensor) -> float:
     return float(F.cosine_similarity(vec_a, vec_b, dim=1).item())
 
 
-def _safe_mean(values: List[float]) -> float:
+def _safe_mean(values: list[float]) -> float:
     """Compute the arithmetic mean with empty-list handling.
 
     Parameters
@@ -163,7 +162,7 @@ def _safe_mean(values: List[float]) -> float:
     return float(sum(values) / len(values)) if values else 0.0
 
 
-def _compute_single_sample_metrics(masks: List[torch.Tensor], *, jaccard_k: int = 6) -> Dict[str, float]:
+def _compute_single_sample_metrics(masks: list[torch.Tensor], *, jaccard_k: int = 6) -> dict[str, float]:
     """Compute edge-mask stability metrics for a single sample.
 
     Parameters
@@ -199,9 +198,9 @@ def _compute_single_sample_metrics(masks: List[torch.Tensor], *, jaccard_k: int 
     if len(masks) < 2:
         return metrics
 
-    jaccard_scores: List[float] = []
-    spearman_scores: List[float] = []
-    cosine_scores: List[float] = []
+    jaccard_scores: list[float] = []
+    spearman_scores: list[float] = []
+    cosine_scores: list[float] = []
     for i, j in combinations(range(len(masks)), 2):
         jaccard = _topk_jaccard(masks[i], masks[j], top_k=jaccard_k)
         if jaccard is not None:
@@ -218,10 +217,10 @@ def _compute_single_sample_metrics(masks: List[torch.Tensor], *, jaccard_k: int 
 
 
 def compute_edge_mask_stability_metrics_per_sample(
-    sample_edge_masks: Dict[int, List[torch.Tensor]],
+    sample_edge_masks: dict[int, list[torch.Tensor]],
     *,
     jaccard_k: int = 6,
-) -> Dict[int, Dict[str, float]]:
+) -> dict[int, dict[str, float]]:
     """Compute per-sample edge-mask stability metrics.
 
     Parameters
@@ -234,17 +233,17 @@ def compute_edge_mask_stability_metrics_per_sample(
     dict[int, dict[str, float]]
         Mapping from sample index to its stability metrics.
     """
-    per_sample: Dict[int, Dict[str, float]] = {}
+    per_sample: dict[int, dict[str, float]] = {}
     for sample_idx, masks in sample_edge_masks.items():
         per_sample[sample_idx] = _compute_single_sample_metrics(masks, jaccard_k=jaccard_k)
     return per_sample
 
 
 def compute_edge_mask_stability_metrics(
-    sample_edge_masks: Dict[int, List[torch.Tensor]],
+    sample_edge_masks: dict[int, list[torch.Tensor]],
     *,
     jaccard_k: int = 6,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """Compute aggregated edge-mask stability metrics over all samples.
 
     Parameters

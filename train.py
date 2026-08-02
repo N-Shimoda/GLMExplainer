@@ -1,12 +1,13 @@
 import argparse
 import os
 import shutil
-from datetime import datetime
+from datetime import UTC, datetime
 from math import ceil
 
 import datasets
 import torch
 import torch.distributed as dist
+import wandb
 from datasets import concatenate_datasets, load_dataset
 from datasets.arrow_dataset import Dataset
 from peft import LoraConfig, TaskType, get_peft_model
@@ -14,7 +15,6 @@ from transformers import AutoTokenizer
 from transformers.trainer_utils import set_seed
 from trl import SFTConfig, SFTTrainer
 
-import wandb
 from eval import EXT_MAX_NEW_TOKENS, MAX_NEW_TOKENS, collect_result, eval_model
 from src.collator import GraphQACollator
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
@@ -229,7 +229,9 @@ def setup_run_context(
     date_str : str
         Timestamp string for the current run.
     """
-    date_str = datetime.now().strftime("%m%d-%H%M")
+    # `astimezone()` keeps the local wall clock; the UTC argument is only there
+    # to make `now()` timezone-aware.
+    date_str = datetime.now(UTC).astimezone().strftime("%m%d-%H%M")
     if multitask:
         run_name = f"multitask_{date_str}"
         out_dir = os.path.join(output_dir, "multitask", date_str)

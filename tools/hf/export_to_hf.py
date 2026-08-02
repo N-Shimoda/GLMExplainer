@@ -59,7 +59,7 @@ def add_requirements(export_dir: str, packages: list[str]):
     existing_packages = set()
     if os.path.exists(req_file):
         with open(req_file, "r") as f:
-            existing_packages = set(line.strip() for line in f if line.strip())
+            existing_packages = {line.strip() for line in f if line.strip()}
     with open(req_file, "a") as f:
         for pkg in packages:
             if pkg not in existing_packages:

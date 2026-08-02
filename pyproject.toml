@@ -22,33 +22,33 @@ dependencies = [
     "streamlit",
 ]
 
-# `cpu` and `cuda` are mutually exclusive: they select which PyTorch build to
-# install. See `[tool.uv.sources]` below.
+# `cpu` and `cuda` select which PyTorch build to install. They are mutually
+# exclusive; see `conflicts` under `[tool.uv]`.
 [project.optional-dependencies]
 cpu = ["torch>=2.9.0"]
 cuda = [
     "torch>=2.9.0",
-    # flash_attn is only published for Linux and is built from source.
     "flash-attn>=2.8.0; sys_platform == 'linux'",
 ]
 
 [dependency-groups]
-dev = ["pytest"]
-# Build-time requirements of flash_attn. Because build isolation is disabled
-# for that package (see `no-build-isolation-package`), they must be present in
-# the environment itself rather than in an ephemeral build environment.
+dev = ["pytest", "ruff==0.16.1"]
+# Build-time requirements of flash_attn: build isolation is disabled for it
+# (see `no-build-isolation-package`), so these must be in the environment.
 build = ["setuptools", "wheel", "packaging", "psutil", "ninja"]
 
+[tool.ruff]
+line-length = 119
+
+[tool.ruff.lint]
+extend-select = ["E402"]
+
 [tool.uv]
-# This repository is a collection of scripts, not an installable package.
 package = false
 # flash_attn imports torch in its setup.py, so it cannot be built in isolation.
 no-build-isolation-package = ["flash-attn"]
 conflicts = [[{ extra = "cpu" }, { extra = "cuda" }]]
 
-# `explicit = true` keeps these indexes from being consulted for anything other
-# than the packages mapped to them in `[tool.uv.sources]`, and prevents a silent
-# fallback to PyPI when a requested version is missing from the index.
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"

@@ -1,5 +1,4 @@
 import os
-from typing import Dict
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -9,10 +8,10 @@ from torch_geometric.explain import Explanation
 
 
 def visualize_motif_explanation(
-    sample: Dict[str, object],
+    sample: dict[str, object],
     explanation: Explanation,
     graph_path: str,
-    exp_accuracy: Dict[str, float],
+    exp_accuracy: dict[str, float],
     ans_accuracy: float,
 ) -> None:
     """Visualize edge attributions for a MotifQA sample with motif highlights.
@@ -155,7 +154,7 @@ def visualize_motif_explanation(
             ha="right",
             va="center",
             fontsize=10,
-            bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.85),
+            bbox={"boxstyle": "round,pad=0.4", "facecolor": "white", "alpha": 0.85},
         )
     else:
         fig.text(
@@ -166,7 +165,7 @@ def visualize_motif_explanation(
             ha="right",
             va="top",
             fontsize=10,
-            bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.85),
+            bbox={"boxstyle": "round,pad=0.4", "facecolor": "white", "alpha": 0.85},
         )
 
     ax_graph.set_axis_off()

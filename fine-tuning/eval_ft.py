@@ -4,7 +4,8 @@ import os
 import re
 import sys
 import time
-from typing import List, Literal, Sequence
+from collections.abc import Sequence
+from typing import Literal
 
 import torch
 import torch.distributed as dist
@@ -87,8 +88,8 @@ def _normalize_text(s: str) -> str:
 
 
 def comp_accuracy(
-    preds: List[str],
-    refs: List[str],
+    preds: list[str],
+    refs: list[str],
     subset: Literal["cycle_check", "node_count", "edge_count", "triangle_counting", "maximum_flow"],
     exact_match: bool = False,
 ) -> tuple[float, int]:
@@ -233,7 +234,7 @@ def _maybe_init_distributed(local_rank: int | None) -> int:
         Effective local rank after initialisation.
     """
     if local_rank is None:
-        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        local_rank = int(os.environ.get("LOCAL_RANK", "0"))
 
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     if dist.is_available() and world_size > 1 and not dist.is_initialized():
@@ -288,7 +289,7 @@ def _gather_lists(payload: Sequence[list[str]]) -> list[Sequence[list[str]]]:
     list of sequence of list of str
         Payloads collected from every rank, ordered by rank index.
     """
-    rank, world_size, dist_enabled = _distributed_context()
+    _rank, world_size, dist_enabled = _distributed_context()
     if not dist_enabled or world_size == 1:
         return [payload]
 
@@ -344,7 +345,7 @@ def eval_model(
         device = (
             torch.device("cuda", torch.cuda.current_device()) if torch.cuda.is_available() else torch.device("cpu")
         )
-    model_kwargs = dict(trust_remote_code=True)
+    model_kwargs: dict[str, object] = {"trust_remote_code": True}
     if torch_dtype is not None:
         model_kwargs["torch_dtype"] = torch_dtype
     model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
@@ -364,7 +365,7 @@ def eval_model(
     loader = DataLoader(
         test_ds,
         batch_size=batch_size,
-        shuffle=False if sampler is None else False,
+        shuffle=False,
         sampler=sampler,
         num_workers=max(0, num_workers),
         pin_memory=torch.cuda.is_available(),
