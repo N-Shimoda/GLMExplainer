@@ -60,14 +60,13 @@ class ConfigPage:
 
     @classmethod
     def apply_directory(cls, raw: str) -> None:
-        """Save a directory and refresh both the input widget and cached selections."""
+        """Save a directory and drop the selections cached for the previous one."""
         raw = raw.strip()
         if not raw:
             st.toast("Directory is empty.", icon="⚠️")
             return
         set_base_dir(raw)
         cls.clear_dependent_state()
-        st.session_state[INPUT_KEY] = raw
         st.toast(f"Saved: {resolve_path(raw)}", icon="✅")
 
     @classmethod
@@ -75,28 +74,28 @@ class ConfigPage:
         """Fall back to the default directory in the project root."""
         clear_base_dir()
         cls.clear_dependent_state()
-        st.session_state[INPUT_KEY] = str(DEFAULT_BASE_DIR)
         st.toast("Reset to the default directory.", icon="↩️")
 
-    def show_status(self, path: Path) -> None:
-        """Report whether a path is usable as an explanations directory."""
+    def describe_status(self, path: Path) -> str:
+        """Return a one-line badge describing whether a path is usable."""
         if not path.exists():
-            st.warning(f"Directory does not exist: `{path}`", icon="⚠️")
-            return
+            return ":red-badge[:material/error: Missing] Directory does not exist."
         if not path.is_dir():
-            st.warning(f"Not a directory: `{path}`", icon="⚠️")
-            return
+            return ":red-badge[:material/error: Invalid] Not a directory."
         subsets = self.list_dir_names(path)
         if not subsets:
-            st.warning(f"No subset directory found under `{path}`.", icon="⚠️")
-            return
-        st.success(f"Found {len(subsets)} subset(s): {', '.join(subsets)}")
+            return ":orange-badge[:material/warning: Empty] No subset directory found."
+        return f":green-badge[:material/check: Ready] {len(subsets)} subset(s): {', '.join(subsets)}"
 
     def show_current(self) -> None:
-        st.subheader("Current directory")
+        """Show the directory in use on a few lines, with a button to change it."""
+        st.markdown("#### Explanations directory")
         current = get_base_dir()
-        st.code(str(current), language="bash")
-        self.show_status(current)
+        path_col, button_col = st.columns([5, 1], vertical_alignment="center")
+        path_col.code(str(current), language="bash", wrap_lines=True)
+        if button_col.button("Change", icon=":material/folder:", width="stretch"):
+            self.open_editor()
+        st.markdown(self.describe_status(current))
 
     def show_candidates(self, candidate: Path) -> None:
         """List the subdirectory names below the typed path as candidates to type next."""
@@ -104,10 +103,14 @@ class ConfigPage:
         st.caption(f"Subdirectories of `{target}`")
         st.caption(str(self.list_dir_names(target)))
 
+    def open_editor(self) -> None:
+        """Open the editor dialog with the input primed with the saved directory."""
+        # Safe to assign here: the input widget is only instantiated inside the dialog.
+        st.session_state[INPUT_KEY] = get_raw_base_dir()
+        self.show_editor()
+
+    @st.dialog("Change directory", width="large")
     def show_editor(self) -> None:
-        st.subheader("Change directory")
-        if INPUT_KEY not in st.session_state:
-            st.session_state[INPUT_KEY] = get_raw_base_dir()
         raw = st.text_input(
             "Explanations directory",
             key=INPUT_KEY,
@@ -125,46 +128,42 @@ class ConfigPage:
         if candidate == get_base_dir():
             st.caption("This is the directory currently in use.")
         else:
-            self.show_status(candidate)
+            st.markdown(self.describe_status(candidate))
 
-        save_col, reset_col, _ = st.columns([1, 1, 3])
-        save_col.button(
+        save_col, reset_col, _ = st.columns([1, 1, 2])
+        if save_col.button(
             "Save",
             type="primary",
             width="stretch",
             disabled=not candidate.is_dir() or not raw.strip(),
-            on_click=self.apply_directory,
-            args=(raw,),
-        )
-        reset_col.button(
+        ):
+            self.apply_directory(raw)
+            st.rerun()
+        if reset_col.button(
             "Reset to default",
             width="stretch",
             disabled=get_base_dir() == DEFAULT_BASE_DIR,
-            on_click=self.reset_directory,
-        )
+        ):
+            self.reset_directory()
+            st.rerun()
+
+        self.show_recent()
 
     def show_recent(self) -> None:
         recent = [entry for entry in get_recent_dirs() if entry != get_raw_base_dir()]
         if not recent:
             return
-        st.subheader("Recent directories")
+        st.divider()
+        st.markdown("##### Recent directories")
         for entry in recent:
             path_col, button_col = st.columns([5, 1], vertical_alignment="center")
-            path_col.code(entry, language="bash")
-            button_col.button(
-                "Use",
-                key=f"use_{entry}",
-                width="stretch",
-                on_click=self.apply_directory,
-                args=(entry,),
-            )
+            path_col.code(entry, language="bash", wrap_lines=True)
+            if button_col.button("Use", key=f"use_{entry}", width="stretch"):
+                self.apply_directory(entry)
+                st.rerun()
 
     def run(self) -> None:
         self.show_current()
-        st.divider()
-        self.show_editor()
-        st.divider()
-        self.show_recent()
         st.caption(f"Settings are stored in `{CONFIG_PATH}`.")
 
 
