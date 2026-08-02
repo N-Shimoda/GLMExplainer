@@ -163,11 +163,11 @@ class GraphViewerPage(AppPage):
             st.session_state["trial_index"] = random.choice(available_counters)
         if "trial_index" not in st.session_state or st.session_state["trial_index"] not in available_counters:
             st.session_state["trial_index"] = available_counters[0]
+        # The value is driven by session state above, so it is not passed here.
         pdf_counter_value = st.sidebar.number_input(
             "Trial index",
             min_value=min(available_counters),
             max_value=max(available_counters),
-            value=st.session_state["trial_index"],
             step=1,
             help=f"Available indices are {available_counters}",
             key="trial_index",
