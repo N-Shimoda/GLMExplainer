@@ -20,6 +20,7 @@ dependencies = [
     "huggingface-hub<1.0",
     "wandb>=0.22.3",
     "streamlit",
+    "toml",
 ]
 
 # `cpu` and `cuda` select which PyTorch build to install. They are mutually

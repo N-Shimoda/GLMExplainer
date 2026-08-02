@@ -23,6 +23,9 @@ fine-tuning/models/
 # Explanations
 explanations/
 
+# Viewer settings (machine-local)
+.streamlit/viewer.toml
+
 # Figures
 plots/llr_study/
 plots/edge_size_study/

@@ -3,13 +3,16 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from viewer.settings import get_base_dir
+
 
 class AppPage:
-    def __init__(self, base_dir: Path = Path("explanations")) -> None:
-        if isinstance(base_dir, str):
-            base_dir = Path(base_dir)
+    def __init__(self, base_dir: Path | None = None) -> None:
+        # Fall back to the directory configured on the Config page.
+        base_dir = Path(base_dir) if base_dir is not None else get_base_dir()
         if not base_dir.exists() or not base_dir.is_dir():
             st.error(f"Base directory does not exist or is not a directory: `{base_dir}`")
+            st.page_link("viewer/Config.py", label="Select another directory in Config", icon="⚙️")
             st.stop()
 
         self.base_dir = base_dir
