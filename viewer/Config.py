@@ -69,7 +69,11 @@ class ConfigPage:
         if not raw:
             st.toast("Directory is empty.", icon="⚠️")
             return
-        set_base_dir(raw)
+        try:
+            set_base_dir(raw)
+        except OSError as exc:
+            st.error(f"Failed to save settings to `{CONFIG_PATH}`: {exc}")
+            st.stop()
         cls.clear_dependent_state()
         st.toast(f"Saved: {resolve_path(raw)}", icon="✅")
 
