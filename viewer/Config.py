@@ -4,6 +4,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 from viewer.settings import (
     CONFIG_PATH,
     DEFAULT_BASE_DIR,
@@ -16,6 +17,9 @@ from viewer.settings import (
 )
 
 INPUT_KEY = "explanations_dir_input"
+
+# Subset names `explain.py` writes under the explanations directory.
+KNOWN_SUBSETS = frozenset(GRAPHQA_SUBSETS) | frozenset(MOTIFQA_SUBSETS)
 
 
 class ConfigPage:
@@ -76,16 +80,29 @@ class ConfigPage:
         cls.clear_dependent_state()
         st.toast("Reset to the default directory.", icon="↩️")
 
+    @staticmethod
+    def summarize_names(names: list[str], limit: int = 5) -> str:
+        """Join names for a one-line message, trimming a long list."""
+        shown = ", ".join(names[:limit])
+        return shown if len(names) <= limit else f"{shown}, ... (+{len(names) - limit})"
+
     def describe_status(self, path: Path) -> str:
-        """Return a one-line badge describing whether a path is usable."""
+        """Return a one-line badge describing whether a path is usable.
+
+        Only a directory whose subdirectories are all known subset names counts
+        as ready: any other name means the path is not an explanations root.
+        """
         if not path.exists():
             return ":red-badge[:material/error: Missing] Directory does not exist."
         if not path.is_dir():
             return ":red-badge[:material/error: Invalid] Not a directory."
-        subsets = self.list_dir_names(path)
-        if not subsets:
+        names = self.list_dir_names(path)
+        if not names:
             return ":orange-badge[:material/warning: Empty] No subset directory found."
-        return f":green-badge[:material/check: Ready] {len(subsets)} subset(s): {', '.join(subsets)}"
+        unknown = [name for name in names if name not in KNOWN_SUBSETS]
+        if unknown:
+            return f":orange-badge[:material/warning: Unknown] Not a subset name: {self.summarize_names(unknown)}"
+        return f":green-badge[:material/check: Ready] {len(names)} subset(s): {', '.join(names)}"
 
     def show_current(self) -> None:
         """Show the directory in use on a few lines, with a button to change it."""
