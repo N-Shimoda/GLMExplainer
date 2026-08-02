@@ -2,7 +2,6 @@ import argparse
 import json
 import os
 from math import ceil
-from typing import Optional
 
 import torch
 import torch.distributed as dist
@@ -156,7 +155,7 @@ def _init_distributed() -> tuple[bool, int, int, int]:
     if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
         rank = int(os.environ["RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
-        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        local_rank = int(os.environ.get("LOCAL_RANK", "0"))
         backend = "nccl" if torch.cuda.is_available() else "gloo"
         dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
         if torch.cuda.is_available():
@@ -246,7 +245,7 @@ def eval_model(
     tokenizer: PreTrainedTokenizerBase,
     per_device_batch_size: int,
     max_new_tokens: int,
-    pbar: Optional[tqdm] = None,
+    pbar: tqdm | None = None,
     show_progress: bool = True,
 ) -> list[dict[str, str]]:
     """Evaluates the model on the test dataset and returns the prediction results.

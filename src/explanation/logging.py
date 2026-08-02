@@ -1,9 +1,10 @@
 import csv
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import torch
+
 from .metrics import (
     EDGE_MASK_STABILITY_KEYS,
     compute_edge_mask_stability_metrics_per_sample,
@@ -191,9 +192,9 @@ def append_run_history_row(history_path: str | Path, row: Mapping[str, Any]) -> 
 
 
 __all__ = [
-    "_write_metrics_header",
-    "write_average_metrics_csv",
-    "append_run_history_row",
     "_compute_sample_average_row",
     "_record_sample_average_metrics",
+    "_write_metrics_header",
+    "append_run_history_row",
+    "write_average_metrics_csv",
 ]

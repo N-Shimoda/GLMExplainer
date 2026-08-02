@@ -46,6 +46,10 @@ build = ["setuptools", "wheel", "packaging", "psutil", "ninja"]
 # default rule set. Start from the defaults and add noisy rules to `ignore`
 # as they show up.
 [tool.ruff.lint]
+# E402 is not on by default, but several entry points import from `src` only
+# after extending `sys.path`. Enabling it keeps the `# noqa: E402` markers on
+# those imports meaningful instead of letting RUF100 strip them.
+extend-select = ["E402"]
 ignore = []
 
 [tool.uv]

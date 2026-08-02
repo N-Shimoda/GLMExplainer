@@ -4,9 +4,10 @@ import json
 import os
 import time
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Iterable, Literal
+from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 import torch
 import torch.distributed as dist
@@ -427,11 +428,11 @@ def explain_sample(
         explanation_type="model",
         node_mask_type=None,
         edge_mask_type="object",
-        model_config=dict(
-            mode="regression",
-            task_level="graph",
-            return_type="raw",
-        ),
+        model_config={
+            "mode": "regression",
+            "task_level": "graph",
+            "return_type": "raw",
+        },
     )
     explanation = explainer(x=pyg_batch.x, edge_index=pyg_batch.edge_index, batch=pyg_batch.batch)
 
@@ -619,10 +620,14 @@ def process_dataset(
 
     # Check for per-sample trial overrides
     has_trial_override = False
-    if hasattr(dataset, "column_names") and TRIAL_OVERRIDE_COLUMN in dataset.column_names:
-        # Ensure at least one sample carries an override before switching modes.
-        if len(dataset) > 0 and dataset[0].get(TRIAL_OVERRIDE_COLUMN) is not None:
-            has_trial_override = True
+    # Ensure at least one sample carries an override before switching modes.
+    if (
+        hasattr(dataset, "column_names")
+        and TRIAL_OVERRIDE_COLUMN in dataset.column_names
+        and len(dataset) > 0
+        and dataset[0].get(TRIAL_OVERRIDE_COLUMN) is not None
+    ):
+        has_trial_override = True
 
     # Setup progress bar
     per_sample_trials = 1 if has_trial_override else args.num_trials
@@ -704,7 +709,9 @@ def process_dataset(
 def main():
     """Compute edge importance explanations for GraphTokenLM predictions on specified dataset samples."""
     args, explainer_args = build_args()
-    date_str = datetime.now().strftime("%m%d-%H%M")
+    # `astimezone()` keeps the local wall clock; the UTC argument is only there
+    # to make `now()` timezone-aware.
+    date_str = datetime.now(UTC).astimezone().strftime("%m%d-%H%M")
     run_name = f"{args.subset}_{date_str}"
     OUT_DIR = os.path.join(args.outdir_base, args.subset, date_str)
     os.makedirs(OUT_DIR, exist_ok=True)

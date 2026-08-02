@@ -1,5 +1,5 @@
 import math
-from typing import Literal, Optional
+from typing import Literal
 
 import torch
 from torch_geometric.data import Batch as PygBatch
@@ -35,11 +35,11 @@ class GLMWrapper(torch.nn.Module):
         self.tokenizer = tokenizer
         self.input_text = None
         self.generated_ids = None
-        self.relevant_idx: Optional[list[int]] = None
-        self._graph_template: Optional[PygBatch] = None
+        self.relevant_idx: list[int] | None = None
+        self._graph_template: PygBatch | None = None
         self.per_device_gen_batch_size = per_device_gen_batch_size
 
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, batch: Optional[torch.Tensor] = None):
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor, batch: torch.Tensor | None = None):
         """Pseudo forward method for explainer compatibility."""
         if self.input_text is None:
             raise ValueError("Input text is not set. Please run `gen_output` first.")
@@ -130,7 +130,7 @@ class GLMWrapper(torch.nn.Module):
             The generated output text for each trial.
         """
         if not isinstance(input_text, str):
-            raise ValueError("Input text must be a string.")
+            raise TypeError("Input text must be a string.")
         if input_text.strip() == "":
             raise ValueError("Input text cannot be empty.")
         if num_trials < 1:
@@ -176,7 +176,7 @@ class GLMWrapper(torch.nn.Module):
             The custom output text to set for explanation.
         """
         if not isinstance(output_text, str):
-            raise ValueError("Output text must be a string.")
+            raise TypeError("Output text must be a string.")
         if output_text.strip() == "":
             raise ValueError("Output text cannot be empty.")
         if self.input_text is None or self._graph_template is None:

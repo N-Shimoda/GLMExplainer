@@ -2,8 +2,8 @@ import argparse
 import math
 import os
 import sys
-from datetime import datetime
-from typing import Literal, Optional
+from datetime import UTC, datetime
+from typing import Literal
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -142,12 +142,12 @@ def report_best_runs(
     ours_empty,
     metric: Literal["avg_auroc", "edge_mask_spearman"] = "avg_auroc",
 ):
-    def _format_metric(value: Optional[float]) -> str:
+    def _format_metric(value: float | None) -> str:
         if value is None:
             return "n/a"
         return f"{value:.4f}"
 
-    def _to_float(value) -> Optional[float]:
+    def _to_float(value) -> float | None:
         if value is None:
             return None
         try:
@@ -206,7 +206,7 @@ def report_best_runs(
     table.add_column("empty", justify="right")
 
     def _highlight_if_max(
-        num: Optional[float], run_name: str, edge_size: str, max_val: Optional[float]
+        num: float | None, run_name: str, edge_size: str, max_val: float | None
     ) -> str:
         """Format the metric value and highlight if it's the max among the three."""
         if num is None:
@@ -243,10 +243,12 @@ def create_log_df(runs, subset: str) -> pd.DataFrame:
             if not value:
                 continue
             try:
-                return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                parsed = datetime.fromisoformat(str(value))
             except ValueError:
                 continue
-        return datetime.min
+            # Normalise to aware datetimes so naive and aware runs stay comparable.
+            return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+        return datetime.min.replace(tzinfo=UTC)
 
     def _edge_size_key(edge_size):
         try:

@@ -1,8 +1,9 @@
 # src/collator.py
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any
 
 import torch
 from torch import Tensor
@@ -34,7 +35,7 @@ def _to_tensor(x, dtype=None) -> Tensor:
     return t.to(dtype=dtype) if dtype is not None else t
 
 
-def pyg_from_dict(g: Dict[str, Any]) -> PygData:
+def pyg_from_dict(g: dict[str, Any]) -> PygData:
     """
     Convert a dictionary to a PyTorch Geometric Data object.
 
@@ -105,20 +106,20 @@ class GraphQACollator:
         defines one.
     """
 
-    tokenizer: Optional[PreTrainedTokenizerBase] = None
+    tokenizer: PreTrainedTokenizerBase | None = None
     prompt_field: str = "prompt"
     completion_field: str = "completion"
     max_length: int = 512
-    pad_to_multiple_of: Optional[int] = None
+    pad_to_multiple_of: int | None = None
     num_graph_tokens: int = 4  # Must match the model's graph token count.
     add_eos_token: bool = True
 
     # ---- Internal utilities ----
-    def _encode(self, text: str) -> List[int]:
+    def _encode(self, text: str) -> list[int]:
         assert self.tokenizer is not None, "tokenizer is required to tokenize texts"
         return self.tokenizer.encode(text, add_special_tokens=False)
 
-    def _build_prompt_completion(self, prompts: Sequence[str], completions: Sequence[str]) -> Dict[str, Tensor]:
+    def _build_prompt_completion(self, prompts: Sequence[str], completions: Sequence[str]) -> dict[str, Tensor]:
         assert self.tokenizer is not None, "tokenizer is required to tokenize texts"
 
         pad_token_id = (
@@ -129,16 +130,19 @@ class GraphQACollator:
         if pad_token_id is None:
             raise ValueError("Tokenizer must define either pad_token_id or eos_token_id")
 
-        input_ids_per_sample: List[List[int]] = []
-        prompt_lengths: List[int] = []
+        input_ids_per_sample: list[list[int]] = []
+        prompt_lengths: list[int] = []
 
         for prompt, completion in zip(prompts, completions):
             prompt_ids = self._encode(prompt)
             completion_ids = self._encode(completion)
 
-            if self.add_eos_token and self.tokenizer.eos_token_id is not None:
-                if not completion_ids or completion_ids[-1] != self.tokenizer.eos_token_id:
-                    completion_ids.append(self.tokenizer.eos_token_id)
+            if (
+                self.add_eos_token
+                and self.tokenizer.eos_token_id is not None
+                and (not completion_ids or completion_ids[-1] != self.tokenizer.eos_token_id)
+            ):
+                completion_ids.append(self.tokenizer.eos_token_id)
 
             combined = prompt_ids + completion_ids
             prompt_len = len(prompt_ids)
@@ -171,9 +175,9 @@ class GraphQACollator:
                 (max_seq_len + self.pad_to_multiple_of - 1) // self.pad_to_multiple_of
             ) * self.pad_to_multiple_of
 
-        padded_input_ids: List[List[int]] = []
-        padded_attention: List[List[int]] = []
-        padded_labels: List[List[int]] = []
+        padded_input_ids: list[list[int]] = []
+        padded_attention: list[list[int]] = []
+        padded_labels: list[list[int]] = []
 
         for ids, prompt_len in zip(input_ids_per_sample, prompt_lengths):
             pad_len = max_seq_len - len(ids)
@@ -202,7 +206,7 @@ class GraphQACollator:
         labels: Tensor,
         attention_mask: Tensor,
         orig_len: int,
-    ) -> Dict[str, Tensor]:
+    ) -> dict[str, Tensor]:
         """Prepend ignore labels and attention for graph tokens.
 
         Parameters
@@ -243,19 +247,19 @@ class GraphQACollator:
             new_attn = torch.cat([ones, attention_mask], dim=1)
         else:
             raise ValueError(
-                "[collator] attention_mask length {}"
-                " not in {{T={}, T+k={}}}".format(attention_mask.size(1), orig_len, orig_len + k)
+                f"[collator] attention_mask length {attention_mask.size(1)}"
+                f" not in {{T={orig_len}, T+k={orig_len + k}}}"
             )
 
         return {"labels": new_labels, "attention_mask": new_attn}
 
     # ---- Main entry point ----
-    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def __call__(self, features: list[dict[str, Any]]) -> dict[str, Any]:
         # 1) Batch graph objects (returned on CPU).
         pyg_list = [pyg_from_dict(f["graph"]) for f in features]
         graph_batch = PygBatch.from_data_list(pyg_list)
 
-        batch: Dict[str, Any] = {"graph": graph_batch}
+        batch: dict[str, Any] = {"graph": graph_batch}
 
         # 2) Process text either by tokenizing or stacking tensors.
         if self.tokenizer is not None:

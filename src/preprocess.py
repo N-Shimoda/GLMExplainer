@@ -1,11 +1,11 @@
 import re
 from pprint import pprint
-from typing import Any, Dict, List, Literal, Tuple
+from typing import Any, Literal
 
 import torch
 
 
-def extract_nodes_from_text(text: str) -> List[int]:
+def extract_nodes_from_text(text: str) -> list[int]:
     """Parse node identifiers from a GraphQA-style question.
 
     Parameters
@@ -27,7 +27,7 @@ def extract_nodes_from_text(text: str) -> List[int]:
     return []
 
 
-def extract_edges_from_text(text: str) -> List[Tuple[int, int]]:
+def extract_edges_from_text(text: str) -> list[tuple[int, int]]:
     """Parse edge pairs from a GraphQA-style question.
 
     Parameters
@@ -52,11 +52,11 @@ def extract_edges_from_text(text: str) -> List[Tuple[int, int]]:
 
 
 def create_pyg_dict(
-    nodes: List[int],
-    edges: List[Tuple[int, int]],
+    nodes: list[int],
+    edges: list[tuple[int, int]],
     lpe_dim: int,
     use_degree_emb: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Create a PyG-format graph dictionary from lists of nodes and edges.
 
@@ -134,8 +134,8 @@ def create_pyg_dict(
             x = lpe
 
     # Build bidirectional edge_index using consecutive indices.
-    source_nodes: List[int] = []
-    target_nodes: List[int] = []
+    source_nodes: list[int] = []
+    target_nodes: list[int] = []
     if edges:
         for u, v in edges:
             if u in node_to_idx and v in node_to_idx:
@@ -158,7 +158,7 @@ def add_graph_column(
     ds_name: Literal["GraphQA", "MotifQA"],
     lpe_dim: int = 4,
     use_degree_emb: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Enrich an example with graph metadata parsed from the question.
 
     Parameters

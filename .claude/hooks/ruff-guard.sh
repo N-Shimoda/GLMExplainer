@@ -9,8 +9,8 @@
 # To make Claude auto-apply ruff's safe fixes instead, uncomment the `--fix`
 # line below. To make unfixed findings block Claude (it must resolve them
 # before continuing), replace the final `jq -n ...` with `echo "$out" >&2;
-# exit 2`. Both are off on purpose: the repo still has pre-existing findings,
-# and neither the user nor Claude wants unrelated code rewritten yet.
+# exit 2`. Both are off on purpose: reporting keeps the fix under review
+# rather than rewriting code behind the user's back.
 
 set -uo pipefail
 
@@ -32,8 +32,8 @@ jq -n --arg file "$file" --arg out "$out" '
     hookEventName: "PostToolUse",
     additionalContext: (
       "ruff の指摘です (報告のみ / 自動修正は無効):\n" + $out +
-      "\n今回の編集で新たに入った指摘だけを直してください。" +
-      "既存コードの指摘はユーザーの指示により修正対象外です。"
+      "\nリポジトリは ruff クリーンな状態を維持しています。" +
+      "上記は今回の編集で入った指摘なので、修正してください。"
     )
   }
 }'

@@ -1,7 +1,7 @@
-from typing import Literal
+from typing import ClassVar, Literal
 
 import torch
-import torch.nn as nn
+from torch import nn
 from torch_geometric.nn import (
     GATConv,
     GCNConv,
@@ -39,7 +39,7 @@ class GraphTokenLMConfig(PretrainedConfig):
         gnn_hidden_dim=256,
         gnn_out_dim=512,
         num_gnn_layers=2,
-        graph_pooling: list[Literal["mean", "sum", "max"]] = ["mean"],
+        graph_pooling: list[Literal["mean", "sum", "max"]] | None = None,
         num_proj_layers=1,
         num_graph_tokens=4,
         num_max_nodes=20,  # maximum number of nodes per batch
@@ -107,7 +107,7 @@ class GraphTokenLMConfig(PretrainedConfig):
         self.num_proj_layers = num_proj_layers
         self.num_graph_tokens = num_graph_tokens
         self.num_max_nodes = num_max_nodes
-        self.graph_pooling = graph_pooling
+        self.graph_pooling = ["mean"] if graph_pooling is None else list(graph_pooling)
         self.freeze_llm = freeze_llm
         self.enable_lora = enable_lora
 
@@ -162,7 +162,7 @@ class GNNEncoder(nn.Module):
         self.max_nodes = max_nodes
         self.pos_emb = nn.Embedding(max_nodes, node_pos_emb_dim) if node_pos_emb_dim > 0 else None
 
-        in_channels = in_dim + (node_pos_emb_dim if node_pos_emb_dim > 0 else 0)
+        in_channels = in_dim + (max(0, node_pos_emb_dim))
         if in_channels <= 0:
             raise ValueError("GNNEncoder requires a positive input feature dimension.")
 
@@ -222,7 +222,7 @@ class DomainProjector(nn.Module):
         llm_hidden_size,
         num_graph_tokens=4,
         num_layers=1,
-        graph_pooling: list[str] = ["mean"],
+        graph_pooling: list[str] | None = None,
     ):
         """Project graph-level representations into graph tokens.
 
@@ -247,7 +247,7 @@ class DomainProjector(nn.Module):
         super().__init__()
         if num_layers < 1:
             raise ValueError("DomainProjector requires at least one projection layer.")
-        poolings = _normalize_graph_pooling(graph_pooling)
+        poolings = _normalize_graph_pooling(["mean"] if graph_pooling is None else graph_pooling)
         self.num_graph_tokens = num_graph_tokens
         self.graph_pooling = poolings
         layers = []
@@ -261,7 +261,7 @@ class DomainProjector(nn.Module):
             prev_dim = in_dim
             for layer_idx in range(num_layers):
                 t = (layer_idx + 1) / num_layers
-                dim = max(1, int(round(in_dim * (ratio ** t))))
+                dim = max(1, round(in_dim * (ratio**t)))
                 if dim % 2 != 0:
                     dim += 1
                 dim = max(dim, prev_dim)
@@ -332,8 +332,8 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         Whether to load pretrained weights for the base language model.
     """
 
-    _tied_weights_keys = ["llm.lm_head.weight"]
-    _keys_to_ignore_on_load_missing = [r"^llm\.lm_head\.weight$"]
+    _tied_weights_keys: ClassVar[list[str]] = ["llm.lm_head.weight"]
+    _keys_to_ignore_on_load_missing: ClassVar[list[str]] = [r"^llm\.lm_head\.weight$"]
 
     config_class = GraphTokenLMConfig
     base_model_prefix = "llm"
@@ -433,7 +433,7 @@ class GraphTokenLM(PreTrainedModel, GenerationMixin):
         if inputs_embeds is None:
             inputs_embeds = self.llm.get_input_embeddings()(input_ids)
 
-        B, T, H = inputs_embeds.size()
+        B, _T, _H = inputs_embeds.size()
 
         # ---- Graph to tokens ----
         graph_device = next(self.gnn.parameters()).device
