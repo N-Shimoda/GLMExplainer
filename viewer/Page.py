@@ -12,7 +12,7 @@ class AppPage:
         base_dir = Path(base_dir) if base_dir is not None else get_base_dir()
         if not base_dir.exists() or not base_dir.is_dir():
             st.error(f"Base directory does not exist or is not a directory: `{base_dir}`")
-            st.page_link("viewer/Config.py", label="Select another directory in Config", icon="⚙️")
+            st.page_link("viewer/Config.py", label="Configure another directory", icon="⚙️")
             st.stop()
 
         self.base_dir = base_dir

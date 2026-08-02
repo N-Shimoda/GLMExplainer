@@ -32,11 +32,25 @@ class ConfigPage:
     )
 
     @staticmethod
-    def list_subsets(path: Path) -> list[str]:
-        """Return subset directory names directly under a path."""
+    def list_dir_names(path: Path) -> list[str]:
+        """Return the visible subdirectory names directly under a path."""
         if not path.is_dir():
             return []
-        return sorted(p.name for p in path.iterdir() if p.is_dir() and not p.name.startswith("."))
+        try:
+            return sorted(p.name for p in path.iterdir() if p.is_dir() and not p.name.startswith("."))
+        except OSError:
+            return []
+
+    @staticmethod
+    def nearest_existing_dir(candidate: Path) -> Path:
+        """Return the candidate itself, or its closest ancestor that exists.
+
+        A path that is still being typed (``.../OneDr``) falls back to its parent,
+        so candidate names keep showing up while the user types.
+        """
+        while not candidate.is_dir() and candidate != candidate.parent:
+            candidate = candidate.parent
+        return candidate
 
     @classmethod
     def clear_dependent_state(cls) -> None:
@@ -67,14 +81,14 @@ class ConfigPage:
     def show_status(self, path: Path) -> None:
         """Report whether a path is usable as an explanations directory."""
         if not path.exists():
-            st.error(f"Directory does not exist: `{path}`")
+            st.warning(f"Directory does not exist: `{path}`", icon="⚠️")
             return
         if not path.is_dir():
-            st.error(f"Not a directory: `{path}`")
+            st.warning(f"Not a directory: `{path}`", icon="⚠️")
             return
-        subsets = self.list_subsets(path)
+        subsets = self.list_dir_names(path)
         if not subsets:
-            st.warning(f"No subset directory found under `{path}`.")
+            st.warning(f"No subset directory found under `{path}`.", icon="⚠️")
             return
         st.success(f"Found {len(subsets)} subset(s): {', '.join(subsets)}")
 
@@ -83,6 +97,12 @@ class ConfigPage:
         current = get_base_dir()
         st.code(str(current), language="bash")
         self.show_status(current)
+
+    def show_candidates(self, candidate: Path) -> None:
+        """List the subdirectory names below the typed path as candidates to type next."""
+        target = self.nearest_existing_dir(candidate)
+        st.caption(f"Subdirectories of `{target}`")
+        st.caption(str(self.list_dir_names(target)))
 
     def show_editor(self) -> None:
         st.subheader("Change directory")
@@ -97,6 +117,8 @@ class ConfigPage:
             ),
         )
         candidate = resolve_path(raw) if raw.strip() else DEFAULT_BASE_DIR
+
+        self.show_candidates(candidate)
 
         st.caption("Resolved path")
         st.code(str(candidate), language="bash")
