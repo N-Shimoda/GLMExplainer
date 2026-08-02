@@ -130,7 +130,7 @@ class ConfigPage:
         st.session_state[INPUT_KEY] = get_raw_base_dir()
         self.show_editor()
 
-    @st.dialog("Change directory", width="large")
+    @st.dialog("Change directory", width="medium", icon=":material/folder:")
     def show_editor(self) -> None:
         raw = st.text_input(
             "Explanations directory",
