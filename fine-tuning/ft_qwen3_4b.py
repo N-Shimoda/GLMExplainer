@@ -10,9 +10,9 @@ import os
 import time
 from math import ceil
 from pprint import pprint
-from typing import Dict, Tuple
 
 import torch
+import wandb
 from accelerate.utils import set_seed
 from datasets import Dataset, load_dataset
 from eval_ft import eval_model
@@ -20,7 +20,6 @@ from peft import LoraConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
 
-import wandb
 from src.ckpt import _resolve_ckpt_path
 
 
@@ -101,7 +100,7 @@ def build_args():
         "lora_dropout": parsed_args.lora_dropout,
     }
 
-    added_attrs = sft_args.keys() | lora_args.keys() | set(["epochs", "grad_accum_steps", "lr", "lora_r"])
+    added_attrs = sft_args.keys() | lora_args.keys() | {"epochs", "grad_accum_steps", "lr", "lora_r"}
     for attr in added_attrs:
         if hasattr(parsed_args, attr):
             delattr(parsed_args, attr)
@@ -124,7 +123,7 @@ def build_run_context(subset: str) -> tuple[str, str]:
     return run_name, output_dir
 
 
-def to_conv_prompt_completion(example: Dict) -> Dict:
+def to_conv_prompt_completion(example: dict) -> dict:
     """
     Convert into the conversation-style prompt-completion format expected by TRL SFTTrainer:
       {
@@ -142,7 +141,7 @@ def to_conv_prompt_completion(example: Dict) -> Dict:
     return {"prompt": example["question"], "completion": example["answer"].strip()}
 
 
-def build_dataset(subset: str, do_eval: bool) -> Tuple[Dataset, Dataset, Dataset | None]:
+def build_dataset(subset: str, do_eval: bool) -> tuple[Dataset, Dataset, Dataset | None]:
     """
     Load and preprocess the specified GraphQA subset.
 
@@ -211,7 +210,7 @@ def train_model(train_ds, eval_ds, output_dir: str, sft_args: dict, lora_args: d
     # Let Accelerate/DPP run one full model replica per process instead of sharding across GPUs.
     device_map = None
     if torch.cuda.is_available():
-        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        local_rank = int(os.environ.get("LOCAL_RANK", "0"))
         device_map = {"": local_rank}
 
     def _load_model(attn_impl: str):

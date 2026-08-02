@@ -65,7 +65,7 @@ def comp_accuracy(
 
     num_unknown = 0
 
-    if subset in NUMERIC_SUBSETS.keys():
+    if subset in NUMERIC_SUBSETS:
         # -100 and -1 indicates references and predictions with no digits, respectively
         ref_digits = [int(matches[-1]) if (matches := re.findall(r"\d+", ref)) else -100 for ref in refs]
         pred_digits = [int(matches[-1]) if (matches := re.findall(r"\d+", pred)) else -1 for pred in preds]

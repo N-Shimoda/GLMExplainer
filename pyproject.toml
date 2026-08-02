@@ -1,0 +1,67 @@
+[project]
+name = "graphtoken"
+version = "0.1.0"
+description = "GraphToken: encoding graph-structured data as soft prompts for pre-trained language models"
+readme = "README.md"
+requires-python = "==3.12.*"
+dependencies = [
+    "scipy",
+    "matplotlib",
+    "openai",
+    "rich",
+    "torch_geometric>=2.7.0",
+    "torchmetrics",
+    "torchinfo",
+    "transformers>=4.57,<4.58",
+    "datasets",
+    "trl",
+    "peft",
+    "bitsandbytes",
+    "huggingface-hub<1.0",
+    "wandb>=0.22.3",
+    "streamlit",
+    "toml",
+]
+
+# `cpu` and `cuda` select which PyTorch build to install. They are mutually
+# exclusive; see `conflicts` under `[tool.uv]`.
+[project.optional-dependencies]
+cpu = ["torch>=2.9.0"]
+cuda = [
+    "torch>=2.9.0",
+    "flash-attn>=2.8.0; sys_platform == 'linux'",
+]
+
+[dependency-groups]
+dev = ["pytest", "ruff==0.16.1"]
+# Build-time requirements of flash_attn: build isolation is disabled for it
+# (see `no-build-isolation-package`), so these must be in the environment.
+build = ["setuptools", "wheel", "packaging", "psutil", "ninja"]
+
+[tool.ruff]
+line-length = 119
+
+[tool.ruff.lint]
+extend-select = ["E402"]
+
+[tool.uv]
+package = false
+# flash_attn imports torch in its setup.py, so it cannot be built in isolation.
+no-build-isolation-package = ["flash-attn"]
+conflicts = [[{ extra = "cpu" }, { extra = "cuda" }]]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cuda", extra = "cuda" },
+]

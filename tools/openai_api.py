@@ -28,7 +28,6 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Optional
 
 from openai import OpenAI  # New client introduced in openai>=1.0.0
 
@@ -95,7 +94,7 @@ def solve_math(prompt: str, max_new_tokens: int, max_retries: int = 3, retry_wai
 
     client = OpenAI(api_key=api_key)
 
-    last_error: Optional[Exception] = None
+    last_error: Exception | None = None
     for attempt in range(1, max_retries + 1):
         try:
             response = client.responses.create(
@@ -117,7 +116,9 @@ def solve_math(prompt: str, max_new_tokens: int, max_retries: int = 3, retry_wai
             if parts:
                 return "".join(parts).strip()
             return str(response)
-        except Exception as e:  # pragma: no cover
+        # Broad on purpose: any SDK/transport error should be retried, and the
+        # last one is re-raised as a RuntimeError once the retries run out.
+        except Exception as e:  # noqa: BLE001  # pragma: no cover
             last_error = e
             if attempt == max_retries:
                 break
@@ -130,7 +131,7 @@ def solve_math(prompt: str, max_new_tokens: int, max_retries: int = 3, retry_wai
     raise RuntimeError(f"OpenAI call failed: {last_error}")
 
 
-def extract_final_answer(text: str) -> Optional[str]:
+def extract_final_answer(text: str) -> str | None:
     """Extract the portion after the literal 'Answer:' marker from the output; return None if it is missing."""
     import re
 
@@ -146,7 +147,8 @@ def main() -> None:  # pragma: no cover
     try:
         prompt = get_prompt(args.subset)
         result = solve_math(prompt, max_new_tokens=1024)
-    except Exception as e:  # pragma: no cover
+    # Broad on purpose: top-level CLI handler, reports and exits non-zero.
+    except Exception as e:  # noqa: BLE001  # pragma: no cover
         print(f"[ERROR] {e}", file=sys.stderr)
         sys.exit(1)
 
@@ -158,7 +160,7 @@ def main() -> None:  # pragma: no cover
     # Write to the file (UTF-8)
     try:
         out_path.write_text(result, encoding="utf-8")
-    except Exception as e:  # If writing fails, report the error and exit
+    except Exception as e:  # noqa: BLE001  # If writing fails, report the error and exit
         print(f"[ERROR] Failed to save the answer to a file: {e}", file=sys.stderr)
         sys.exit(1)
 

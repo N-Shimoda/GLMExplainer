@@ -2,24 +2,93 @@
 
 ## Setup Environment
 
+This project uses [uv](https://docs.astral.sh/uv/) to manage its Python environment.
+Every dependency is pinned in `uv.lock`, so the exact same versions are reproduced on any machine.
+If you do not have uv yet, follow the [official installation guide](https://docs.astral.sh/uv/getting-started/installation/).
+
+Which PyTorch build gets installed is selected by an extra, `cpu` or `cuda`.
+The two are mutually exclusive, and **one of them must always be given**.
+
+> [!IMPORTANT]
+> Do not run a bare `uv sync`. Without an extra, PyTorch is pulled from PyPI as a transitive
+> dependency, which on Linux drags in a full CUDA runtime that neither setup below intends.
+
 ### Devices with CUDA (_recommended_)
 
-For devices with CUDA compatible GPUs, we recommend using `environment.yml` to build an environment.
-This file includes the version index of PyTorch to ensure the reproducibility, and `flash_attn` library for fine-tuning efficiency.
+The `cuda` extra installs PyTorch from the CUDA 12.6 wheel index, together with the `flash_attn`
+library for fine-tuning efficiency.
+
+`flash_attn` imports PyTorch inside its own `setup.py`, so it has to be built with build isolation
+disabled — which in turn means PyTorch must already be present in the environment. Hence the two
+steps below: the first prepares the environment, the second builds `flash_attn` against it.
+
+```bash
+uv sync --extra cuda --group build --no-install-package flash-attn
+uv sync --extra cuda --group build
+```
+
+To target a different CUDA version, change the `pytorch-cuda` index URL in `pyproject.toml`
+(e.g. `https://download.pytorch.org/whl/cu130`) and re-run `uv lock`.
+
+### Others
+
+For devices without a CUDA compatible GPU, the `cpu` extra installs the CPU build of PyTorch.
+On Apple Silicon this is the same wheel that provides MPS support.
+
+```bash
+uv sync --extra cpu
+```
+
+`flash_attn` is not part of this setup, as it is only distributed for Linux with CUDA.
+
+### Running the scripts
+
+Activate the environment once, and the examples in the rest of this README can be run as written.
+
+```bash
+source .venv/bin/activate
+pytest src/tests
+```
+
+`uv run --no-sync` is equivalent and needs no activation.
+
+```bash
+uv run --no-sync pytest src/tests
+```
+
+> [!WARNING]
+> `--no-sync` matters here. A plain `uv run` re-syncs the environment first, and since it carries no
+> extra it would replace your PyTorch build with the one described in the note above.
+
+### Legacy setup with conda and pip
+
+<details>
+<summary>The conda / pip instructions used before the migration to uv</summary>
+
+`environment.yml` and `requirements.txt` are kept in the repository for reference. They are no
+longer the recommended path, and are not covered by `uv.lock`, but they still describe a working
+environment.
+
+For devices with CUDA compatible GPUs:
 
 ```bash
 conda env create -f environment.yml
 ```
 
-### Others
-
-For other devices, the following script will install the necessary packages to run the code.
+For other devices:
 
 ```bash
 conda create -n graphtoken python=3.12 scipy matplotlib rich openai pip pytest ninja
 conda activate graphtoken
 pip install -r requirements.txt
 ```
+
+Note that the `--extra-index-url .../cu124` line in `environment.yml` no longer has any effect:
+the CUDA 12.4 index stops at PyTorch 2.6.0, so the `torch>=2.9.0` requirement cannot be satisfied
+from it, and `pip` silently falls back to the default wheel on PyPI. The uv setup pins an index
+explicitly to avoid this class of surprise.
+
+</details>
 
 ## GraphToken model
 
@@ -78,10 +147,9 @@ You can load this model with `AutoModelForCausalLM`.
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 model = AutoModelForCausalLM.from_pretrained(
-	"naos-ku/GraphTokenLM",
-	trust_remote_code=True,
-	load_llm_weights=False,
-    # skip loading LLM weights from original HF repo (Qwen/Qwen3-4B-Base)
+    "naos-ku/GraphTokenLM",
+    trust_remote_code=True,
+    load_llm_weights=False,  # skip loading LLM weights from original HF repo (Qwen/Qwen3-4B-Base).
 )
 tokenizer = AutoTokenizer.from_pretrained("naos-ku/GraphTokenLM", trust_remote_code=True)
 ```

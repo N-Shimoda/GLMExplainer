@@ -1,5 +1,5 @@
 import os
-from typing import Literal, Tuple
+from typing import Literal
 
 from src.constants import GRAPHQA_SUBSETS, MOTIFQA_SUBSETS
 
@@ -17,7 +17,7 @@ def _get_dir_type(path: str) -> Literal["task", "model", "checkpoint"]:
         raise ValueError(f"Directory '{path}' is neither a task, model, nor checkpoint directory.")
 
 
-def _resolve_ckpt_path(model_path: str, model_index: int = -1, ckpt_index: int = -1) -> Tuple[str, str]:
+def _resolve_ckpt_path(model_path: str, model_index: int = -1, ckpt_index: int = -1) -> tuple[str, str]:
     """
     Resolve the concrete checkpoint directory to load.
 
@@ -116,7 +116,7 @@ def _resolve_ckpt_path(model_path: str, model_index: int = -1, ckpt_index: int =
             raise RuntimeError(f"Unrecognized directory type for path '{model_path}'.")
 
 
-def _resolve_model_path(model_path: str, model_index: int = -1, ckpt_index: int = -1) -> Tuple[str, str]:
+def _resolve_model_path(model_path: str, model_index: int = -1, ckpt_index: int = -1) -> tuple[str, str]:
     if os.path.exists(model_path):
         return _resolve_ckpt_path(model_path, model_index=model_index, ckpt_index=ckpt_index)
     else:
@@ -125,4 +125,4 @@ def _resolve_model_path(model_path: str, model_index: int = -1, ckpt_index: int 
         return model_path, run_name
 
 
-__all__ = ["_resolve_model_path", "_resolve_ckpt_path"]
+__all__ = ["_resolve_ckpt_path", "_resolve_model_path"]

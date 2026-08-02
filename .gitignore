@@ -1,6 +1,9 @@
 # Python
 __pycache__/
 
+# uv (uv.lock is tracked on purpose)
+.venv/
+
 # dev
 .vscode/
 
@@ -19,6 +22,9 @@ fine-tuning/models/
 
 # Explanations
 explanations/
+
+# Viewer settings (machine-local)
+.streamlit/viewer.toml
 
 # Figures
 plots/llr_study/
