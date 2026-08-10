@@ -41,17 +41,24 @@ def _collect_by_subset(runs: list[wandb.apis.public.Run], metrics: list[str]) ->
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--precision", type=int, default=3)
+    parser = argparse.ArgumentParser(
+        description=(
+            "Print Markdown ablation tables (AUROC and Jaccard index) comparing runs "
+            "with and without token selection, averaged over MotifQA subsets."
+        ),
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--tags", type=str, nargs="+", default=["fpai", "full"], help="Wandb run tags to filter (all must match)."
+    )
+    parser.add_argument("--precision", type=int, default=3, help="Number of decimal places for the metric values.")
     args = parser.parse_args()
 
     # Fetch runs from Weights & Biases
     api = wandb.Api()
     runs = api.runs(
         "naos-ku/MotifQA-Explainer",
-        filters={
-            "tags": {"$all": ["master", "full"]},
-        },
+        filters={"tags": {"$all": args.tags}},
     )
     baselines = [run for run in runs if run.config.get("llr_threshold") == 0]
     ours = [run for run in runs if run.config.get("llr_threshold", 0) > 0]
