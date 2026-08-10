@@ -1,4 +1,4 @@
-name: graphtoken
+name: glmexplainer
 channels:
   - anaconda
   - pytorch

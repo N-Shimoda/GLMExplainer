@@ -1,4 +1,4 @@
-# GraphToken
+# GLMExplainer
 
 ## Setup Environment
 
@@ -78,8 +78,8 @@ conda env create -f environment.yml
 For other devices:
 
 ```bash
-conda create -n graphtoken python=3.12 scipy matplotlib rich openai pip pytest ninja
-conda activate graphtoken
+conda create -n glmexplainer python=3.12 scipy matplotlib rich openai pip pytest ninja
+conda activate glmexplainer
 pip install -r requirements.txt
 ```
 

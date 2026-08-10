@@ -1,7 +1,7 @@
 [project]
-name = "graphtoken"
+name = "glmexplainer"
 version = "0.1.0"
-description = "GraphToken: encoding graph-structured data as soft prompts for pre-trained language models"
+description = "GLMExplainer: explaining Graph-Language Model predictions with edge-level importance"
 readme = "README.md"
 requires-python = "==3.12.*"
 dependencies = [
