@@ -6,7 +6,8 @@ import wandb
 SUBSET_LABELS = {
     "ba_shapes": "BA-Shapes",
     "tree_cycle": "Tree-Cycle",
-    "tree_grid": "Tree-Grid",
+    "tree_grid": "Tree-Grid v1 (3x3)",
+    "tree_grid_v2": "Tree-Grid v2 (2x3)",
     "ba_two_motifs": "BA-Two-Motifs",
     "shortest_path": "Shortest-Path",
 }
