@@ -566,6 +566,7 @@ dependencies = [
     { name = "transformers" },
     { name = "trl" },
     { name = "wandb" },
+    { name = "watchdog" },
 ]
 
 [package.optional-dependencies]
@@ -612,6 +613,7 @@ requires-dist = [
     { name = "transformers", specifier = ">=4.57,<4.58" },
     { name = "trl" },
     { name = "wandb", specifier = ">=0.22.3" },
+    { name = "watchdog", specifier = ">=6.0.0" },
 ]
 provides-extras = ["cpu", "cuda"]
 

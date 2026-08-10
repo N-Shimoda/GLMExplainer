@@ -21,6 +21,7 @@ dependencies = [
     "wandb>=0.22.3",
     "streamlit",
     "toml",
+    "watchdog>=6.0.0",
 ]
 
 # `cpu` and `cuda` select which PyTorch build to install. They are mutually
