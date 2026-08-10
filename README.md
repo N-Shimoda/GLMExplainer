@@ -191,7 +191,7 @@ and the PyTorch Geometric [documentation](https://pytorch-geometric.readthedocs.
    python tools/writing/edge_size_study.py
    ```
 
-   You can summarize the results in a table by running `/writing/edge_size_study.py` when using W&B logging.
+   You can summarize the results in a table by running `tools/writing/edge_size_study.py` when using W&B logging.
 
 1. For each optimal `edge_size` setting, find the best `lr`.
 
