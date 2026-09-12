@@ -4,7 +4,6 @@
 
 This project uses [uv](https://docs.astral.sh/uv/) to manage its Python environment.
 Every dependency is pinned in `uv.lock`, so the exact same versions are reproduced on any machine.
-If you do not have uv yet, follow the [official installation guide](https://docs.astral.sh/uv/getting-started/installation/).
 
 Which PyTorch build gets installed is selected by an extra, `cpu` or `cuda`.
 The two are mutually exclusive, and **one of them must always be given**.
@@ -18,17 +17,21 @@ The two are mutually exclusive, and **one of them must always be given**.
 The `cuda` extra installs PyTorch from the CUDA 12.6 wheel index, together with the `flash_attn`
 library for fine-tuning efficiency.
 
-`flash_attn` imports PyTorch inside its own `setup.py`, so it has to be built with build isolation
-disabled — which in turn means PyTorch must already be present in the environment. Hence the two
-steps below: the first prepares the environment, the second builds `flash_attn` against it.
-
 ```bash
 uv sync --extra cuda --group build --no-install-package flash-attn
 uv sync --extra cuda --group build
 ```
 
-To target a different CUDA version, change the `pytorch-cuda` index URL in `pyproject.toml`
-(e.g. `https://download.pytorch.org/whl/cu130`) and re-run `uv lock`.
+<details>
+<summary>Detailed Tips</summary>
+
+- `flash_attn` imports PyTorch inside its own `setup.py`, so it has to be built with build isolation
+  disabled — which in turn means PyTorch must already be present in the environment. Hence the two
+  steps required: the first prepares the environment, the second builds `flash_attn` against it.
+- To target a different CUDA version, change the `pytorch-cuda` index URL in `pyproject.toml`
+  (e.g. `https://download.pytorch.org/whl/cu130`) and re-run `uv lock`.
+
+</details>
 
 ### Others
 
