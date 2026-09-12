@@ -210,7 +210,7 @@ and the PyTorch Geometric [documentation](https://pytorch-geometric.readthedocs.
 
 ## Reference
 
-You can access to the article via [J-STAGE](https://www.jstage.jst.go.jp/article/jsaifpai/137/0/137_36/_article/-char/en).
+You can access the article via [J-STAGE](https://www.jstage.jst.go.jp/article/jsaifpai/137/0/137_36/_article/-char/en).
 
 ```bibtex
 @article{shimoda2026glmexplainer,
