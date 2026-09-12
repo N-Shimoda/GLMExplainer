@@ -32,8 +32,8 @@ def build_args():
         action="store_true",
         help="Load cached wandb runs from output dir instead of fetching from remote.",
     )
-    p.add_argument("--output-dir", type=str, default="plots/edge_size_study")
-    p.add_argument("--output-format", type=str, default="svg", choices=["svg", "pdf"])
+    p.add_argument("--output-dir", type=str, default="plots/edge_size_study", help="Directory to save the output plots.")
+    p.add_argument("--output-format", type=str, default="svg", choices=["svg", "pdf"], help="Format of the output plots.")
 
     p.add_argument(
         "--table-metric",
