@@ -23,7 +23,7 @@ from tools.writing.wandb_cache import load_cached_runs, save_cached_runs  # noqa
 
 
 def build_args():
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument(
         "--tags", type=str, nargs="+", default=["fpai", "edge_size", "small"], help="Wandb run tags to filter."
     )
@@ -32,8 +32,8 @@ def build_args():
         action="store_true",
         help="Load cached wandb runs from output dir instead of fetching from remote.",
     )
-    p.add_argument("--output-dir", type=str, default="plots/edge_size_study")
-    p.add_argument("--output-format", type=str, default="svg", choices=["svg", "pdf"])
+    p.add_argument("--output-dir", type=str, default="plots/edge_size_study", help="Directory to save the output plots.")
+    p.add_argument("--output-format", type=str, default="svg", choices=["svg", "pdf"], help="Format of the output plots.")
 
     p.add_argument(
         "--table-metric",

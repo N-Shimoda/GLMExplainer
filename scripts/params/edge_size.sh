@@ -11,7 +11,7 @@ for graph_type in complete empty; do
 			torchrun --nproc_per_node=2 explain.py \
 				--dataset MotifQA \
 				--subset "${subsets[$i]}" --split validation \
-				--model-path masters/multitask \
+				--model-path naos-ku/GraphTokenLM \
 				--target-pos-samples \
 				--num-samples 50 --num-trials 5 \
 				--num-gen-trials 10 --min-correct-answers 5 \
@@ -29,7 +29,7 @@ for i in "${!subsets[@]}"; do
 		torchrun --nproc_per_node=2 explain.py \
 			--dataset MotifQA \
 			--subset "${subsets[$i]}" --split validation \
-			--model-path masters/multitask \
+			--model-path naos-ku/GraphTokenLM \
 			--target-pos-samples \
 			--num-samples 50 --num-trials 5 \
 			--num-gen-trials 10 --min-correct-answers 5 \

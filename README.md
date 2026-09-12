@@ -1,10 +1,9 @@
-# GraphToken
+# GLMExplainer
 
 ## Setup Environment
 
 This project uses [uv](https://docs.astral.sh/uv/) to manage its Python environment.
 Every dependency is pinned in `uv.lock`, so the exact same versions are reproduced on any machine.
-If you do not have uv yet, follow the [official installation guide](https://docs.astral.sh/uv/getting-started/installation/).
 
 Which PyTorch build gets installed is selected by an extra, `cpu` or `cuda`.
 The two are mutually exclusive, and **one of them must always be given**.
@@ -18,17 +17,21 @@ The two are mutually exclusive, and **one of them must always be given**.
 The `cuda` extra installs PyTorch from the CUDA 12.6 wheel index, together with the `flash_attn`
 library for fine-tuning efficiency.
 
-`flash_attn` imports PyTorch inside its own `setup.py`, so it has to be built with build isolation
-disabled — which in turn means PyTorch must already be present in the environment. Hence the two
-steps below: the first prepares the environment, the second builds `flash_attn` against it.
-
 ```bash
 uv sync --extra cuda --group build --no-install-package flash-attn
 uv sync --extra cuda --group build
 ```
 
-To target a different CUDA version, change the `pytorch-cuda` index URL in `pyproject.toml`
-(e.g. `https://download.pytorch.org/whl/cu130`) and re-run `uv lock`.
+<details>
+<summary>Detailed Tips</summary>
+
+- `flash_attn` imports PyTorch inside its own `setup.py`, so it has to be built with build isolation
+  disabled — which in turn means PyTorch must already be present in the environment. Hence the two
+  steps required: the first prepares the environment, the second builds `flash_attn` against it.
+- To target a different CUDA version, change the `pytorch-cuda` index URL in `pyproject.toml`
+  (e.g. `https://download.pytorch.org/whl/cu130`) and re-run `uv lock`.
+
+</details>
 
 ### Others
 
@@ -78,8 +81,8 @@ conda env create -f environment.yml
 For other devices:
 
 ```bash
-conda create -n graphtoken python=3.12 scipy matplotlib rich openai pip pytest ninja
-conda activate graphtoken
+conda create -n glmexplainer python=3.12 scipy matplotlib rich openai pip pytest ninja
+conda activate glmexplainer
 pip install -r requirements.txt
 ```
 
@@ -134,8 +137,14 @@ By specifying multiple subsets, this script reports the answer accuracy per subs
 
 ### Hugging Face Model
 
-Our best model trained on MotifQA dataset is available as [naos-ku/GraphTokenLM](https://huggingface.co/naos-ku/GraphTokenLM) on Hugging Face Hub.
-This model can be loaded with `AutoModelForCausalLM`.
+Our model trained on MotifQA dataset is available as [naos-ku/GraphTokenLM](https://huggingface.co/naos-ku/GraphTokenLM) on Hugging Face Hub.
+The architecture of the model is as follows:
+
+- **Pre-trained LLM**: [Qwen/Qwen3-4B-Base](https://huggingface.co/Qwen/Qwen3-4B-Base)
+- **GNN encoder**: 3-layer GIN with hidden dimension of 64.
+- **Projection layers**: 2-layer MLP that maps 64-dim GNN output to 2560-dim GraphToken vectors.
+
+You can load this model with `AutoModelForCausalLM`.
 
 ```python
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -173,8 +182,8 @@ torchrun --nproc_per_node=2 explain.py \
 When using GNNExplainer for computing edge importance, the optimization process has four hyperparameters: `edge_size`, `edge_ent`, `lr`, and `epochs`.
 
 For details, please refer to
-the [original paper of GNNExplainer](https://papers.nips.cc/paper_files/paper/2019/hash/d80b7040b773199015de6d3b4293c8ff-Abstract.html)
-and the [PyTorch Geometric documentation](https://pytorch-geometric.readthedocs.io/en/2.7.0/generated/torch_geometric.explain.algorithm.GNNExplainer.html).
+the [original paper](https://papers.nips.cc/paper_files/paper/2019/hash/d80b7040b773199015de6d3b4293c8ff-Abstract.html) of GNNExplainer
+and the PyTorch Geometric [documentation](https://pytorch-geometric.readthedocs.io/en/2.7.0/generated/torch_geometric.explain.algorithm.GNNExplainer.html).
 
 ### Procedure
 
@@ -185,7 +194,7 @@ and the [PyTorch Geometric documentation](https://pytorch-geometric.readthedocs.
    python tools/writing/edge_size_study.py
    ```
 
-   You can summarize the results in a table by running `/writing/edge_size_study.py` when using W&B logging.
+   You can summarize the results in a table by running `tools/writing/edge_size_study.py` when using W&B logging.
 
 1. For each optimal `edge_size` setting, find the best `lr`.
 
@@ -198,3 +207,21 @@ and the [PyTorch Geometric documentation](https://pytorch-geometric.readthedocs.
    ```bash
    bash scripts/params/epochs.sh
    ```
+
+## Reference
+
+You can access the article via [J-STAGE](https://www.jstage.jst.go.jp/article/jsaifpai/137/0/137_36/_article/-char/en).
+
+```bibtex
+@article{shimoda2026glmexplainer,
+  title={Identifying Important Subgraphs in Graph-Language Models via Representative Value Aggregation},
+  author={Naoki Shimoda and Akihiro Yamamoto},
+  journal={JSAI Technical Report, SIG-FPAI},
+  volume={137},
+  number={ },
+  pages={36-43},
+  year={2026},
+  month=sep,
+  doi={10.11517/jsaifpai.137.0_36}
+}
+```
