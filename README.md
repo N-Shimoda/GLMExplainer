@@ -207,3 +207,21 @@ and the PyTorch Geometric [documentation](https://pytorch-geometric.readthedocs.
    ```bash
    bash scripts/params/epochs.sh
    ```
+
+## Reference
+
+You can access to the article via [J-STAGE](https://www.jstage.jst.go.jp/article/jsaifpai/137/0/137_36/_article/-char/en).
+
+```bibtex
+@article{shimoda2026glmexplainer,
+  title={Identifying Important Subgraphs in Graph-Language Models via Representative Value Aggregation},
+  author={Naoki Shimoda and Akihiro Yamamoto},
+  journal={JSAI Technical Report, SIG-FPAI},
+  volume={137},
+  number={ },
+  pages={36-43},
+  year={2026},
+  month=sep,
+  doi={10.11517/jsaifpai.137.0_36}
+}
+```
